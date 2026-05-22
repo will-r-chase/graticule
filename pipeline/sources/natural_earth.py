@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 from ..process import normalize, keep_fields, write_topojson, bbox_of, read_geodataframe
@@ -57,20 +58,26 @@ DATASETS = [
 class NaturalEarth(DataSource):
     def fetch(self) -> list[DatasetMeta]:
         results = []
-        for d in DATASETS:
+        total = len(DATASETS)
+
+        for i, d in enumerate(DATASETS, 1):
             scale = d["scale"]
             layer = d["layer"]
-            category = "cultural"
-            url = f"{CDN}/{scale}/{category}/ne_{scale}_{layer}.zip"
             dataset_id = f"natural-earth/{layer.replace('_', '-')}/ne_{scale}"
             out_path = self.output_dir / f"natural-earth/{layer.replace('_', '-')}/ne_{scale}.topojson"
+            url = f"{CDN}/{scale}/cultural/ne_{scale}_{layer}.zip"
 
-            print(f"[natural-earth] {d['name']}")
+            print(f"\n  [{i}/{total}] {d['name']}", flush=True)
+            t0 = time.time()
             try:
                 gdf = read_geodataframe(url=url)
+                print(f"      Read {len(gdf):,} features", flush=True)
                 gdf = normalize(gdf)
                 gdf = keep_fields(gdf, d["fields"])
                 count = write_topojson(gdf, out_path, object_name=layer)
+                elapsed = time.time() - t0
+                print(f"      ✓ Complete in {elapsed:.1f}s", flush=True)
+
                 results.append(DatasetMeta(
                     id=dataset_id,
                     name=d["name"],
@@ -86,6 +93,7 @@ class NaturalEarth(DataSource):
                     bbox=bbox_of(gdf),
                 ))
             except Exception as e:
-                print(f"  ERROR: {e}")
+                elapsed = time.time() - t0
+                print(f"      ✗ ERROR after {elapsed:.1f}s: {e}", flush=True)
 
         return results

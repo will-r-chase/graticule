@@ -9,20 +9,23 @@ Required environment variables:
     R2_ACCESS_KEY_ID
     R2_SECRET_ACCESS_KEY
     R2_BUCKET_NAME
-    R2_PUBLIC_URL   (the public base URL of your R2 bucket, e.g. https://pub-xxx.r2.dev)
+    R2_PUBLIC_URL   (public base URL of your R2 bucket, e.g. https://pub-xxx.r2.dev)
 """
 
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from . import catalog, upload
-from .sources.custom import Custom
-from .sources.eurostat import Eurostat
 from .sources.natural_earth import NaturalEarth
-from .sources.project_linework import ProjectLinework
-from .sources.tiger import Tiger
+
+# Sources disabled for now — to be re-enabled once Natural Earth pipeline is stable:
+# from .sources.tiger import Tiger
+# from .sources.eurostat import Eurostat
+# from .sources.project_linework import ProjectLinework
+# from .sources.custom import Custom
 
 
 def check_env():
@@ -36,6 +39,7 @@ def check_env():
 def main():
     check_env()
     bucket = os.environ["R2_BUCKET_NAME"]
+    t_start = time.time()
 
     with tempfile.TemporaryDirectory() as tmp:
         output_dir = Path(tmp)
@@ -43,38 +47,48 @@ def main():
         errors = []
 
         sources = [
-            ("NaturalEarth", NaturalEarth(output_dir)),
-            ("Tiger", Tiger(output_dir)),
-            # GADM removed: global GeoPackage is ~2.5GB, too large for CI.
-            # TODO: revisit with per-country downloads or a separate workflow.
-            ("Eurostat", Eurostat(output_dir)),
-            ("ProjectLinework", ProjectLinework(output_dir)),
-            ("Custom", Custom(output_dir)),
+            ("Natural Earth", NaturalEarth(output_dir)),
+            # Re-enable these once Natural Earth is confirmed stable:
+            # ("Tiger", Tiger(output_dir)),
+            # ("Eurostat", Eurostat(output_dir)),
+            # ("Project Linework", ProjectLinework(output_dir)),
+            # ("Custom", Custom(output_dir)),
         ]
 
         for name, source in sources:
-            print(f"\n=== {name} ===")
+            print(f"\n{'='*50}", flush=True)
+            print(f"  {name}", flush=True)
+            print(f"{'='*50}", flush=True)
+            t0 = time.time()
             try:
                 datasets = source.fetch()
                 all_datasets.extend(datasets)
-                print(f"  {len(datasets)} dataset(s) processed")
+                elapsed = time.time() - t0
+                print(f"\n  ✓ {len(datasets)} dataset(s) in {elapsed:.1f}s", flush=True)
             except Exception as e:
+                elapsed = time.time() - t0
                 errors.append((name, str(e)))
-                print(f"  FAILED: {e}")
+                print(f"\n  ✗ FAILED after {elapsed:.1f}s: {e}", flush=True)
 
-        print(f"\n=== Catalog ===")
+        print(f"\n{'='*50}", flush=True)
+        print(f"  Catalog", flush=True)
+        print(f"{'='*50}", flush=True)
         catalog.build(all_datasets, output_dir)
 
-        print(f"\n=== Upload ===")
+        print(f"\n{'='*50}", flush=True)
+        print(f"  Upload → R2 ({bucket})", flush=True)
+        print(f"{'='*50}", flush=True)
         upload.upload_directory(output_dir, bucket)
 
+    total = time.time() - t_start
+    print(f"\n{'='*50}", flush=True)
     if errors:
-        print(f"\n=== Completed with {len(errors)} error(s) ===")
+        print(f"  Completed with {len(errors)} error(s) in {total:.1f}s", flush=True)
         for name, err in errors:
-            print(f"  {name}: {err}")
+            print(f"  ✗ {name}: {err}", flush=True)
         sys.exit(1)
     else:
-        print(f"\n=== Done — {len(all_datasets)} datasets uploaded ===")
+        print(f"  ✓ Done — {len(all_datasets)} datasets in {total:.1f}s", flush=True)
 
 
 if __name__ == "__main__":
