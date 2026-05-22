@@ -216,7 +216,11 @@ class ProjectLinework(DataSource):
                     with tempfile.TemporaryDirectory() as tmp:
                         p = Path(tmp) / filename
                         p.write_bytes(r.content)
-                        gdf = gpd.read_file(p)
+                        try:
+                            gdf = gpd.read_file(p)
+                        except Exception:
+                            # Some files use latin-1 encoding instead of UTF-8
+                            gdf = gpd.read_file(p, encoding="latin-1")
 
                     gdf = normalize(gdf)
                     write_topojson(gdf, out_path, object_name=object_name)
