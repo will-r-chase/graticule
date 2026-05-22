@@ -23,7 +23,7 @@ def build(datasets: list[DatasetMeta], output_dir: Path):
 
 
 def _serialize(d: DatasetMeta) -> dict:
-    return {
+    entry = {
         "id": d.id,
         "name": d.name,
         "description": d.description,
@@ -37,3 +37,9 @@ def _serialize(d: DatasetMeta) -> dict:
         "featureCount": d.feature_count,
         "bbox": d.bbox,
     }
+    if d.layers:
+        entry["layers"] = [
+            {"name": l.name, "objectName": l.object_name, "filePath": l.file_path}
+            for l in d.layers
+        ]
+    return entry

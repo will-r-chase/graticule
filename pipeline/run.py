@@ -22,6 +22,7 @@ from .sources.custom import Custom
 from .sources.eurostat import Eurostat
 from .sources.gadm import Gadm
 from .sources.natural_earth import NaturalEarth
+from .sources.project_linework import ProjectLinework
 from .sources.tiger import Tiger
 
 
@@ -47,6 +48,7 @@ def main():
             ("Tiger", Tiger(output_dir)),
             ("Gadm", Gadm(output_dir)),
             ("Eurostat", Eurostat(output_dir)),
+            ("ProjectLinework", ProjectLinework(output_dir)),
             ("Custom", Custom(output_dir)),
         ]
 
