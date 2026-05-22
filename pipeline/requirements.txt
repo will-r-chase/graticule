@@ -1,0 +1,7 @@
+geopandas==1.0.1
+fiona==1.10.1
+pyproj==3.7.0
+shapely==2.0.6
+topojson==1.9
+requests==2.32.3
+boto3==1.35.0
