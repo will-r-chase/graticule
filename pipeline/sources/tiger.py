@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 from ..process import normalize, keep_fields, write_topojson, bbox_of, read_geodataframe
@@ -35,14 +36,21 @@ DATASETS = [
 class Tiger(DataSource):
     def fetch(self) -> list[DatasetMeta]:
         results = []
-        for d in DATASETS:
+        total = len(DATASETS)
+
+        for i, d in enumerate(DATASETS, 1):
             out_path = self.output_dir / d["out"]
-            print(f"[tiger] {d['name']}")
+            print(f"\n  [{i}/{total}] {d['name']}", flush=True)
+            t0 = time.time()
             try:
                 gdf = read_geodataframe(url=d["url"])
+                print(f"      Read {len(gdf):,} features", flush=True)
                 gdf = normalize(gdf)
                 gdf = keep_fields(gdf, d["fields"])
                 count = write_topojson(gdf, out_path, object_name=d["object_name"])
+                elapsed = time.time() - t0
+                print(f"      ✓ Complete in {elapsed:.1f}s", flush=True)
+
                 results.append(DatasetMeta(
                     id=d["id"],
                     name=d["name"],
@@ -58,6 +66,7 @@ class Tiger(DataSource):
                     bbox=bbox_of(gdf),
                 ))
             except Exception as e:
-                print(f"  ERROR: {e}")
+                elapsed = time.time() - t0
+                print(f"      ✗ ERROR after {elapsed:.1f}s: {e}", flush=True)
 
         return results

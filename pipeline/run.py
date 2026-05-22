@@ -20,9 +20,9 @@ from pathlib import Path
 
 from . import catalog, upload
 from .sources.natural_earth import NaturalEarth
+from .sources.tiger import Tiger
 
-# Sources disabled for now — to be re-enabled once Natural Earth pipeline is stable:
-# from .sources.tiger import Tiger
+# Sources to be re-enabled once confirmed stable:
 # from .sources.eurostat import Eurostat
 # from .sources.project_linework import ProjectLinework
 # from .sources.custom import Custom
@@ -48,8 +48,7 @@ def main():
 
         sources = [
             ("Natural Earth", NaturalEarth(output_dir)),
-            # Re-enable these once Natural Earth is confirmed stable:
-            # ("Tiger", Tiger(output_dir)),
+            ("Tiger", Tiger(output_dir)),
             # ("Eurostat", Eurostat(output_dir)),
             # ("Project Linework", ProjectLinework(output_dir)),
             # ("Custom", Custom(output_dir)),
