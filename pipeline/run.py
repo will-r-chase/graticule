@@ -20,7 +20,6 @@ from pathlib import Path
 from . import catalog, upload
 from .sources.custom import Custom
 from .sources.eurostat import Eurostat
-from .sources.gadm import Gadm
 from .sources.natural_earth import NaturalEarth
 from .sources.project_linework import ProjectLinework
 from .sources.tiger import Tiger
@@ -46,7 +45,8 @@ def main():
         sources = [
             ("NaturalEarth", NaturalEarth(output_dir)),
             ("Tiger", Tiger(output_dir)),
-            ("Gadm", Gadm(output_dir)),
+            # GADM removed: global GeoPackage is ~2.5GB, too large for CI.
+            # TODO: revisit with per-country downloads or a separate workflow.
             ("Eurostat", Eurostat(output_dir)),
             ("ProjectLinework", ProjectLinework(output_dir)),
             ("Custom", Custom(output_dir)),
