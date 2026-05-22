@@ -1,4 +1,5 @@
 name: Update Geodata
+# Fetches, processes, and uploads all geodata sources to Cloudflare R2
 
 on:
   schedule:
