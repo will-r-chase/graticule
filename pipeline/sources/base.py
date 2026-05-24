@@ -8,6 +8,7 @@ class LayerMeta:
     name: str           # display name, e.g. "Land", "Admin 0 Polygons"
     object_name: str    # TopoJSON object key, e.g. "land", "admin0"
     file_path: str      # relative path within the output dir
+    geometry_type: str = ""  # e.g. "Polygon", "MultiPolygon", "LineString"
 
 
 @dataclass
@@ -25,6 +26,8 @@ class DatasetMeta:
     feature_count: int = 0
     bbox: list[float] = field(default_factory=lambda: [-180, -90, 180, 90])
     layers: list[LayerMeta] = field(default_factory=list)  # populated for multi-layer datasets
+    coverage: str = ""        # human-readable description of geographic coverage
+    geometry_type: str = ""   # e.g. "Polygon", "MultiPolygon, Polygon", "LineString"
 
 
 class DataSource(ABC):

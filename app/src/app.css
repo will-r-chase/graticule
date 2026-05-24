@@ -1,0 +1,293 @@
+/* ============================================================
+   FONTS
+   ============================================================ */
+
+@font-face {
+	font-family: 'Switzer';
+	src: url('/fonts/switzer/Switzer-Variable.woff2') format('woff2-variations');
+	font-weight: 100 900;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'Switzer';
+	src: url('/fonts/switzer/Switzer-VariableItalic.woff2') format('woff2-variations');
+	font-weight: 100 900;
+	font-style: italic;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'VCTR Mono';
+	src: url('/fonts/vctr-mono/VCTRMonov0.12-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'VCTR Mono';
+	src: url('/fonts/vctr-mono/VCTRMonov0.12-Medium.woff2') format('woff2');
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'VCTR Mono';
+	src: url('/fonts/vctr-mono/VCTRMonov0.12-Bold.woff2') format('woff2');
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}
+
+/* ============================================================
+   DESIGN TOKENS
+   ============================================================ */
+
+:root {
+	/* --- Fonts --- */
+	--font-sans: 'Switzer', sans-serif;
+	--font-mono: 'VCTR Mono', monospace;
+
+	/* --- Spacing --- */
+	--space-none: 0px;
+	--space-xs: 2px;
+	--space-s: 4px;
+	--space-m: 8px;
+	--space-l: 16px;
+	--space-xl: 24px;
+	--space-xxl: 48px;
+
+	/* --- Border radius --- */
+	--radius: 4px;
+
+	/* --- Grey scale --- */
+	--grey-900: #161819;
+	--grey-800: #2d3137;
+	--grey-700: #424952;
+	--grey-600: #7d8289;
+	--grey-500: #a8acb1;
+	--grey-400: #cfd1d3;
+	--grey-300: #e3e5e7;
+	--grey-200: #eeeff1;
+	--grey-100: #f4f4f5;
+	--grey-0: #ffffff;
+
+	/* --- Turquoise --- */
+	--turquoise-0: #ffffff;
+	--turquoise-100: #e3fbee;
+	--turquoise-200: #c7f7dd;
+	--turquoise-300: #a8f2cc;
+	--turquoise-400: #85edbc;
+	--turquoise-500: #5ae8ab;
+	--turquoise-600: #3b9e73;
+	--turquoise-700: #1e5940;
+	--turquoise-800: #051d13;
+	--turquoise-900: #000000;
+
+	/* --- Blue --- */
+	--blue-0: #ffffff;
+	--blue-100: #daefff;
+	--blue-200: #b5deff;
+	--blue-300: #8fcdff;
+	--blue-400: #65bbfe;
+	--blue-500: #2ca9fc;
+	--blue-600: #1a72ac;
+	--blue-700: #0a3f62;
+	--blue-800: #011221;
+	--blue-900: #000000;
+
+	/* --- Red --- */
+	--red-0: #ffffff;
+	--red-100: #ffe0d8;
+	--red-200: #ffc0b1;
+	--red-300: #ff9f8a;
+	--red-400: #ff7b62;
+	--red-500: #fa5234;
+	--red-600: #aa3520;
+	--red-700: #611a0e;
+	--red-800: #210402;
+	--red-900: #000000;
+
+	/* --- Pear --- */
+	--pear-0: #ffffff;
+	--pear-100: #f6ffe0;
+	--pear-200: #eefebf;
+	--pear-300: #e6fc9b;
+	--pear-400: #defa72;
+	--pear-500: #d7f832;
+	--pear-600: #92a91f;
+	--pear-700: #52600d;
+	--pear-800: #1a2002;
+	--pear-900: #000000;
+
+	/* --- Pink --- */
+	--pink-0: #ffffff;
+	--pink-100: #ffe2f2;
+	--pink-200: #ffc5e5;
+	--pink-300: #ffa7d8;
+	--pink-400: #ff87cb;
+	--pink-500: #ff64be;
+	--pink-600: #ae4280;
+	--pink-700: #632248;
+	--pink-800: #220716;
+	--pink-900: #000000;
+
+	/* --- Orange --- */
+	--orange-0: #ffffff;
+	--orange-100: #fff1dc;
+	--orange-200: #ffe2b7;
+	--orange-300: #ffd392;
+	--orange-400: #fec368;
+	--orange-500: #fcb32c;
+	--orange-600: #ac791a;
+	--orange-700: #62430a;
+	--orange-800: #211401;
+	--orange-900: #000000;
+
+	/* --- Purple --- */
+	--purple-0: #ffffff;
+	--purple-100: #f6e7ff;
+	--purple-200: #ecceff;
+	--purple-300: #e3b5ff;
+	--purple-400: #d99cfd;
+	--purple-500: #cf81fb;
+	--purple-600: #8c56ab;
+	--purple-700: #4f2e61;
+	--purple-800: #190b21;
+	--purple-900: #000000;
+
+	/* --- Semantic tokens --- */
+	--color-text-primary: var(--grey-900);
+	--color-text-secondary: var(--grey-600);
+	--color-text-invert: var(--grey-0);
+	--color-icon-primary: var(--grey-900);
+	--color-icon-secondary: var(--grey-600);
+	--color-icon-invert: var(--grey-0);
+	--color-border: var(--grey-300);
+	--color-surface-primary: var(--grey-0);
+	--color-surface-secondary: var(--grey-100);
+	--color-surface-tertiary: var(--grey-200);
+	--color-surface-invert: var(--grey-900);
+	--color-accent: var(--blue-500);
+	--color-accent-subtle: var(--blue-100);
+	--color-error: var(--red-500);
+	--color-error-subtle: var(--red-100);
+}
+
+/* ============================================================
+   BASE RESET
+   ============================================================ */
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+input,
+button,
+select,
+textarea {
+	font-family: inherit;
+	font-size: inherit;
+}
+
+html {
+	font-family: var(--font-sans);
+	font-size: 14px;
+	line-height: 20px;
+	color: var(--color-text-primary);
+	background-color: var(--color-surface-primary);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+body {
+	min-height: 100vh;
+}
+
+/* ============================================================
+   FOCUS RING
+   ============================================================ */
+
+:focus-visible {
+	outline: 2px solid var(--color-accent);
+	outline-offset: 2px;
+}
+
+/* ============================================================
+   TYPOGRAPHY
+   ============================================================ */
+
+/* H2 — panel or section headings */
+h2 {
+	font-family: var(--font-sans);
+	font-size: 24px;
+	line-height: 28px;
+	font-weight: 700;
+}
+
+/* H3 — sub-section headings */
+h3 {
+	font-family: var(--font-sans);
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 600;
+}
+
+/* H4 — eyebrow labels, category headers */
+h4,
+.h4 {
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 18px;
+	font-weight: 400;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--color-text-secondary);
+}
+
+/* Body Regular — default body text (also the inherited default from html) */
+.body-regular {
+	font-family: var(--font-sans);
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 400;
+}
+
+/* Body Medium — emphasis within body copy */
+.body-medium {
+	font-family: var(--font-sans);
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+}
+
+/* Body Small — secondary / supporting text, metadata */
+.body-small {
+	font-family: var(--font-sans);
+	font-size: 12px;
+	line-height: 18px;
+	font-weight: 400;
+}
+
+/* Mono Regular — hex codes, coordinates, IDs, file names */
+.mono {
+	font-family: var(--font-mono);
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 400;
+}
+
+/* Mono Small — compact mono contexts (badges, status) */
+.mono-small {
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 18px;
+	font-weight: 400;
+}

@@ -67,7 +67,7 @@ DATASETS = [
         scales=ALL_SCALES,
         admin_level=0,
         fields=["featurecla", "scalerank"],
-        name="Land Boundaries (lines)",
+        name="Land Boundaries",
         description="International land boundaries as lines.",
         tags=["boundaries", "lines", "world", "admin-0"],
     ),
@@ -77,7 +77,7 @@ DATASETS = [
         scales=["10m"],
         admin_level=0,
         fields=["featurecla", "scalerank", "labelrank", "NAME"],
-        name="Disputed Boundaries (lines)",
+        name="Disputed Boundaries",
         description="Disputed and de-facto international boundary lines.",
         tags=["disputed", "boundaries", "lines", "world"],
     ),
@@ -101,7 +101,7 @@ DATASETS = [
         scales=ALL_SCALES,
         admin_level=1,
         fields=["adm0_a3", "scalerank", "featurecla"],
-        name="State & Province Boundaries (lines)",
+        name="State & Province Boundaries",
         description="First-level administrative division boundaries as lines.",
         tags=["states", "provinces", "world", "admin-1", "lines"],
     ),
@@ -115,9 +115,10 @@ DATASETS = [
         scales=["10m"],
         admin_level=2,
         fields=["name", "code_local", "code_hasc", "type_en", "provnum_ne", "adm0_a3"],
-        name="Counties (10m)",
-        description="Second-level administrative divisions at 10m scale.",
-        tags=["counties", "districts", "world", "admin-2", "detailed", "boundaries"],
+        name="Counties",
+        description="US county boundaries at 10m scale.",
+        region="USA",
+        tags=["counties", "districts", "USA", "admin-2", "detailed", "boundaries"],
     ),
 
     # -------------------------------------------------------------------------
@@ -353,6 +354,8 @@ class NaturalEarth(DataSource):
                     elapsed = time.time() - t0
                     print(f"      ✓ Complete in {elapsed:.1f}s", flush=True)
 
+                    geom_types = ", ".join(sorted(gdf.geom_type.dropna().unique().tolist()))
+
                     results.append(DatasetMeta(
                         id=dataset_id,
                         name=f"{d['name']} ({scale})",
@@ -360,12 +363,13 @@ class NaturalEarth(DataSource):
                         source="natural-earth",
                         source_name="Natural Earth",
                         admin_level=d["admin_level"],
-                        region="world",
+                        region=d.get("region", "world"),
                         license="public-domain",
                         tags=d["tags"] + [scale],
                         file_path=str(out_path.relative_to(self.output_dir)),
                         feature_count=count,
                         bbox=bbox_of(gdf),
+                        geometry_type=geom_types,
                     ))
                 except Exception as e:
                     elapsed = time.time() - t0

@@ -1,0 +1,77 @@
+<script lang="ts">
+	import { dndzone } from 'svelte-dnd-action';
+	import type { Layer } from '$lib/types';
+	import { layers, reorderLayers } from '$lib/stores/layers.svelte';
+	import LayerItem from './LayerItem.svelte';
+
+	function handleDnd(e: CustomEvent<{ items: Layer[] }>) {
+		reorderLayers(e.detail.items);
+	}
+</script>
+
+<div class="layers-panel">
+	<div class="panel-header">
+		<h3>Layers</h3>
+	</div>
+
+	{#if layers.length === 0}
+		<div class="empty-state">
+			<p>No layers yet.</p>
+			<p>Add a dataset from the Data panel.</p>
+		</div>
+	{:else}
+		<div
+			class="layer-list"
+			use:dndzone={{ items: layers, flipDurationMs: 150, dropTargetStyle: {} }}
+			onconsider={handleDnd}
+			onfinalize={handleDnd}
+		>
+			{#each layers as layer (layer.id)}
+				<LayerItem {layer} />
+			{/each}
+		</div>
+	{/if}
+</div>
+
+<style>
+	.layers-panel {
+		width: 280px;
+		height: 100%;
+		background-color: var(--color-surface-primary);
+		border-left: 1px solid var(--color-border);
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	.panel-header {
+		padding: var(--space-l) var(--space-l) var(--space-s);
+		flex-shrink: 0;
+	}
+
+	.empty-state {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: var(--space-s);
+		padding: var(--space-xl);
+		text-align: center;
+	}
+
+	.empty-state p {
+		color: var(--color-text-secondary);
+	}
+
+	.empty-state p:first-child {
+		font-weight: 500;
+		color: var(--color-text-primary);
+	}
+
+	.layer-list {
+		flex: 1;
+		overflow-y: auto;
+		padding: var(--space-m) 0;
+	}
+</style>

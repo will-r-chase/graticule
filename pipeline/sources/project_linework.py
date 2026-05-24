@@ -24,77 +24,122 @@ BRANCH = "master"
 RAW_BASE = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/"
 API_TREE = f"https://api.github.com/repos/{REPO}/git/trees/{BRANCH}?recursive=1"
 
-# Human-readable names and descriptions for each dataset slug
+# Human-readable names, descriptions, and coverage metadata for each dataset slug.
+# `region` must match one of the REGION_FILTERS values in the app config.
+# `tags` should include at least one functional tag (e.g. "boundaries") so the
+# type filter can match the dataset, plus aesthetic tags for search.
 DATASET_INFO = {
     "1981": {
         "name": "1981",
         "description": "Original 1981-style hand-crafted world linework. Clean, simple administrative boundaries with a classic cartographic feel.",
-        "tags": ["hand-drawn", "classic", "stylized", "world"],
+        "coverage": "Worldwide. Coastline | Admin 0 (countries) | Admin 1 (states/provinces) for USA & Canada | Major lakes | Major rivers",
+        "region": "World",
+        "admin_level": 1,
+        "tags": ["boundaries", "countries", "hand-drawn", "classic", "stylized"],
     },
     "1981-v1.1": {
         "name": "1981 v1.1",
         "description": "Updated version of the 1981 dataset with Ukraine added.",
-        "tags": ["hand-drawn", "classic", "stylized", "world"],
+        "coverage": "Worldwide. Coastline | Admin 0 (countries) | Admin 1 (states/provinces) for USA & Canada | Major lakes | Major rivers",
+        "region": "World",
+        "admin_level": 1,
+        "tags": ["boundaries", "countries", "hand-drawn", "classic", "stylized"],
     },
     "angular": {
         "name": "Angular",
         "description": "Traced from a 1980 corporate annual report map. Sharp, angular linework with a retro business aesthetic.",
-        "tags": ["hand-drawn", "angular", "retro", "stylized", "world"],
+        "coverage": "Admin 1 (states) & Admin 0 (countries) for the lower 48 US states (DC not included), plus southern portions of Canada",
+        "region": "North America",
+        "admin_level": 1,
+        "tags": ["boundaries", "countries", "states", "hand-drawn", "angular", "retro", "stylized"],
     },
     "charmingly-inaccurate": {
         "name": "Charmingly Inaccurate",
         "description": "Intentionally imprecise world basemap. Charming, organic shapes that prioritize feel over accuracy.",
-        "tags": ["hand-drawn", "organic", "imprecise", "stylized", "world"],
+        "coverage": "Admin 1 (states) for the lower 48 United States | Admin 0 (countries) for United States",
+        "region": "USA",
+        "admin_level": 1,
+        "tags": ["boundaries", "countries", "states", "hand-drawn", "organic", "imprecise", "stylized"],
     },
     "elmer-casual": {
         "name": "Elmer Casual",
         "description": "Casual hand-drawn style with a loose, sketched quality.",
-        "tags": ["hand-drawn", "casual", "sketchy", "stylized", "world"],
+        "coverage": "Admin 0 (countries) for North America (excl. far north islands and Greenland), Europe (excl. Russia and Asian Turkey), and Japan | Admin 1 (states/provinces) for United States, Canada, and Japan",
+        "region": "World",
+        "admin_level": 1,
+        "tags": ["boundaries", "countries", "states", "hand-drawn", "casual", "sketchy", "stylized"],
     },
     "geo-metro": {
         "name": "Geo Metro",
         "description": "Metro and transit-map aesthetic applied to world geography. Simplified shapes with a graphic design sensibility.",
-        "tags": ["hand-drawn", "geometric", "metro", "graphic", "stylized", "world"],
+        "coverage": "North America only. Coastline | Admin 0 (countries) | Admin 1 (states/provinces) for US & Canada | Large lakes | Major rivers",
+        "region": "North America",
+        "admin_level": 1,
+        "tags": ["boundaries", "countries", "states", "hand-drawn", "geometric", "metro", "graphic", "stylized"],
     },
     "geomotional": {
         "name": "Geomotional",
         "description": "A geometric and emotional take on world linework.",
-        "tags": ["hand-drawn", "geometric", "stylized", "world"],
+        "coverage": "Admin 1 (states) for the lower 48 US states only. DC not included",
+        "region": "USA",
+        "admin_level": 1,
+        "tags": ["boundaries", "states", "hand-drawn", "geometric", "stylized"],
     },
     "liana": {
         "name": "Liana",
         "description": "Organic-style linework by Sarah Bennett. Flowing, natural shapes.",
-        "tags": ["hand-drawn", "organic", "flowing", "stylized", "world"],
+        "coverage": "North America only. Coastline | Admin 0 (countries) | Admin 1 (states/provinces) for United States | Large lakes",
+        "region": "North America",
+        "admin_level": 1,
+        "tags": ["boundaries", "countries", "states", "hand-drawn", "organic", "flowing", "stylized"],
     },
     "moriarty-hand-large": {
         "name": "Moriarty Hand (Large Scale)",
         "description": "Hand-drawn linework at large scale. Detailed organic boundaries with a personal cartographic touch.",
-        "tags": ["hand-drawn", "detailed", "organic", "stylized", "world"],
+        "coverage": "Worldwide. Coastline | Admin 0 (countries) | Admin 1 (states/provinces) for USA & Canada | Major lakes | Major rivers",
+        "region": "World",
+        "admin_level": 1,
+        "tags": ["boundaries", "countries", "hand-drawn", "detailed", "organic", "stylized"],
     },
     "moriarty-hand-small": {
         "name": "Moriarty Hand (Small Scale)",
         "description": "Hand-drawn linework at small scale. Simplified organic boundaries for overview maps.",
-        "tags": ["hand-drawn", "simple", "organic", "stylized", "world"],
+        "coverage": "Worldwide. Coastline | Admin 0 (countries) | Admin 1 (states/provinces) for USA & Canada | Major lakes | Major rivers",
+        "region": "World",
+        "admin_level": 1,
+        "tags": ["boundaries", "countries", "hand-drawn", "simple", "organic", "stylized"],
     },
     "times-approximate": {
         "name": "Times Approximate",
         "description": "Newspaper-style linework inspired by the aesthetic of traditional printed maps.",
-        "tags": ["hand-drawn", "newspaper", "traditional", "stylized", "world"],
+        "coverage": "Admin 1 (states/provinces) for all 50 United States | Admin 0 (countries) for United States, parts of Mexico and Canada",
+        "region": "USA",
+        "admin_level": 1,
+        "tags": ["boundaries", "countries", "states", "hand-drawn", "newspaper", "traditional", "stylized"],
     },
     "twenty-seventy": {
         "name": "Twenty Seventy",
         "description": "Retro 1970s-style world linework with a period-appropriate aesthetic.",
-        "tags": ["hand-drawn", "retro", "1970s", "stylized", "world"],
+        "coverage": "North America only (excluding some arctic islands). Admin 0 (countries) | Admin 1 (states/provinces) for United States & Canada",
+        "region": "North America",
+        "admin_level": 1,
+        "tags": ["boundaries", "countries", "states", "hand-drawn", "retro", "stylized"],
     },
     "wargames": {
         "name": "Wargames",
         "description": "Hex-grid wargame aesthetic applied to world geography. Features hexagonal land, sea, and admin tiles.",
-        "tags": ["hand-drawn", "hex", "wargame", "geometric", "stylized", "world"],
+        "coverage": "Worldwide. Coastline | Admin 0 | Admin 1 for AUS, BRA, CAN, CHN, COD, DEU, ESP, FRA, IND, ITA, MDG, MEX, MLI, RUS, USA, ZAF | Major lakes",
+        "region": "World",
+        "admin_level": 1,
+        "tags": ["boundaries", "countries", "hand-drawn", "hex", "wargame", "geometric", "stylized"],
     },
     "weekend-update": {
         "name": "Weekend Update",
         "description": "Inspired by the SNL Weekend Update map aesthetic. Bold, graphic world linework.",
-        "tags": ["hand-drawn", "bold", "graphic", "stylized", "world"],
+        "coverage": "Admin 0 (countries) for Europe (excl. Russia, Asian Turkey, and some smaller nations) and continental USA | Admin 1 (states) for continental USA",
+        "region": "World",
+        "admin_level": 1,
+        "tags": ["boundaries", "countries", "states", "hand-drawn", "bold", "graphic", "stylized"],
     },
 }
 
@@ -236,10 +281,13 @@ class ProjectLinework(DataSource):
                             max(total_bbox[3], layer_bbox[3]),
                         ]
 
+                    layer_geom_types = sorted(gdf.geom_type.dropna().unique().tolist())
+
                     layers.append(LayerMeta(
                         name=_layer_display_name(filename),
                         object_name=object_name,
                         file_path=str(out_path.relative_to(self.output_dir)),
+                        geometry_type=", ".join(layer_geom_types),
                     ))
                     print(f"    + {_layer_display_name(filename)}")
 
@@ -249,20 +297,30 @@ class ProjectLinework(DataSource):
             if not layers:
                 continue
 
+            # Aggregate unique geometry types across all sub-layers.
+            all_geom_types = sorted({
+                t
+                for layer in layers
+                for t in layer.geometry_type.split(", ")
+                if t
+            })
+
             results.append(DatasetMeta(
                 id=f"project-linework/{slug}",
                 name=info["name"],
                 description=info["description"],
                 source="project-linework",
                 source_name="Project Linework",
-                admin_level=0,
-                region="world",
+                admin_level=info["admin_level"],
+                region=info["region"],
                 license="cc0",
                 tags=info["tags"],
                 file_path=f"project-linework/{slug}",
                 feature_count=0,
                 bbox=total_bbox or [-180, -90, 180, 90],
                 layers=layers,
+                coverage=info["coverage"],
+                geometry_type=", ".join(all_geom_types),
             ))
 
         return results

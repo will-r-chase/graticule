@@ -37,9 +37,18 @@ def _serialize(d: DatasetMeta) -> dict:
         "featureCount": d.feature_count,
         "bbox": d.bbox,
     }
+    if d.coverage:
+        entry["coverage"] = d.coverage
+    if d.geometry_type:
+        entry["geometryType"] = d.geometry_type
     if d.layers:
         entry["layers"] = [
-            {"name": l.name, "objectName": l.object_name, "filePath": l.file_path}
+            {
+                "name": l.name,
+                "objectName": l.object_name,
+                "filePath": l.file_path,
+                **({"geometryType": l.geometry_type} if l.geometry_type else {}),
+            }
             for l in d.layers
         ]
     return entry
