@@ -138,7 +138,7 @@
 
 	// Plain Map — not reactive, so Svelte never re-runs path computation
 	// as a side-effect of the paint loop reading from it.
-	const pathCache = new Map<string, Path2D>();
+	const pathCache = new Map<string, Path2D[]>();
 
 	// Bumped whenever the cache gains new entries. The paint effect reads
 	// this so it knows to repaint after a path is computed.
@@ -178,7 +178,7 @@
 				// LineString, and MultiLineString; points are handled separately below.
 				const { bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias } = layer.processing;
 				const bezierArcs = buildBezierArcs(topo, projection, bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias);
-				pathCache.set(id, buildTopoPath(topo, bezierArcs));
+				pathCache.set(id, [buildTopoPath(topo, bezierArcs)]);
 				updated = true;
 			} else {
 				// Standard path — convert topology → GeoJSON inline. The result is
@@ -192,16 +192,25 @@
 				}) ?? [];
 
 				if (nonPointFeatures.length > 0) {
-					const filteredData = { ...data, features: nonPointFeatures };
-					const svgPath = d3.geoPath(projection)(filteredData as d3.GeoPermissibleObjects);
-					if (svgPath) {
-						pathCache.set(id, new Path2D(svgPath));
+					// Chunk features into groups of 200 before building Path2D objects.
+					// A single Path2D built from all features of a large dataset (e.g. US
+					// Counties) can exceed ~100 MB of SVG path data, which Chrome's Skia
+					// renderer silently drops. Smaller chunks stay well within that limit.
+					const CHUNK = 200;
+					const chunks: Path2D[] = [];
+					for (let i = 0; i < nonPointFeatures.length; i += CHUNK) {
+						const chunkData = { ...data, features: nonPointFeatures.slice(i, i + CHUNK) };
+						const svgPath = d3.geoPath(projection)(chunkData as d3.GeoPermissibleObjects);
+						if (svgPath) chunks.push(new Path2D(svgPath));
+					}
+					if (chunks.length > 0) {
+						pathCache.set(id, chunks);
 						updated = true;
 					}
 				} else {
-					// Pure point layer — store an empty sentinel so the paint loop knows
+					// Pure point layer — store an empty array so the paint loop knows
 					// data has arrived and cacheVersion bumps to trigger a repaint.
-					pathCache.set(id, new Path2D());
+					pathCache.set(id, []);
 					updated = true;
 				}
 			}
@@ -290,27 +299,29 @@
 			// GeoJSON tree to establish reactive tracking, which takes seconds
 			// for large datasets. The pathCache check is sufficient: if there's
 			// no cached path, the data hasn't loaded yet.
-			const path2d = pathCache.get(layer.id);
-			if (!path2d) continue;
+			// paths===undefined means not yet loaded; paths===[] means point-only layer.
+			const paths = pathCache.get(layer.id);
+			if (paths === undefined) continue;
 
 			const hasNonPoint = layer.geometryTypes.some((t) => t !== 'Point' && t !== 'MultiPoint');
 			const hasPoints   = layer.geometryTypes.some((t) => t === 'Point' || t === 'MultiPoint');
 
 			// ── Polygon / line geometry ────────────────────────────────────────
 			if (hasNonPoint) {
-				if (layer.style.fill !== 'none') {
-					ctx.globalAlpha = layer.style.fillOpacity;
-					ctx.fillStyle = layer.style.fill;
-					ctx.fill(path2d);
-				}
-
-				ctx.globalAlpha = layer.style.strokeOpacity;
 				ctx.strokeStyle = layer.style.stroke;
 				ctx.lineWidth = layer.style.strokeWidth / mapScale;
 				if (layer.style.strokeDashed) {
 					ctx.setLineDash([layer.style.strokeDash / mapScale, layer.style.strokeGap / mapScale]);
 				}
-				ctx.stroke(path2d);
+				for (const path2d of paths) {
+					if (layer.style.fill !== 'none') {
+						ctx.globalAlpha = layer.style.fillOpacity;
+						ctx.fillStyle = layer.style.fill;
+						ctx.fill(path2d);
+					}
+					ctx.globalAlpha = layer.style.strokeOpacity;
+					ctx.stroke(path2d);
+				}
 				ctx.setLineDash([]);
 			}
 
