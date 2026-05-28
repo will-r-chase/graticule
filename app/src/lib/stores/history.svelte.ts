@@ -1,4 +1,4 @@
-import { layers } from './layers.svelte';
+import { layers, runLayerPipeline } from './layers.svelte';
 import { projection } from './projection.svelte';
 import { background } from './background.svelte';
 import type { LayerStyle, LayerProcessing } from '$lib/types';
@@ -55,18 +55,34 @@ function capture(): Snapshot {
 
 function restore(snapshot: Snapshot): void {
 	// Splice layers in place to keep the reactive reference intact.
+	// processing is spread explicitly so later Object.assign calls in
+	// updateLayerProcessing don't mutate the snapshot through a shared reference.
+	// hasTopology is forced to false so the pathCache effect drops the stale
+	// entry; runLayerPipeline below will set it back to true once the working
+	// topology is rebuilt from the restored processing settings.
 	layers.splice(
 		0,
 		layers.length,
 		...snapshot.layers.map((sl) => ({
 			...sl,
 			style: { ...sl.style },
+			processing: { ...sl.processing },
 			geometryTypes: [...sl.geometryTypes],
+			hasTopology: false,
+			loading: sl.hasTopology,
 		}))
 	);
 	projection.id = snapshot.projectionId;
 	background.hex = snapshot.bgHex;
 	background.alpha = snapshot.bgAlpha;
+
+	// Re-run the pipeline for every layer that had data in the snapshot so
+	// workingTopologyData reflects the restored processing settings.
+	for (const sl of snapshot.layers) {
+		if (sl.hasTopology) {
+			runLayerPipeline(sl.id, false);
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -114,10 +130,15 @@ export function undo(): void {
 	// We check manually rather than calling pushSnapshot() unconditionally because
 	// pushSnapshot clears the redo tail before deduplicating — which would wipe future
 	// snapshots on every sequential undo even when nothing changed.
-	//
-	const current = capture();
-	if (pointer < 0 || JSON.stringify(current) !== JSON.stringify(stack[pointer])) {
-		pushSnapshot();
+	// Skip this check while any layer is loading: restore() temporarily sets
+	// hasTopology=false while the pipeline re-runs, and capturing that transient
+	// state would push a ghost snapshot with broken layer data.
+	const anyLoading = layers.some((l) => l.loading);
+	if (!anyLoading) {
+		const current = capture();
+		if (JSON.stringify(current) !== JSON.stringify(stack[pointer])) {
+			pushSnapshot();
+		}
 	}
 	pointer--;
 	restore(stack[pointer]);

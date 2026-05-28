@@ -11,7 +11,8 @@
 	let { data } = $props();
 
 	function handleKeydown(e: KeyboardEvent) {
-		if ((e.target as HTMLElement).closest('input, textarea')) return;
+		const _t = e.target as HTMLInputElement;
+		if (_t.closest('textarea') || (_t.closest('input') && _t.type !== 'range')) return;
 		if (e.key === 'z' && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
 			if (e.shiftKey) { if (canRedo()) redo(); }
