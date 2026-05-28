@@ -161,7 +161,8 @@
 
 	/* --- Semantic tokens --- */
 	--color-text-primary: var(--grey-900);
-	--color-text-secondary: var(--grey-600);
+	--color-text-secondary: var(--grey-800);
+	--color-text-tertiary: var(--grey-600);
 	--color-text-invert: var(--grey-0);
 	--color-icon-primary: var(--grey-900);
 	--color-icon-secondary: var(--grey-600);

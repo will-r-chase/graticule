@@ -5,5 +5,8 @@ export default defineConfig({
 	plugins: [sveltekit()],
 	ssr: {
 		noExternal: ['phosphor-svelte']
+	},
+	optimizeDeps: {
+		exclude: ['mapshaper']
 	}
 });

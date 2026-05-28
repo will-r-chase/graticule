@@ -1,0 +1,21 @@
+{
+  "_comment": "All features have null geometry. File is valid GeoJSON but contains no renderable data.",
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "France", "population": 67000000 },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Germany", "population": 83000000 },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Spain", "population": 47000000 },
+      "geometry": null
+    }
+  ]
+}

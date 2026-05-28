@@ -136,6 +136,16 @@ export const SOURCE_ORDER: string[] = [
 	'custom',
 ];
 
+export const POINT_SHAPES: { id: string; label: string }[] = [
+	{ id: 'symbolCircle',   label: 'Circle'   },
+	{ id: 'symbolSquare',   label: 'Square'   },
+	{ id: 'symbolDiamond',  label: 'Diamond'  },
+	{ id: 'symbolTriangle', label: 'Triangle' },
+	{ id: 'symbolCross',    label: 'Cross'    },
+	{ id: 'symbolStar',     label: 'Star'     },
+	{ id: 'symbolWye',      label: 'Wye'      },
+];
+
 export const REGION_FILTERS: string[] = [
 	'World',
 	'Africa',

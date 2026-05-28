@@ -1,0 +1,35 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "France", "population": 67000000 },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-4.5, 42.5], [8.2, 42.5], [8.2, 51.0], [-4.5, 51.0], [-4.5, 42.5]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Germany", "population": 83000000 },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [6.0, 47.5], [15.0, 47.5], [15.0, 55.0], [6.0, 55.0], [6.0, 47.5]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Spain", "population": 47000000 },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-9.3, 35.9], [4.3, 35.9], [4.3, 43.8], [-9.3, 43.8], [-9.3, 35.9]
+        ]]
+      }
+    }
+  ]
+}

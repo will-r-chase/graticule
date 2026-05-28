@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Dataset } from '$lib/types';
 	import { addLayer, layers } from '$lib/stores/layers.svelte';
+	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import DatasetTooltip from './DatasetTooltip.svelte';
 
 	let { dataset }: { dataset: Dataset } = $props();
@@ -28,7 +29,7 @@
 	class="dataset-item"
 	onmouseenter={handleMouseEnter}
 	onmouseleave={handleMouseLeave}
-	onclick={() => addLayer(dataset)}
+	onclick={() => addLayer(dataset, pushSnapshot, pushSnapshot)}
 >
 	<span class="name">{dataset.name}</span>
 	{#if added}
@@ -44,7 +45,8 @@
 	.dataset-item {
 		display: flex;
 		align-items: center;
-		padding: var(--space-s) var(--space-l);
+		gap: 4px;
+		padding: var(--space-s) var(--space-l) var(--space-s) calc(var(--space-l) + 4px);
 		border-radius: var(--radius);
 		cursor: pointer;
 		list-style: none;
@@ -59,7 +61,8 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		flex: 1;
+		flex: 0 1 auto;
+		min-width: 0;
 	}
 
 	.dot {

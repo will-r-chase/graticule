@@ -1,0 +1,20 @@
+{
+  "_comment": "Bowtie polygon — the ring crosses itself, creating a self-intersection. Renders as a figure-8 shape and violates the GeoJSON/OGC spec.",
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "Bowtie polygon (self-intersecting)" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [0.0, 0.0],
+          [10.0, 10.0],
+          [10.0, 0.0],
+          [0.0, 10.0],
+          [0.0, 0.0]
+        ]]
+      }
+    }
+  ]
+}

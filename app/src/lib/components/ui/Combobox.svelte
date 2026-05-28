@@ -11,10 +11,12 @@
 		options,
 		value = $bindable(''),
 		placeholder = 'Search...',
+		direction = 'down',
 	}: {
 		options: Option[];
 		value: string;
 		placeholder?: string;
+		direction?: 'up' | 'down';
 	} = $props();
 
 	let open = $state(false);
@@ -131,7 +133,7 @@
 	</div>
 
 	{#if open}
-		<ul class="dropdown" bind:this={listEl} role="listbox">
+		<ul class="dropdown" class:up={direction === 'up'} bind:this={listEl} role="listbox">
 			{#if filteredOptions.length === 0}
 				<li class="empty">No results</li>
 			{:else}
@@ -198,14 +200,14 @@
 	}
 
 	input::placeholder {
-		color: var(--color-text-secondary);
+		color: var(--color-text-tertiary);
 	}
 
 	.caret {
 		display: flex;
 		align-items: center;
 		padding-right: var(--space-m);
-		color: var(--color-text-secondary);
+		color: var(--color-text-tertiary);
 		pointer-events: none;
 	}
 
@@ -223,6 +225,11 @@
 		top: calc(100% + var(--space-xs));
 		left: 0;
 		right: 0;
+	}
+
+	.dropdown.up {
+		top: auto;
+		bottom: calc(100% + var(--space-xs));
 		max-height: 280px;
 		overflow-y: auto;
 		background-color: var(--color-surface-primary);
@@ -232,7 +239,7 @@
 		z-index: 50;
 		list-style: none;
 		margin: 0;
-		padding: var(--space-s) 0;
+		padding: var(--space-m);
 	}
 
 	li:has(h4) {
@@ -248,7 +255,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: var(--space-s) var(--space-m);
+		padding: var(--space-s) var(--space-m) var(--space-s) calc(var(--space-m) + var(--space-s));
 		color: var(--color-text-primary);
 		cursor: pointer;
 	}
@@ -271,6 +278,6 @@
 		padding: var(--space-m);
 		font-family: var(--font-mono);
 		font-size: 12px;
-		color: var(--color-text-secondary);
+		color: var(--color-text-tertiary);
 	}
 </style>

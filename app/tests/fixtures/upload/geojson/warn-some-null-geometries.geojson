@@ -1,0 +1,31 @@
+{
+  "_comment": "Mix of valid and null geometries. Should warn: '1 of 3 features has no geometry and will not be visible.'",
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "France" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-4.5, 42.5], [8.2, 42.5], [8.2, 51.0], [-4.5, 51.0], [-4.5, 42.5]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Germany" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [6.0, 47.5], [15.0, 47.5], [15.0, 55.0], [6.0, 55.0], [6.0, 47.5]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "Mystery Country" },
+      "geometry": null
+    }
+  ]
+}

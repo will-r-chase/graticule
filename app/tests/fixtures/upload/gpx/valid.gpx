@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Mappy test fixture"
+  xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Alpine Route</name>
+    <desc>A sample GPS track across the Alps</desc>
+  </metadata>
+  <wpt lat="47.3769" lon="8.5417">
+    <name>Zurich</name>
+  </wpt>
+  <wpt lat="46.2044" lon="6.1432">
+    <name>Geneva</name>
+  </wpt>
+  <trk>
+    <name>Zurich to Geneva</name>
+    <trkseg>
+      <trkpt lat="47.3769" lon="8.5417"><ele>408</ele></trkpt>
+      <trkpt lat="47.0502" lon="8.3093"><ele>435</ele></trkpt>
+      <trkpt lat="46.8182" lon="8.2275"><ele>1012</ele></trkpt>
+      <trkpt lat="46.5197" lon="7.5636"><ele>1560</ele></trkpt>
+      <trkpt lat="46.3163" lon="7.0323"><ele>710</ele></trkpt>
+      <trkpt lat="46.2044" lon="6.1432"><ele>375</ele></trkpt>
+    </trkseg>
+  </trk>
+</gpx>

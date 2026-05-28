@@ -1,0 +1,28 @@
+{
+  "type": "Topology",
+  "objects": {
+    "countries": {
+      "type": "GeometryCollection",
+      "geometries": [
+        {
+          "type": "Polygon",
+          "properties": { "name": "France" },
+          "arcs": [[0]]
+        },
+        {
+          "type": "Polygon",
+          "properties": { "name": "Germany" },
+          "arcs": [[1]]
+        }
+      ]
+    }
+  },
+  "arcs": [
+    [[-4500, 4250], [12700, 0], [0, 8500], [-12700, 0], [0, -8500]],
+    [[6000, 4750], [9000, 0], [0, 7500], [-9000, 0], [0, -7500]]
+  ],
+  "transform": {
+    "scale": [0.001, 0.001],
+    "translate": [0, 0]
+  }
+}

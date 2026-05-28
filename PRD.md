@@ -377,6 +377,18 @@ Three Svelte stores:
 | `catalogStore` | Parsed `catalog.json` from R2 | Fetched once on app load, read-only |
 | `uiStore` | Catalog open/closed, active tool panel, loading states | UI-only, not persisted |
 
+### Undo / Redo
+
+**This is a first-class feature, not an afterthought.**
+
+Every user action that changes map state (adding/removing a layer, changing a style, adjusting projection, reordering layers, etc.) must push a snapshot to the undo stack. When designing or implementing any new feature, the first question to ask is: *"what gets pushed to the undo stack here, and can it be cleanly reversed?"*
+
+Implementation: a capped history stack of serialized `{ layers, projection, canvas }` snapshots (not geometry — just parameters). Max depth ~50. Keyboard shortcuts: `Cmd+Z` / `Cmd+Shift+Z`.
+
+**Rule: if a user action changes visible output, it must be undoable.**
+
+---
+
 ### Processing Model — Non-Destructive
 
 Transformations are **never applied destructively to stored data.** The layer always holds the original WGS84 geometry. Every change to projection, simplification, or clip updates the store parameters, and the renderer re-derives the display output reactively.
@@ -406,7 +418,9 @@ Full list of D3-geo projections available, exposed via a searchable list. Sorted
 #### Catalog Browse (entry point A)
 - App fetches `catalog.json` from R2 on load
 - Browse datasets with thumbnail SVG previews
-- Filter by: region, administrative level, data source, scale
+- Filter by: region, data type (semantic), data source
+- Regions: World, Africa, Asia, Europe, North America, South America, Oceania, USA
+- Data type filter uses plain-language labels ("Countries", "Roads", "Counties", "Rivers", etc.) — not technical admin-level codes. Goal: non-experts can find what they want without knowing GIS terminology.
 - Search by name
 - Select a dataset to load it into the editor
 
@@ -438,7 +452,9 @@ Full list of D3-geo projections available, exposed via a searchable list. Sorted
 #### Export
 - **SVG** — primary; uses GDAL-projected coordinates, clean output
 - **PNG / JPG** — rasterized from SVG at canvas dimensions
-- **GeoJSON / TopoJSON / Shapefile** — via GDAL WASM with authoritative projection applied
+- **GeoJSON** — WGS84 or reprojected via GDAL WASM
+- **TopoJSON** — topology-preserving, compact
+- **Shapefile** — via GDAL WASM; important for GIS interop and the most-requested format among non-web practitioners
 
 #### Project Save / Load
 - Save: serializes `Project` (without geometry data) to a `.json` file, downloaded to disk
@@ -473,6 +489,27 @@ Full list of D3-geo projections available, exposed via a searchable list. Sorted
 
 ---
 
+## Layer Styling Defaults
+
+- **Polygon layers** — fill off by default, stroke on. Boundary-focused workflow; fill is noise until intentionally added.
+- **Line layers** (roads, rivers, coastlines) — stroke only, fill never applicable.
+- **Point layers** — small filled circle, no stroke.
+
+---
+
+## Color Picker
+
+The app's color picker must go beyond the browser native `<input type="color">`, which is inconsistent across platforms and limited in usability.
+
+Custom color picker component:
+- **Hex input** — type or paste a hex code directly (`#1a2b3c`)
+- **HSL sliders** — Hue (0–360°), Saturation (0–100%), Lightness (0–100%); sliders show gradient tracks
+- **Opacity slider** — separate from the color picker, since opacity is a layer-level property independent of hue
+- Live swatch preview updating as values change
+- No "saved swatches" in MVP
+
+---
+
 ## Out of Scope (for now)
 - Authentication / user accounts
 - Server-side compute or storage
@@ -480,3 +517,6 @@ Full list of D3-geo projections available, exposed via a searchable list. Sorted
 - Data visualization / thematic mapping
 - City/neighborhood-level detail
 - Mobile-specific UI (desktop-first)
+- Graticules (reference grid lines on the map)
+- Canvas background color control
+- Scale filter in catalog (10m / 50m / 110m exposed as implementation detail, not user-facing filter)

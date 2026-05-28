@@ -1,0 +1,10 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "France" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-4.5, 42.5], [8.2, 42.5],

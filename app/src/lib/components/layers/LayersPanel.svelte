@@ -1,11 +1,33 @@
 <script lang="ts">
+	import { setContext } from 'svelte';
 	import { dndzone } from 'svelte-dnd-action';
 	import type { Layer } from '$lib/types';
 	import { layers, reorderLayers } from '$lib/stores/layers.svelte';
+	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import LayerItem from './LayerItem.svelte';
 
-	function handleDnd(e: CustomEvent<{ items: Layer[] }>) {
+	// Track which layer's style panel is open. Stored here (not inside the
+	// dndzone subtree) so the ColorPicker is never a descendant of the drag
+	// container — keeping pointer events fully isolated from the drag handler.
+	let openStyleLayerId = $state<string | null>(null);
+	let pickerOpen = $state(false);
+
+	setContext('stylePanel', {
+		get openId() { return openStyleLayerId; },
+		toggle(id: string) {
+			openStyleLayerId = openStyleLayerId === id ? null : id;
+		},
+		get pickerOpen() { return pickerOpen; },
+		setPickerOpen(open: boolean) { pickerOpen = open; },
+	});
+
+	function handleConsider(e: CustomEvent<{ items: Layer[] }>) {
 		reorderLayers(e.detail.items);
+	}
+
+	function handleFinalize(e: CustomEvent<{ items: Layer[] }>) {
+		reorderLayers(e.detail.items);
+		pushSnapshot();
 	}
 </script>
 
@@ -22,15 +44,16 @@
 	{:else}
 		<div
 			class="layer-list"
-			use:dndzone={{ items: layers, flipDurationMs: 150, dropTargetStyle: {} }}
-			onconsider={handleDnd}
-			onfinalize={handleDnd}
+			use:dndzone={{ items: layers, flipDurationMs: 150, dropTargetStyle: {}, dragDisabled: pickerOpen }}
+			onconsider={handleConsider}
+			onfinalize={handleFinalize}
 		>
 			{#each layers as layer (layer.id)}
 				<LayerItem {layer} />
 			{/each}
 		</div>
 	{/if}
+
 </div>
 
 <style>
@@ -61,7 +84,7 @@
 	}
 
 	.empty-state p {
-		color: var(--color-text-secondary);
+		color: var(--color-text-tertiary);
 	}
 
 	.empty-state p:first-child {
@@ -74,4 +97,5 @@
 		overflow-y: auto;
 		padding: var(--space-m) 0;
 	}
+
 </style>

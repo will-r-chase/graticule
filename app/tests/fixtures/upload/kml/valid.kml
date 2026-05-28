@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>European Countries</name>
+    <Placemark>
+      <name>France</name>
+      <description>Approximate bounding box</description>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              -4.5,42.5,0
+              8.2,42.5,0
+              8.2,51.0,0
+              -4.5,51.0,0
+              -4.5,42.5,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+    <Placemark>
+      <name>Berlin</name>
+      <description>Capital city</description>
+      <Point>
+        <coordinates>13.4050,52.5200,0</coordinates>
+      </Point>
+    </Placemark>
+    <Placemark>
+      <name>Rhine River</name>
+      <LineString>
+        <coordinates>
+          6.9,47.7,0
+          7.6,48.0,0
+          7.9,48.5,0
+          8.1,48.9,0
+          8.2,49.5,0
+        </coordinates>
+      </LineString>
+    </Placemark>
+  </Document>
+</kml>

@@ -1,0 +1,8 @@
+name,latitude,longitude,notes
+Paris,48.8566,2.3522,valid
+Berlin,52.5200,13.4050,valid
+Madrid,N/A,-3.7038,lat missing
+Rome,41.9028,N/A,lon missing
+Amsterdam,52.3676,4.9041,valid
+Vienna,--,16.3738,lat missing
+Brussels,50.8503,4.3517,valid

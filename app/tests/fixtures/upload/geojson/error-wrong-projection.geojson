@@ -1,0 +1,20 @@
+{
+  "_comment": "Coordinates in NY State Plane East (EPSG:2263, US survey feet). Looks like valid GeoJSON but coordinates are not WGS84 lon/lat — will render as a tiny speck or not at all.",
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "Manhattan (approx)", "crs": "EPSG:2263" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [981000, 197000],
+          [989000, 197000],
+          [989000, 231000],
+          [981000, 231000],
+          [981000, 197000]
+        ]]
+      }
+    }
+  ]
+}

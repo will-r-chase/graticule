@@ -1,0 +1,19 @@
+{
+  "_comment": "Polygon ring is not closed — first and last coordinate do not match. Valid GeoJSON requires the first and last position to be identical.",
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "France (unclosed ring)" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-4.5, 42.5],
+          [8.2, 42.5],
+          [8.2, 51.0],
+          [-4.5, 51.0]
+        ]]
+      }
+    }
+  ]
+}
