@@ -1,7 +1,11 @@
 import type { Topology } from 'topojson-specification';
 import type { Layer, LayerStyle, LayerProcessing, Dataset } from '$lib/types';
 import { catalog } from './catalog.svelte';
-import { applyChaikinToTopology } from '$lib/utils/chaikin';
+import { applyChaikinToTopology, countTopoPoints } from '$lib/utils/chaikin';
+import { showToast } from './toast.svelte';
+
+const DISPLAY_VERTEX_THRESHOLD = 500_000;
+const DISPLAY_SIMP_TOLERANCE = 70;
 
 // Reactive array of layers currently added to the map.
 // Components import `layers` to read, and call the functions below to modify.
@@ -70,6 +74,18 @@ export async function runLayerPipeline(id: string, applyDefaults = true): Promis
 	const rawTopo = rawTopologyData.get(id);
 	const layer = layers.find((l) => l.id === id);
 	if (!rawTopo || !layer) return;
+
+	// Auto-simplify large datasets on first load so they render at a usable speed.
+	// This sets the processing state the same way the user would — visible in the
+	// Process panel and adjustable at any time.
+	if (applyDefaults && !layer.processing.simpEnabled) {
+		const pointCount = countTopoPoints(rawTopo);
+		if (pointCount > DISPLAY_VERTEX_THRESHOLD) {
+			layer.processing.simpEnabled = true;
+			layer.processing.simpTolerance = DISPLAY_SIMP_TOLERANCE;
+			showToast('Large dataset auto-simplified to 70% for performance. Adjust in the layer\'s Process panel.');
+		}
+	}
 
 	let topo: Topology = rawTopo;
 

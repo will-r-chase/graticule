@@ -12,6 +12,7 @@
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import Combobox from '$lib/components/ui/Combobox.svelte';
 	import BackgroundControl from '$lib/components/map/BackgroundControl.svelte';
+	import Toaster from '$lib/components/ui/Toaster.svelte';
 	import { MagnifyingGlassPlus, MagnifyingGlassMinus, CornersOut } from 'phosphor-svelte';
 
 	// Merge core and extended projection namespaces so we can look up any
@@ -200,8 +201,10 @@
 					const chunks: Path2D[] = [];
 					for (let i = 0; i < nonPointFeatures.length; i += CHUNK) {
 						const chunkData = { ...data, features: nonPointFeatures.slice(i, i + CHUNK) };
-						const svgPath = d3.geoPath(projection)(chunkData as d3.GeoPermissibleObjects);
-						if (svgPath) chunks.push(new Path2D(svgPath));
+						const path2d = new Path2D();
+						(path2d as any).beginPath = () => {};
+						d3.geoPath(projection, path2d as any)(chunkData as d3.GeoPermissibleObjects);
+						chunks.push(path2d);
 					}
 					if (chunks.length > 0) {
 						pathCache.set(id, chunks);
@@ -408,7 +411,8 @@
 		</button>
 	</div>
 
-	<div class="background-selector">
+	<div class="bottom-right-stack">
+		<Toaster />
 		<BackgroundControl />
 	</div>
 
@@ -482,10 +486,14 @@
 		background: var(--color-border);
 	}
 
-	.background-selector {
+	.bottom-right-stack {
 		position: absolute;
 		bottom: var(--space-m);
 		right: var(--space-m);
 		z-index: 10;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: var(--space-s);
 	}
 </style>

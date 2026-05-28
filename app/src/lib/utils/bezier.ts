@@ -177,13 +177,12 @@ export function buildBezierArcs(
 }
 
 /**
- * Assembles a complete SVG path string for one ring of arc indices,
- * honouring forward/reversed arcs via the ~idx convention. Break segments
- * emit M (moveto) rather than C to avoid drawing across the antimeridian.
- * Pass close=false for LineString arcs that should not be closed with Z.
+ * Writes one ring of arc indices into a Path2D, honouring forward/reversed
+ * arcs via the ~idx convention. Break segments emit moveTo rather than
+ * bezierCurveTo to avoid drawing across the antimeridian.
+ * Pass close=false for LineString arcs that should not be closed.
  */
-export function arcRingToPath(arcIndices: number[], bezierArcs: BezierArc[], close = true): string {
-	let d = '';
+export function arcRingToPath(arcIndices: number[], bezierArcs: BezierArc[], path2d: Path2D, close = true): void {
 	let started = false;
 
 	for (const idx of arcIndices) {
@@ -195,30 +194,30 @@ export function arcRingToPath(arcIndices: number[], bezierArcs: BezierArc[], clo
 			// Reversed arc: start from the last point, traverse segments backwards.
 			// Reversing a cubic bezier just swaps cp1 and cp2.
 			const last = arc.segs[arc.segs.length - 1];
-			if (!started) { d += `M ${last.ex} ${last.ey}`; started = true; }
+			if (!started) { path2d.moveTo(last.ex, last.ey); started = true; }
 			for (let i = arc.segs.length - 1; i >= 0; i--) {
 				const seg = arc.segs[i];
 				const toX = i === 0 ? arc.sx : arc.segs[i - 1].ex;
 				const toY = i === 0 ? arc.sy : arc.segs[i - 1].ey;
 				if (seg.isBreak) {
-					d += ` M ${toX} ${toY}`;
+					path2d.moveTo(toX, toY);
 				} else {
-					d += ` C ${seg.cp2x} ${seg.cp2y} ${seg.cp1x} ${seg.cp1y} ${toX} ${toY}`;
+					path2d.bezierCurveTo(seg.cp2x, seg.cp2y, seg.cp1x, seg.cp1y, toX, toY);
 				}
 			}
 		} else {
-			if (!started) { d += `M ${arc.sx} ${arc.sy}`; started = true; }
+			if (!started) { path2d.moveTo(arc.sx, arc.sy); started = true; }
 			for (const seg of arc.segs) {
 				if (seg.isBreak) {
-					d += ` M ${seg.ex} ${seg.ey}`;
+					path2d.moveTo(seg.ex, seg.ey);
 				} else {
-					d += ` C ${seg.cp1x} ${seg.cp1y} ${seg.cp2x} ${seg.cp2y} ${seg.ex} ${seg.ey}`;
+					path2d.bezierCurveTo(seg.cp1x, seg.cp1y, seg.cp2x, seg.cp2y, seg.ex, seg.ey);
 				}
 			}
 		}
 	}
 
-	return started ? (close ? d + ' Z' : d) : '';
+	if (started && close) path2d.closePath();
 }
 
 /**
@@ -228,21 +227,21 @@ export function arcRingToPath(arcIndices: number[], bezierArcs: BezierArc[], clo
 export function buildTopoPath(topo: Topology, bezierArcs: BezierArc[]): Path2D {
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const anyTopo = topo as any;
-	let pathStr = '';
+	const path2d = new Path2D();
 
 	for (const objName of Object.keys(anyTopo.objects)) {
 		for (const geom of anyTopo.objects[objName].geometries) {
 			if (geom.type === 'Polygon') {
-				for (const ring of geom.arcs) pathStr += arcRingToPath(ring, bezierArcs);
+				for (const ring of geom.arcs) arcRingToPath(ring, bezierArcs, path2d);
 			} else if (geom.type === 'MultiPolygon') {
-				for (const poly of geom.arcs) for (const ring of poly) pathStr += arcRingToPath(ring, bezierArcs);
+				for (const poly of geom.arcs) for (const ring of poly) arcRingToPath(ring, bezierArcs, path2d);
 			} else if (geom.type === 'LineString') {
-				pathStr += arcRingToPath(geom.arcs, bezierArcs, false);
+				arcRingToPath(geom.arcs, bezierArcs, path2d, false);
 			} else if (geom.type === 'MultiLineString') {
-				for (const line of geom.arcs) pathStr += arcRingToPath(line, bezierArcs, false);
+				for (const line of geom.arcs) arcRingToPath(line, bezierArcs, path2d, false);
 			}
 		}
 	}
 
-	return new Path2D(pathStr);
+	return path2d;
 }
