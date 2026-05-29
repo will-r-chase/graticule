@@ -1,11 +1,12 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import * as d3 from 'd3-geo';
 	import * as d3shape from 'd3-shape';
 	import * as d3gp from 'd3-geo-projection';
 	import { feature } from 'topojson-client';
 	import { buildBezierArcs, buildTopoPath } from '$lib/utils/bezier';
 	import { buildAdjacencyGraph, buildChunksBFS, buildChunksHilbert } from '$lib/utils/spatial';
-	import { layers, workingTopologyData } from '$lib/stores/layers.svelte';
+	import { layers, workingTopologyData, layerDrag } from '$lib/stores/layers.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
 	import { mapState } from '$lib/stores/mapState.svelte';
 	import { background } from '$lib/stores/background.svelte';
@@ -40,15 +41,6 @@
 
 	let containerEl = $state<HTMLDivElement | null>(null);
 	let canvasEl = $state<HTMLCanvasElement | null>(null);
-	$effect(() => {
-		mapState.canvas = canvasEl;
-		mapState.width = width;
-		mapState.height = height;
-		mapState.bgColor = background.hex;
-		mapState.tx = tx;
-		mapState.ty = ty;
-		mapState.mapScale = mapScale;
-	});
 	let width = $state(0);
 	let height = $state(0);
 
@@ -64,6 +56,13 @@
 	let lastPointerX = 0;
 	let lastPointerY = 0;
 
+	// Resize debounce — true while the container is actively being resized.
+	// The cache effect bails out while this is set, deferring path recomputation
+	// until the resize settles. Works for both window resize and future panel drags
+	// since the ResizeObserver watches containerEl directly.
+	let isResizing = $state(false);
+	let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+
 	// Zoom toward an arbitrary canvas point (cx, cy).
 	function zoomAt(cx: number, cy: number, factor: number) {
 		const newScale = Math.max(MIN_SCALE, mapScale * factor);
@@ -71,6 +70,9 @@
 		tx = cx - (cx - tx) * actualFactor;
 		ty = cy - (cy - ty) * actualFactor;
 		mapScale = newScale;
+		mapState.tx = tx;
+		mapState.ty = ty;
+		mapState.mapScale = mapScale;
 	}
 
 	function zoomIn()  { zoomAt(width / 2, height / 2, 1.5); }
@@ -79,10 +81,48 @@
 		const visibleLayers = layers.filter((l) => l.visible && l.hasTopology);
 		if (!projection || visibleLayers.length === 0) {
 			tx = 0; ty = 0; mapScale = 1;
+			mapState.tx = 0; mapState.ty = 0; mapState.mapScale = 1;
 			return;
 		}
 
-		// Combine all visible layer features into one collection
+		// Fast path: union the cached chunk bboxes (already in projection space,
+		// computed for free during path building — no coordinate traversal needed).
+		// Bezier chunks carry [-Infinity, ...] bboxes and are skipped.
+		// Point layers have empty chunk arrays and are skipped.
+		// If no finite bbox is found, fall back to the full bounds computation below.
+		let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+		let hasCachedBounds = false;
+		for (const layer of visibleLayers) {
+			const chunks = pathCache.get(layer.id);
+			if (!chunks) continue;
+			for (const { bbox } of chunks) {
+				const [cxMin, cyMin, cxMax, cyMax] = bbox;
+				if (!isFinite(cxMin)) continue; // bezier chunk — skip
+				if (cxMin < bx0) bx0 = cxMin;
+				if (cyMin < by0) by0 = cyMin;
+				if (cxMax > bx1) bx1 = cxMax;
+				if (cyMax > by1) by1 = cyMax;
+				hasCachedBounds = true;
+			}
+		}
+
+		if (hasCachedBounds) {
+			const padding = 40;
+			const scale = Math.min(
+				(width - padding * 2) / (bx1 - bx0),
+				(height - padding * 2) / (by1 - by0)
+			);
+			tx = width / 2 - ((bx0 + bx1) / 2) * scale;
+			ty = height / 2 - ((by0 + by1) / 2) * scale;
+			mapScale = scale;
+			mapState.tx = tx;
+			mapState.ty = ty;
+			mapState.mapScale = mapScale;
+			return;
+		}
+
+		// Fallback: compute bounds from GeoJSON (point-only layers, bezier-only,
+		// or pathCache not yet populated).
 		const features = visibleLayers.flatMap((l) => {
 			const topo = workingTopologyData.get(l.id);
 			if (!topo) return [];
@@ -92,10 +132,10 @@
 		});
 		const combined = { type: 'FeatureCollection' as const, features };
 
-		// Get bounding box in projected (canvas) coordinates
 		const [[x0, y0], [x1, y1]] = d3.geoPath(makeClampedProjection(projection) as unknown as d3.GeoProjection).bounds(combined as d3.GeoPermissibleObjects);
 		if (!isFinite(x0) || !isFinite(y0) || !isFinite(x1) || !isFinite(y1)) {
 			tx = 0; ty = 0; mapScale = 1;
+			mapState.tx = 0; mapState.ty = 0; mapState.mapScale = 1;
 			return;
 		}
 
@@ -107,6 +147,9 @@
 		tx = width / 2 - ((x0 + x1) / 2) * scale;
 		ty = height / 2 - ((y0 + y1) / 2) * scale;
 		mapScale = scale;
+		mapState.tx = tx;
+		mapState.ty = ty;
+		mapState.mapScale = mapScale;
 	}
 
 	function handlePointerDown(e: PointerEvent) {
@@ -120,6 +163,8 @@
 		if (!isDragging) return;
 		tx += e.clientX - lastPointerX;
 		ty += e.clientY - lastPointerY;
+		mapState.tx = tx;
+		mapState.ty = ty;
 		lastPointerX = e.clientX;
 		lastPointerY = e.clientY;
 	}
@@ -192,11 +237,22 @@
 	// cleared and rebuilt without re-running the topology pipeline.
 	const cachedBezierKeys = new Map<string, number>();
 
+	// Fingerprint that changes when layers are added/removed or when hasTopology/bezierCacheKey
+	// changes on any layer — but NOT when layers are merely reordered. The sort() ensures
+	// order is irrelevant. Because this is a string, Svelte uses === to compare the previous
+	// and new values; an identical string means no downstream effects are triggered.
+	const cacheSignal = $derived.by(() =>
+		layers.map(l => `${l.id}:${l.hasTopology ? 1 : 0}:${l.bezierCacheKey}`).sort().join('|')
+	);
+
 	// Compute Path2D only for layers that don't have a cached entry yet.
-	// Reads layer.hasTopology (a plain boolean in $state) as the reactive signal —
-	// never the topology itself, which lives in the plain workingTopologyData Map and
-	// is therefore invisible to Svelte's deep_read mechanism.
+	// Subscribes via cacheSignal (not layers directly) so that layer reordering — which
+	// produces an identical sorted fingerprint — does not trigger path recomputation.
+	// layers is read inside untrack() since cacheSignal already captures what matters.
 	$effect(() => {
+		if (layerDrag.active) return; // bail out during drag — all paths already cached, no computation needed
+		if (isResizing) return;       // defer during resize — recompute once after container settles
+		void cacheSignal; // re-run when layers change meaningfully; stable across reorders
 		if (!projection) return;
 
 		// Projection or chunk settings changed — all cached paths are now wrong.
@@ -211,18 +267,26 @@
 
 		let updated = false;
 
-		for (const layer of layers) {
+		// Read layers without subscribing — cacheSignal already tracks what matters.
+		const currentLayers = untrack(() => layers.slice());
+
+		for (const layer of currentLayers) {
 			const { id, hasTopology } = layer;
 			if (!hasTopology) { pathCache.delete(id); cachedBezierKeys.delete(id); continue; } // stale — clear and wait for pipeline
 
 			// Bezier settings changed — invalidate this layer's path cache entry so it
 			// rebuilds with the new settings. Topology is unchanged so no pipeline re-run.
-			if (cachedBezierKeys.get(id) !== layer.bezierCacheKey) {
+			const stored = cachedBezierKeys.get(id);
+			const current = layer.bezierCacheKey;
+			if (stored !== current) {
+				console.log(`[bezier-key mismatch] id=${id} stored=${stored} current=${current}`);
 				pathCache.delete(id);
-				cachedBezierKeys.set(id, layer.bezierCacheKey);
+				cachedBezierKeys.set(id, current);
 			}
 
 			if (pathCache.has(id)) continue; // already cached, skip
+
+			console.log(`[cache rebuild] id=${id}`);
 
 			const topo = workingTopologyData.get(id);
 			if (!topo) continue;
@@ -316,12 +380,27 @@
 		}
 
 		// Remove entries for layers that no longer exist.
-		const activeIds = new Set(layers.map((l) => l.id));
+		const activeIds = new Set(currentLayers.map((l) => l.id));
 		for (const id of pathCache.keys()) {
 			if (!activeIds.has(id)) pathCache.delete(id);
 		}
 
 		if (updated) cacheVersion++;
+	});
+
+	// Clear layer.loading once its paths are in the cache. Runs after each
+	// cacheVersion bump (i.e. right after the cache effect adds new entries).
+	// Kept separate from the cache effect so we're not writing reactive state
+	// from inside the same effect that builds the cache — cleaner dependency graph.
+	$effect(() => {
+		void cacheVersion;
+		untrack(() => {
+			for (const layer of layers) {
+				if (layer.loading && layer.hasTopology && pathCache.has(layer.id)) {
+					layer.loading = false;
+				}
+			}
+		});
 	});
 
 	// Wheel zoom — must be non-passive to call preventDefault().
@@ -347,9 +426,17 @@
 			const rect = entries[0].contentRect;
 			width = rect.width;
 			height = rect.height;
+			mapState.width = rect.width;
+			mapState.height = rect.height;
+			isResizing = true;
+			if (resizeTimer !== null) clearTimeout(resizeTimer);
+			resizeTimer = setTimeout(() => { isResizing = false; }, 150);
 		});
 		observer.observe(containerEl);
-		return () => observer.disconnect();
+		return () => {
+			observer.disconnect();
+			if (resizeTimer !== null) { clearTimeout(resizeTimer); resizeTimer = null; }
+		};
 	});
 
 	// Repaint the canvas whenever styles, visibility, layer order, or the
