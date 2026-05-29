@@ -4,6 +4,7 @@
 	import * as d3gp from 'd3-geo-projection';
 	import { feature } from 'topojson-client';
 	import { buildBezierArcs, buildTopoPath } from '$lib/utils/bezier';
+	import { buildAdjacencyGraph, buildChunksBFS, buildChunksHilbert } from '$lib/utils/spatial';
 	import { layers, workingTopologyData } from '$lib/stores/layers.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
 	import { mapState } from '$lib/stores/mapState.svelte';
@@ -14,6 +15,13 @@
 	import BackgroundControl from '$lib/components/map/BackgroundControl.svelte';
 	import Toaster from '$lib/components/ui/Toaster.svelte';
 	import { MagnifyingGlassPlus, MagnifyingGlassMinus, CornersOut } from 'phosphor-svelte';
+	import { debug } from '$lib/stores/debug.svelte';
+	import type { LayerChunkStats } from '$lib/stores/debug.svelte';
+
+	const DEBUG_COLORS = [
+		'#e63946', '#2a9d8f', '#e9c46a', '#f4a261', '#264653',
+		'#6a4c93', '#1982c4', '#8ac926', '#ff595e', '#6a994e',
+	];
 
 	// Merge core and extended projection namespaces so we can look up any
 	// projection by its function name regardless of which package it comes from.
@@ -85,7 +93,7 @@
 		const combined = { type: 'FeatureCollection' as const, features };
 
 		// Get bounding box in projected (canvas) coordinates
-		const [[x0, y0], [x1, y1]] = d3.geoPath(projection).bounds(combined as d3.GeoPermissibleObjects);
+		const [[x0, y0], [x1, y1]] = d3.geoPath(makeClampedProjection(projection) as unknown as d3.GeoProjection).bounds(combined as d3.GeoPermissibleObjects);
 		if (!isFinite(x0) || !isFinite(y0) || !isFinite(x1) || !isFinite(y1)) {
 			tx = 0; ty = 0; mapScale = 1;
 			return;
@@ -126,6 +134,29 @@
 		return fn().fitSize([width, height], { type: 'Sphere' });
 	});
 
+	// Wraps a projection's stream to clamp lon/lat before the projection math runs.
+	// TopoJSON quantization decodes pole coordinates as lat = 90 + ε (floating-point
+	// artifact of integer scale/translate arithmetic). Mercator returns NaN for lat > 90°,
+	// which causes Canvas 2D to produce triangular fill artifacts. Clamping to exactly
+	// [-90, 90] / [-180, 180] is invisible on screen but eliminates all NaN coordinates.
+	function makeClampedProjection(proj: d3.GeoProjection): { stream: (sink: d3.GeoStream) => d3.GeoStream } {
+		return {
+			stream: (sink: d3.GeoStream): d3.GeoStream => {
+				const s = proj.stream(sink);
+				return {
+					point(lon: number, lat: number) {
+						s.point(Math.max(-180, Math.min(180, lon)), Math.max(-90, Math.min(90, lat)));
+					},
+					lineStart()    { s.lineStart(); },
+					lineEnd()      { s.lineEnd(); },
+					polygonStart() { s.polygonStart(); },
+					polygonEnd()   { s.polygonEnd(); },
+					sphere()       { s.sphere?.(); },
+				};
+			}
+		};
+	}
+
 	// Push a history snapshot whenever the projection changes.
 	// We skip the initial run by comparing against the value at component creation.
 	let _lastProjectionId = projectionStore.id;
@@ -137,17 +168,24 @@
 		}
 	});
 
+	interface CachedChunk {
+		path2d: Path2D;
+		bbox: [number, number, number, number]; // xmin, ymin, xmax, ymax in projection space
+	}
+
 	// Plain Map — not reactive, so Svelte never re-runs path computation
 	// as a side-effect of the paint loop reading from it.
-	const pathCache = new Map<string, Path2D[]>();
+	const pathCache = new Map<string, CachedChunk[]>();
 
 	// Bumped whenever the cache gains new entries. The paint effect reads
 	// this so it knows to repaint after a path is computed.
 	let cacheVersion = $state(0);
 
-	// The projection object the cache was built for. When this changes
-	// we invalidate all entries and recompute from scratch.
+	// The projection object and max-chunk-vertices setting the cache was built for.
+	// When either changes we invalidate all entries and recompute from scratch.
 	let cachedProjection: d3.GeoProjection | null = null;
+	let cachedMaxChunkVertices = debug.maxChunkVertices;
+	let cachedNoChunking = debug.noChunking;
 
 	// Compute Path2D only for layers that don't have a cached entry yet.
 	// Reads layer.hasTopology (a plain boolean in $state) as the reactive signal —
@@ -156,10 +194,14 @@
 	$effect(() => {
 		if (!projection) return;
 
-		// Projection changed — all cached paths are now wrong.
-		if (projection !== cachedProjection) {
+		// Projection or chunk settings changed — all cached paths are now wrong.
+		const maxChunkVertices = debug.maxChunkVertices;
+		const noChunking = debug.noChunking;
+		if (projection !== cachedProjection || maxChunkVertices !== cachedMaxChunkVertices || noChunking !== cachedNoChunking) {
 			pathCache.clear();
 			cachedProjection = projection;
+			cachedMaxChunkVertices = maxChunkVertices;
+			cachedNoChunking = noChunking;
 		}
 
 		let updated = false;
@@ -179,37 +221,78 @@
 				// LineString, and MultiLineString; points are handled separately below.
 				const { bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias } = layer.processing;
 				const bezierArcs = buildBezierArcs(topo, projection, bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias);
-				pathCache.set(id, [buildTopoPath(topo, bezierArcs)]);
+				pathCache.set(id, [{ path2d: buildTopoPath(topo, bezierArcs), bbox: [-Infinity, -Infinity, Infinity, Infinity] }]);
 				updated = true;
 			} else {
 				// Standard path — convert topology → GeoJSON inline. The result is
 				// temporary: used to build the Path2D and then GC'd.
 				const data = feature(topo, topo.objects[objectName]) as { type?: string; features?: { geometry?: { type?: string } }[] };
 
-				// Filter out Point / MultiPoint — drawn separately with d3-shape symbols.
-				const nonPointFeatures = data.features?.filter((f) => {
-					const t = f?.geometry?.type;
-					return t !== 'Point' && t !== 'MultiPoint';
-				}) ?? [];
+				// Build parallel non-point arrays: GeoJSON features (for rendering) and
+				// TopoJSON geometries (for adjacency). Kept in sync by filtering together.
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				const topoGeoms: { arcs?: unknown }[] = ((topo.objects[objectName] as any).geometries ?? []);
+				type GeoFeature = NonNullable<typeof data.features>[number];
+				const nonPointGeo: GeoFeature[] = [];
+				const nonPointTopo: typeof topoGeoms = [];
+				for (let i = 0; i < (data.features?.length ?? 0); i++) {
+					const t = data.features![i]?.geometry?.type;
+					if (t !== 'Point' && t !== 'MultiPoint') {
+						nonPointGeo.push(data.features![i]);
+						nonPointTopo.push(topoGeoms[i] ?? {});
+					}
+				}
 
-				if (nonPointFeatures.length > 0) {
-					// Chunk features into groups of 200 before building Path2D objects.
-					// A single Path2D built from all features of a large dataset (e.g. US
-					// Counties) can exceed ~100 MB of SVG path data, which Chrome's Skia
-					// renderer silently drops. Smaller chunks stay well within that limit.
-					const CHUNK = 200;
-					const chunks: Path2D[] = [];
-					for (let i = 0; i < nonPointFeatures.length; i += CHUNK) {
-						const chunkData = { ...data, features: nonPointFeatures.slice(i, i + CHUNK) };
+				if (nonPointGeo.length > 0) {
+					// Use topology-based BFS chunking when shared arcs are present AND the
+					// layer contains only polygon features. BFS produces one chunk per
+					// connected component, which is compact and correct for polygon borders
+					// (countries, counties) but wrong for line networks (roads, rivers,
+					// graticules) where many segments are disconnected and would each become
+					// their own single-feature chunk — causing thousands of Path2D objects.
+					// Line layers use Hilbert sort, which packs many small features correctly.
+					const MAX_CHUNK_VERTICES = maxChunkVertices;
+					const isPolygonLayer = nonPointGeo.every(f => {
+						const t = f?.geometry?.type;
+						return t === 'Polygon' || t === 'MultiPolygon';
+					});
+					const adjacency = isPolygonLayer ? buildAdjacencyGraph(nonPointTopo) : [];
+					const hasTopology = isPolygonLayer && adjacency.some(s => s.size > 0);
+					const featureGroups = noChunking
+						? nonPointGeo.map(f => [f])
+						: hasTopology
+							? buildChunksBFS(nonPointGeo, adjacency, MAX_CHUNK_VERTICES)
+							: buildChunksHilbert(nonPointGeo, MAX_CHUNK_VERTICES);
+
+					// Build Path2D while tracking its bbox in projection space.
+					// Bbox is computed for free — we're already visiting every coordinate.
+					const chunks: CachedChunk[] = [];
+					for (const chunkFeatures of featureGroups) {
 						const path2d = new Path2D();
-						(path2d as any).beginPath = () => {};
-						d3.geoPath(projection, path2d as any)(chunkData as d3.GeoPermissibleObjects);
-						chunks.push(path2d);
+						let xMin = Infinity, yMin = Infinity, xMax = -Infinity, yMax = -Infinity;
+						const pathCtx = {
+							beginPath: () => {},
+							moveTo: (x: number, y: number) => {
+								path2d.moveTo(x, y);
+								if (x < xMin) xMin = x; if (x > xMax) xMax = x;
+								if (y < yMin) yMin = y; if (y > yMax) yMax = y;
+							},
+							lineTo: (x: number, y: number) => {
+								path2d.lineTo(x, y);
+								if (x < xMin) xMin = x; if (x > xMax) xMax = x;
+								if (y < yMin) yMin = y; if (y > yMax) yMax = y;
+							},
+							closePath: () => { path2d.closePath(); },
+							arc: (x: number, y: number, r: number, a1: number, a2: number) => {
+								path2d.arc(x, y, r, a1, a2);
+							},
+						};
+						d3.geoPath(makeClampedProjection(projection) as unknown as d3.GeoProjection, pathCtx as any)({ ...data, features: chunkFeatures } as d3.GeoPermissibleObjects);
+						chunks.push({ path2d, bbox: [xMin, yMin, xMax, yMax] });
 					}
-					if (chunks.length > 0) {
-						pathCache.set(id, chunks);
-						updated = true;
-					}
+
+					pathCache.set(id, chunks);
+					updated = true;
 				} else {
 					// Pure point layer — store an empty array so the paint loop knows
 					// data has arrived and cacheVersion bumps to trigger a repaint.
@@ -267,9 +350,6 @@
 		const bitmapW = Math.round(width * dpr);
 		const bitmapH = Math.round(height * dpr);
 
-		// Only reallocate the canvas bitmap when the size actually changes.
-		// Assigning canvasEl.width/height — even to the same value — destroys
-		// and recreates the entire pixel buffer, which is very expensive.
 		if (canvasEl.width !== bitmapW || canvasEl.height !== bitmapH) {
 			canvasEl.width = bitmapW;
 			canvasEl.height = bitmapH;
@@ -283,54 +363,72 @@
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, width, height);
 
-		// Background fill — drawn before layers so it sits behind everything.
-		// The container is white, so alpha=0 simply reveals white.
 		ctx.globalAlpha = background.alpha;
 		ctx.fillStyle = background.hex;
 		ctx.fillRect(0, 0, width, height);
 		ctx.globalAlpha = 1;
 
-		// Apply pan/zoom on top of the DPR scale. Layers are drawn in world
-		// space (0..width, 0..height) so this shifts + scales the whole map.
 		ctx.translate(tx, ty);
 		ctx.scale(mapScale, mapScale);
+
+		const debugStats: LayerChunkStats[] = [];
+		let debugChunkOffset = 0;
 
 		for (const layer of [...layers].reverse()) {
 			if (!layer.visible) continue;
 
-			// Don't read layer.data here — Svelte would deep_read the entire
-			// GeoJSON tree to establish reactive tracking, which takes seconds
-			// for large datasets. The pathCache check is sufficient: if there's
-			// no cached path, the data hasn't loaded yet.
-			// paths===undefined means not yet loaded; paths===[] means point-only layer.
-			const paths = pathCache.get(layer.id);
-			if (paths === undefined) continue;
+			const chunks = pathCache.get(layer.id);
+			if (chunks === undefined) continue;
 
 			const hasNonPoint = layer.geometryTypes.some((t) => t !== 'Point' && t !== 'MultiPoint');
 			const hasPoints   = layer.geometryTypes.some((t) => t === 'Point' || t === 'MultiPoint');
 
-			// ── Polygon / line geometry ────────────────────────────────────────
 			if (hasNonPoint) {
-				ctx.strokeStyle = layer.style.stroke;
-				ctx.lineWidth = layer.style.strokeWidth / mapScale;
-				if (layer.style.strokeDashed) {
-					ctx.setLineDash([layer.style.strokeDash / mapScale, layer.style.strokeGap / mapScale]);
-				}
-				for (const path2d of paths) {
-					if (layer.style.fill !== 'none') {
-						ctx.globalAlpha = layer.style.fillOpacity;
-						ctx.fillStyle = layer.style.fill;
-						ctx.fill(path2d);
+				const vxMin = -tx / mapScale;
+				const vxMax = (width - tx) / mapScale;
+				const vyMin = -ty / mapScale;
+				const vyMax = (height - ty) / mapScale;
+
+				if (!debug.enabled) {
+					ctx.strokeStyle = layer.style.stroke;
+					ctx.lineWidth = layer.style.strokeWidth / mapScale;
+					if (layer.style.strokeDashed) {
+						ctx.setLineDash([layer.style.strokeDash / mapScale, layer.style.strokeGap / mapScale]);
 					}
-					ctx.globalAlpha = layer.style.strokeOpacity;
-					ctx.stroke(path2d);
 				}
+
+				let visibleChunks = 0;
+				for (let ci = 0; ci < chunks.length; ci++) {
+					const { path2d, bbox } = chunks[ci];
+					const [xMin, yMin, xMax, yMax] = bbox;
+					if (xMax < vxMin || xMin > vxMax || yMax < vyMin || yMin > vyMax) continue;
+					visibleChunks++;
+
+					if (debug.enabled) {
+						const color = DEBUG_COLORS[(debugChunkOffset + ci) % DEBUG_COLORS.length];
+						ctx.globalAlpha = 0.35;
+						ctx.fillStyle = color;
+						ctx.fill(path2d, 'evenodd');
+						ctx.globalAlpha = 0.85;
+						ctx.strokeStyle = color;
+						ctx.lineWidth = 1.5 / mapScale;
+						ctx.setLineDash([]);
+						ctx.stroke(path2d);
+					} else {
+						if (layer.style.fill !== 'none') {
+							ctx.globalAlpha = layer.style.fillOpacity;
+							ctx.fillStyle = layer.style.fill;
+							ctx.fill(path2d, 'evenodd');
+						}
+						ctx.globalAlpha = layer.style.strokeOpacity;
+						ctx.stroke(path2d);
+					}
+				}
+				debugChunkOffset += chunks.length;
+				debugStats.push({ layerId: layer.id, layerName: layer.name, total: chunks.length, visible: visibleChunks });
 				ctx.setLineDash([]);
 			}
 
-			// ── Point geometry — d3-shape symbols ─────────────────────────────
-			// We read workingTopologyData directly (plain Map — no Svelte tracking) and
-			// project each coordinate manually so we can stamp the chosen symbol.
 			if (hasPoints && projection) {
 				const sym = shapeMap[layer.style.pointShape] ?? d3shape.symbolCircle;
 				const area = Math.PI * layer.style.pointRadius * layer.style.pointRadius;
@@ -363,8 +461,6 @@
 
 								ctx.save();
 								ctx.translate(px, py);
-								// Cancel mapScale so symbols stay constant size in screen pixels,
-								// mirroring how strokeWidth is divided by mapScale above.
 								ctx.scale(1 / mapScale, 1 / mapScale);
 
 								if (layer.style.fill !== 'none') {
@@ -376,7 +472,7 @@
 								if (layer.style.stroke !== 'none') {
 									ctx.globalAlpha = layer.style.strokeOpacity;
 									ctx.strokeStyle = layer.style.stroke;
-									ctx.lineWidth = layer.style.strokeWidth; // already in screen-px after scale
+									ctx.lineWidth = layer.style.strokeWidth;
 									ctx.stroke(symPath2D);
 								}
 
@@ -387,7 +483,34 @@
 				}
 			}
 
-			// Reset alpha so layers don't bleed into each other.
+			ctx.globalAlpha = 1;
+		}
+
+		if (debug.enabled) debug.chunkStats = debugStats;
+
+		if (debug.enabled && debug.showBboxes) {
+			let bboxOffset = 0;
+			for (const layer of [...layers].reverse()) {
+				if (!layer.visible) continue;
+				const chunks = pathCache.get(layer.id);
+				if (!chunks) { continue; }
+				const hasNonPoint = layer.geometryTypes.some((t) => t !== 'Point' && t !== 'MultiPoint');
+				if (!hasNonPoint) { bboxOffset += chunks.length; continue; }
+
+				for (let ci = 0; ci < chunks.length; ci++) {
+					const { bbox } = chunks[ci];
+					const [xMin, yMin, xMax, yMax] = bbox;
+					if (!isFinite(xMin)) continue;
+					const color = DEBUG_COLORS[(bboxOffset + ci) % DEBUG_COLORS.length];
+					ctx.globalAlpha = 0.7;
+					ctx.strokeStyle = color;
+					ctx.lineWidth = 1.5 / mapScale;
+					ctx.setLineDash([5 / mapScale, 5 / mapScale]);
+					ctx.strokeRect(xMin, yMin, xMax - xMin, yMax - yMin);
+				}
+				bboxOffset += chunks.length;
+			}
+			ctx.setLineDash([]);
 			ctx.globalAlpha = 1;
 		}
 	});
@@ -423,6 +546,7 @@
 		onpointermove={handlePointerMove}
 		onpointerup={handlePointerUp}
 	></canvas>
+
 </div>
 
 <style>

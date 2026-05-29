@@ -8,6 +8,7 @@
 	import { clearUploadedDatasets } from '$lib/stores/uploadedDatasets.svelte';
 	import { projection } from '$lib/stores/projection.svelte';
 	import { clearHistory, pushSnapshot, undo, redo, canUndo, canRedo } from '$lib/stores/history.svelte';
+	import { debug } from '$lib/stores/debug.svelte';
 
 	let fileInputEl = $state<HTMLInputElement | null>(null);
 
@@ -92,6 +93,7 @@
 
 	<div class="actions">
 		<a class="mono-regular experiments-link" href="/experiments">Experiments</a>
+		<button class="mono-regular debug-btn" class:active={debug.enabled} onclick={() => debug.enabled = !debug.enabled}>Debug</button>
 		<div class="separator"></div>
 		<button class="mono-regular" disabled={!canUndo()} onclick={undo}>Undo</button>
 		<button class="mono-regular" disabled={!canRedo()} onclick={redo}>Redo</button>
@@ -231,6 +233,11 @@
 	.experiments-link:hover {
 		background-color: var(--color-surface-tertiary);
 		color: var(--color-text-primary);
+	}
+
+	.debug-btn.active {
+		background-color: var(--color-surface-tertiary);
+		color: var(--color-accent);
 	}
 
 	.separator {
