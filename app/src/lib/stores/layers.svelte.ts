@@ -75,6 +75,12 @@ export async function runLayerPipeline(id: string, applyDefaults = true): Promis
 	const layer = layers.find((l) => l.id === id);
 	if (!rawTopo || !layer) return;
 
+	// Yield to the event loop before any heavy synchronous work (e.g. JSON.stringify
+	// of a large topology for Mapshaper). This lets Svelte flush pending reactive
+	// updates — like layer.loading = true — so the UI can reflect the loading state
+	// before the thread is blocked.
+	await Promise.resolve();
+
 	// Auto-simplify large datasets on first load so they render at a usable speed.
 	// This sets the processing state the same way the user would — visible in the
 	// Process panel and adjustable at any time.

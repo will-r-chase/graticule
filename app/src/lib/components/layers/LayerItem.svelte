@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
-	import { Eye, EyeSlash, X, SlidersHorizontal } from 'phosphor-svelte';
+	import { Eye, EyeSlash, X, SlidersHorizontal, CircleNotch } from 'phosphor-svelte';
 	import type { Layer } from '$lib/types';
 	import { removeLayer, toggleVisibility, renameLayer } from '$lib/stores/layers.svelte';
 	import { pushSnapshot, historyVersion } from '$lib/stores/history.svelte';
@@ -18,6 +18,20 @@
 
 	let activeTab = $state<'style' | 'simplification'>('style');
 	let editing = $state(false);
+
+	let showSpinner = $state(false);
+	let spinnerTimer: ReturnType<typeof setTimeout> | null = null;
+	$effect(() => {
+		if (layer.loading) {
+			spinnerTimer = setTimeout(() => { showSpinner = true; }, 300);
+		} else {
+			if (spinnerTimer) { clearTimeout(spinnerTimer); spinnerTimer = null; }
+			showSpinner = false;
+		}
+		return () => {
+			if (spinnerTimer) { clearTimeout(spinnerTimer); spinnerTimer = null; }
+		};
+	});
 	let draft = $state('');
 	let inputEl = $state<HTMLInputElement | null>(null);
 
@@ -49,16 +63,22 @@
 
 <div class="layer-item-wrapper" class:open={styleOpen}>
 	<div class="layer-item" class:selected={styleOpen}>
-		<button
-			class="style-swatch"
-			style="
-				--fill: {layer.style.fill === 'none' ? 'transparent' : layer.style.fill};
-				--stroke: {layer.style.stroke};
-			"
-			onclick={() => styleCtx.toggle(layer.id)}
-			onpointerdown={(e) => e.stopPropagation()}
-			aria-label="Edit layer style"
-		></button>
+		{#if showSpinner}
+			<div class="style-spinner" aria-label="Loading">
+				<CircleNotch size={14} color="var(--color-text-tertiary)" />
+			</div>
+		{:else}
+			<button
+				class="style-swatch"
+				style="
+					--fill: {layer.style.fill === 'none' ? 'transparent' : layer.style.fill};
+					--stroke: {layer.style.stroke};
+				"
+				onclick={() => styleCtx.toggle(layer.id)}
+				onpointerdown={(e) => e.stopPropagation()}
+				aria-label="Edit layer style"
+			></button>
+		{/if}
 
 		{#if editing}
 			<input
@@ -221,6 +241,20 @@
 		background-position: 0 0, 0 3px, 3px -3px, -3px 0px;
 		outline: 1.5px solid var(--stroke, #161819);
 		outline-offset: -1px;
+	}
+
+	.style-spinner {
+		width: 14px;
+		height: 14px;
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		animation: spin 0.8s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
 	}
 
 	.style-swatch::after {
