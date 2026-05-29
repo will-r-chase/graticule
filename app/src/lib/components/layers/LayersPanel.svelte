@@ -2,10 +2,9 @@
 	import { setContext } from 'svelte';
 	import { dndzone } from 'svelte-dnd-action';
 	import type { Layer } from '$lib/types';
-	import { layers, reorderLayers } from '$lib/stores/layers.svelte';
+	import { layers, reorderLayers, layerDrag } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { debug } from '$lib/stores/debug.svelte';
-	import { mapState } from '$lib/stores/mapState.svelte';
 	import LayerItem from './LayerItem.svelte';
 
 	// Track which layer's style panel is open. Stored here (not inside the
@@ -24,10 +23,12 @@
 	});
 
 	function handleConsider(e: CustomEvent<{ items: Layer[] }>) {
+		layerDrag.active = true;
 		reorderLayers(e.detail.items);
 	}
 
 	function handleFinalize(e: CustomEvent<{ items: Layer[] }>) {
+		layerDrag.active = false;
 		reorderLayers(e.detail.items);
 		pushSnapshot();
 	}
@@ -77,15 +78,6 @@
 					<option value={150_000}>150k</option>
 				</select>
 			</label>
-			<div class="debug-divider"></div>
-			<div class="debug-row mono-small">
-				<span class="debug-label">zoom</span>
-				<span>{mapState.mapScale.toFixed(3)}x</span>
-			</div>
-			<div class="debug-row mono-small">
-				<span class="debug-label">pan</span>
-				<span>{Math.round(mapState.tx)}, {Math.round(mapState.ty)}</span>
-			</div>
 			{#if debug.chunkStats.length > 0}
 				<div class="debug-divider"></div>
 				{#each debug.chunkStats as stat (stat.layerId)}

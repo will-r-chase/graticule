@@ -1,17 +1,9 @@
-export const mapState = $state<{
-	canvas: HTMLCanvasElement | null;
-	width: number;
-	height: number;
-	bgColor: string;
-	tx: number;
-	ty: number;
-	mapScale: number;
-}>({
-	canvas: null,
+// Plain (non-reactive) object that MapCanvas writes to imperatively.
+// Export reads these values at click time — no reactivity needed.
+export const mapState = {
 	width: 0,
 	height: 0,
-	bgColor: '#f4f4f5',
 	tx: 0,
 	ty: 0,
 	mapScale: 1,
-});
+};

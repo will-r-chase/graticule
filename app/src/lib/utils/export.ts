@@ -5,6 +5,7 @@ import { feature } from 'topojson-client';
 import type { Feature, FeatureCollection } from 'geojson';
 import { layers, workingTopologyData } from '$lib/stores/layers.svelte';
 import { projection as projectionStore } from '$lib/stores/projection.svelte';
+import { background } from '$lib/stores/background.svelte';
 import { mapState } from '$lib/stores/mapState.svelte';
 
 const allProjections = { ...d3, ...d3gp } as Record<string, unknown>;
@@ -79,7 +80,8 @@ interface SVGOptions {
 }
 
 function buildSVGString(options: SVGOptions): string | null {
-	const { width, height, bgColor, tx, ty, mapScale } = mapState;
+	const { width, height, tx, ty, mapScale } = mapState;
+	const bgColor = background.hex;
 	if (!width || !height) return null;
 
 	const combined = getCombinedGeoJSON();

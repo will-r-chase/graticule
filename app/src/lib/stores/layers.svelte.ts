@@ -164,7 +164,6 @@ async function runChaikinStage(id: string, applyDefaults: boolean): Promise<void
 		}
 	}
 
-	layer.loading     = false;
 	layer.hasTopology = true;
 }
 
@@ -363,5 +362,10 @@ export function clearLayers(): void {
 	workingTopologyData.clear();
 	layers.splice(0, layers.length);
 }
+
+// Signals that a drag-to-reorder gesture is in progress.
+// The cache effect in MapCanvas reads this to bail out early — path computation
+// is wasted during drag since all paths are already cached.
+export const layerDrag = $state({ active: false });
 
 export { layers, rawTopologyData, workingTopologyData };
