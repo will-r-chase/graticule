@@ -74,6 +74,9 @@ export interface Layer {
 	style: LayerStyle;
 	processing: LayerProcessing;
 	geometryTypes: string[];
+	// Bumped when bezier settings change so the path cache rebuilds without
+	// re-running the topology pipeline. Bezier runs entirely in the cache builder.
+	bezierCacheKey: number;
 }
 
 export interface UploadedDataset {

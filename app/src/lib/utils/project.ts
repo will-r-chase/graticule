@@ -167,6 +167,7 @@ export function loadProject(json: string): void {
 				style: { ...saved.style },
 				processing: saved.processing ? { ...saved.processing } : defaultProcessing(),
 				geometryTypes: [],
+				bezierCacheKey: 0,
 			});
 
 			fetch(`${catalog.baseURL}/${dataset.filePath}`)

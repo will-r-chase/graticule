@@ -187,6 +187,11 @@
 	let cachedMaxChunkVertices = debug.maxChunkVertices;
 	let cachedNoChunking = debug.noChunking;
 
+	// Per-layer bezierCacheKey values at the time the path cache entry was built.
+	// When layer.bezierCacheKey changes (bezier settings updated), the entry is
+	// cleared and rebuilt without re-running the topology pipeline.
+	const cachedBezierKeys = new Map<string, number>();
+
 	// Compute Path2D only for layers that don't have a cached entry yet.
 	// Reads layer.hasTopology (a plain boolean in $state) as the reactive signal —
 	// never the topology itself, which lives in the plain workingTopologyData Map and
@@ -208,7 +213,15 @@
 
 		for (const layer of layers) {
 			const { id, hasTopology } = layer;
-			if (!hasTopology) { pathCache.delete(id); continue; } // stale — clear and wait for pipeline
+			if (!hasTopology) { pathCache.delete(id); cachedBezierKeys.delete(id); continue; } // stale — clear and wait for pipeline
+
+			// Bezier settings changed — invalidate this layer's path cache entry so it
+			// rebuilds with the new settings. Topology is unchanged so no pipeline re-run.
+			if (cachedBezierKeys.get(id) !== layer.bezierCacheKey) {
+				pathCache.delete(id);
+				cachedBezierKeys.set(id, layer.bezierCacheKey);
+			}
+
 			if (pathCache.has(id)) continue; // already cached, skip
 
 			const topo = workingTopologyData.get(id);

@@ -14,10 +14,15 @@ let layers = $state<Layer[]>([]);
 // Topology data — stored outside $state so Svelte never wraps it in a reactive
 // proxy. Accessing large topology/GeoJSON through a reactive proxy causes Svelte
 // to call deep_read() — traversing every coordinate — on each reactive update.
-// rawTopologyData: the original topology as fetched/converted (never mutated).
-// workingTopologyData: the processed topology after the pipeline (simplify → Chaikin).
+//
+// rawTopologyData:        original topology as fetched/converted (never mutated).
+// simplifiedTopologyData: post-Mapshaper, pre-Chaikin. Internal pipeline cache —
+//                         no consumer outside layers.svelte.ts should read this.
+// workingTopologyData:    post-Chaikin (or same reference as simplified if Chaikin
+//                         is disabled). This is what all renderers and exporters use.
 // layer.hasTopology signals when workingTopologyData is ready to render.
 const rawTopologyData = new Map<string, Topology>();
+const simplifiedTopologyData = new Map<string, Topology>();
 const workingTopologyData = new Map<string, Topology>();
 
 // Generates a simple unique ID for each layer instance.
@@ -64,26 +69,30 @@ function defaultStyle() {
 // Processing pipeline
 // ---------------------------------------------------------------------------
 
-// Reads rawTopologyData for the given layer, applies any enabled processing
-// (simplification → Chaikin), and writes the result to workingTopologyData.
-// Geometry types are detected directly from the topology so we never need to
-// materialise a full GeoJSON FeatureCollection here.
-// applyDefaults: pass true on first load so geometry-aware style defaults are
-// set; pass false on subsequent runs to preserve the user's style choices.
-export async function runLayerPipeline(id: string, applyDefaults = true): Promise<void> {
+// Which LayerProcessing keys belong to each stage. Used by updateLayerProcessing
+// to determine which stage(s) need to re-run when settings change.
+const SIMP_KEYS = new Set<keyof LayerProcessing>([
+	'simpEnabled', 'simpAlgorithm', 'simpTolerance', 'simpWeight', 'simpKeepShapes',
+]);
+const CHAIKIN_KEYS = new Set<keyof LayerProcessing>([
+	'chaikinEnabled', 'chaikinIterations',
+]);
+// Bezier keys are everything else — bezier changes only need a path cache rebuild,
+// no topology recomputation.
+
+// Stage 1 — Mapshaper simplification.
+// Reads rawTopologyData, writes simplifiedTopologyData.
+// applyDefaults: on first load, auto-simplifies large datasets.
+async function runSimplificationStage(id: string, applyDefaults: boolean): Promise<void> {
 	const rawTopo = rawTopologyData.get(id);
 	const layer = layers.find((l) => l.id === id);
 	if (!rawTopo || !layer) return;
 
-	// Yield to the event loop before any heavy synchronous work (e.g. JSON.stringify
-	// of a large topology for Mapshaper). This lets Svelte flush pending reactive
-	// updates — like layer.loading = true — so the UI can reflect the loading state
-	// before the thread is blocked.
+	// Yield to the event loop so Svelte can flush layer.loading = true before
+	// JSON.stringify(topo) blocks the thread.
 	await Promise.resolve();
 
 	// Auto-simplify large datasets on first load so they render at a usable speed.
-	// This sets the processing state the same way the user would — visible in the
-	// Process panel and adjustable at any time.
 	if (applyDefaults && !layer.processing.simpEnabled) {
 		const pointCount = countTopoPoints(rawTopo);
 		if (pointCount > DISPLAY_VERTEX_THRESHOLD) {
@@ -95,7 +104,6 @@ export async function runLayerPipeline(id: string, applyDefaults = true): Promis
 
 	let topo: Topology = rawTopo;
 
-	// Step 1 — Mapshaper simplification (topology-aware).
 	if (layer.processing.simpEnabled) {
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const ms = (window as any).mapshaper;
@@ -111,16 +119,28 @@ export async function runLayerPipeline(id: string, applyDefaults = true): Promis
 		}
 	}
 
-	// Step 2 — Chaikin smoothing.
-	if (layer.processing.chaikinEnabled) {
-		topo = applyChaikinToTopology(topo, layer.processing.chaikinIterations);
-	}
+	simplifiedTopologyData.set(id, topo);
+}
 
-	// Store the processed topology.
+// Stage 2 — Chaikin smoothing.
+// Reads simplifiedTopologyData, writes workingTopologyData.
+// Also detects geometry types and applies first-load style defaults.
+async function runChaikinStage(id: string, applyDefaults: boolean): Promise<void> {
+	const simplified = simplifiedTopologyData.get(id);
+	const layer = layers.find((l) => l.id === id);
+	if (!simplified || !layer) return;
+
+	await Promise.resolve();
+
+	// Chaikin disabled — workingTopologyData points to the same object as
+	// simplifiedTopologyData. No data is duplicated; it's just two references.
+	const topo: Topology = layer.processing.chaikinEnabled
+		? applyChaikinToTopology(simplified, layer.processing.chaikinIterations)
+		: simplified;
+
 	workingTopologyData.set(id, topo);
 
-	// Detect geometry types directly from the topology objects — no need to
-	// materialise GeoJSON just to read the type strings.
+	// Detect geometry types from the topology — no need to materialise GeoJSON.
 	type TopoGeomCollection = { geometries?: { type?: string }[] };
 	const objectName = Object.keys(topo.objects)[0];
 	const geometries = (topo.objects[objectName] as TopoGeomCollection).geometries ?? [];
@@ -148,20 +168,44 @@ export async function runLayerPipeline(id: string, applyDefaults = true): Promis
 	layer.hasTopology = true;
 }
 
-// Updates a layer's processing settings and re-runs the pipeline.
-// Called by the processing UI panel when the user changes any setting.
+// Full pipeline: simplification → Chaikin. Used on initial load (fetch/upload).
+export async function runLayerPipeline(id: string, applyDefaults = true): Promise<void> {
+	await runSimplificationStage(id, applyDefaults);
+	await runChaikinStage(id, applyDefaults);
+}
+
+// Updates a layer's processing settings, running only the stage(s) that need it.
+//   Simp settings changed    → re-run both stages (Mapshaper output is stale)
+//   Chaikin settings changed → skip Mapshaper, re-run only Chaikin
+//   Bezier settings changed  → no topology work; bump bezierCacheKey so MapCanvas
+//                              rebuilds the path cache with the new bezier settings
 export function updateLayerProcessing(id: string, patch: Partial<LayerProcessing>, onComplete?: () => void): void {
 	const layer = layers.find((l) => l.id === id);
 	if (!layer) return;
+
+	const changedKeys = Object.keys(patch) as (keyof LayerProcessing)[];
+	const simpChanged    = changedKeys.some((k) => SIMP_KEYS.has(k));
+	const chaikinChanged = changedKeys.some((k) => CHAIKIN_KEYS.has(k));
+
 	Object.assign(layer.processing, patch);
-	// Signal MapCanvas to clear the stale path cache entry; runLayerPipeline
-	// will set hasTopology back to true once the new topology is ready.
-	layer.hasTopology = false;
-	layer.loading = true;
-	// onComplete fires after the pipeline resolves — callers use this to push
-	// a history snapshot only once the final state is ready (not the transient
-	// hasTopology=false loading state, which would break undo).
-	runLayerPipeline(id, false).then(() => onComplete?.());
+
+	if (simpChanged) {
+		// Simp settings changed — re-run both stages.
+		layer.hasTopology = false;
+		layer.loading = true;
+		runSimplificationStage(id, false)
+			.then(() => runChaikinStage(id, false))
+			.then(() => onComplete?.());
+	} else if (chaikinChanged) {
+		// Chaikin settings changed — simplifiedTopologyData is still valid, skip Mapshaper.
+		layer.hasTopology = false;
+		layer.loading = true;
+		runChaikinStage(id, false).then(() => onComplete?.());
+	} else {
+		// Bezier settings changed — topology is unchanged, just signal path cache to rebuild.
+		layer.bezierCacheKey++;
+		onComplete?.();
+	}
 }
 
 // Fetches a single TopoJSON file and populates the given layer.
@@ -216,6 +260,7 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 				style: defaultStyle(),
 				processing: defaultProcessing(),
 				geometryTypes: [],
+				bezierCacheKey: 0,
 			});
 
 			fetchTopoJSON(id, `${catalog.baseURL}/${subLayer.filePath}`, onSubComplete);
@@ -236,6 +281,7 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 			style: defaultStyle(),
 			processing: defaultProcessing(),
 			geometryTypes: [],
+			bezierCacheKey: 0,
 		});
 
 		fetch(`${catalog.baseURL}/${dataset.filePath}`)
@@ -269,6 +315,7 @@ export function addUploadedLayer(name: string, topology: Topology, uploadId: str
 		style: defaultStyle(),
 		processing: defaultProcessing(),
 		geometryTypes: [],
+		bezierCacheKey: 0,
 	});
 	rawTopologyData.set(id, topology);
 	runLayerPipeline(id, applyDefaults); // resolves as a microtask — layer will be ready almost immediately
@@ -312,6 +359,7 @@ export function reorderLayers(newOrder: Layer[]): void {
 
 export function clearLayers(): void {
 	rawTopologyData.clear();
+	simplifiedTopologyData.clear();
 	workingTopologyData.clear();
 	layers.splice(0, layers.length);
 }

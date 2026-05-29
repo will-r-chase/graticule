@@ -20,6 +20,7 @@ interface SnapshotLayer {
 	hasTopology: boolean;
 	loading: boolean;
 	error: string | null;
+	bezierCacheKey: number;
 }
 
 interface Snapshot {
@@ -46,6 +47,7 @@ function capture(): Snapshot {
 			hasTopology: l.hasTopology,
 			loading: l.loading,
 			error: l.error,
+			bezierCacheKey: l.bezierCacheKey,
 		})),
 		projectionId: projection.id,
 		bgHex: background.hex,
@@ -70,6 +72,7 @@ function restore(snapshot: Snapshot): void {
 			geometryTypes: [...sl.geometryTypes],
 			hasTopology: false,
 			loading: sl.hasTopology,
+			bezierCacheKey: sl.bezierCacheKey ?? 0,
 		}))
 	);
 	projection.id = snapshot.projectionId;
