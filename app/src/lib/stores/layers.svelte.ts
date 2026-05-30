@@ -1,7 +1,8 @@
 import type { Topology } from 'topojson-specification';
 import type { Layer, LayerStyle, LayerProcessing, Dataset } from '$lib/types';
 import { catalog } from './catalog.svelte';
-import { applyChaikinToTopology, countTopoPoints } from '$lib/utils/chaikin';
+import { countTopoPoints } from '$lib/utils/chaikin';
+import { workerChaikin } from '$lib/workers/geoWorker';
 import { showToast } from './toast.svelte';
 
 const DISPLAY_VERTEX_THRESHOLD = 500_000;
@@ -135,7 +136,7 @@ async function runChaikinStage(id: string, applyDefaults: boolean): Promise<void
 	// Chaikin disabled — workingTopologyData points to the same object as
 	// simplifiedTopologyData. No data is duplicated; it's just two references.
 	const topo: Topology = layer.processing.chaikinEnabled
-		? applyChaikinToTopology(simplified, layer.processing.chaikinIterations)
+		? await workerChaikin(id, simplified, layer.processing.chaikinIterations)
 		: simplified;
 
 	workingTopologyData.set(id, topo);

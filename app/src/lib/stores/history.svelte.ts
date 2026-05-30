@@ -18,7 +18,6 @@ interface SnapshotLayer {
 	processing: LayerProcessing;
 	geometryTypes: string[];
 	hasTopology: boolean;
-	loading: boolean;
 	error: string | null;
 	bezierCacheKey: number;
 }
@@ -45,7 +44,6 @@ function capture(): Snapshot {
 			processing: { ...l.processing },
 			geometryTypes: [...l.geometryTypes],
 			hasTopology: l.hasTopology,
-			loading: l.loading,
 			error: l.error,
 			bezierCacheKey: l.bezierCacheKey,
 		})),

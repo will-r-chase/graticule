@@ -176,13 +176,20 @@ export function buildBezierArcs(
 	});
 }
 
+export interface PathRecorder {
+	moveTo(x: number, y: number): void;
+	bezierCurveTo(cp1x: number, cp1y: number, cp2x: number, cp2y: number, ex: number, ey: number): void;
+	closePath(): void;
+}
+
 /**
- * Writes one ring of arc indices into a Path2D, honouring forward/reversed
+ * Writes one ring of arc indices into a PathRecorder, honouring forward/reversed
  * arcs via the ~idx convention. Break segments emit moveTo rather than
  * bezierCurveTo to avoid drawing across the antimeridian.
  * Pass close=false for LineString arcs that should not be closed.
+ * Path2D satisfies PathRecorder, so existing callers are unaffected.
  */
-export function arcRingToPath(arcIndices: number[], bezierArcs: BezierArc[], path2d: Path2D, close = true): void {
+export function arcRingToPath(arcIndices: number[], bezierArcs: BezierArc[], recorder: PathRecorder, close = true): void {
 	let started = false;
 
 	for (const idx of arcIndices) {
@@ -194,30 +201,30 @@ export function arcRingToPath(arcIndices: number[], bezierArcs: BezierArc[], pat
 			// Reversed arc: start from the last point, traverse segments backwards.
 			// Reversing a cubic bezier just swaps cp1 and cp2.
 			const last = arc.segs[arc.segs.length - 1];
-			if (!started) { path2d.moveTo(last.ex, last.ey); started = true; }
+			if (!started) { recorder.moveTo(last.ex, last.ey); started = true; }
 			for (let i = arc.segs.length - 1; i >= 0; i--) {
 				const seg = arc.segs[i];
 				const toX = i === 0 ? arc.sx : arc.segs[i - 1].ex;
 				const toY = i === 0 ? arc.sy : arc.segs[i - 1].ey;
 				if (seg.isBreak) {
-					path2d.moveTo(toX, toY);
+					recorder.moveTo(toX, toY);
 				} else {
-					path2d.bezierCurveTo(seg.cp2x, seg.cp2y, seg.cp1x, seg.cp1y, toX, toY);
+					recorder.bezierCurveTo(seg.cp2x, seg.cp2y, seg.cp1x, seg.cp1y, toX, toY);
 				}
 			}
 		} else {
-			if (!started) { path2d.moveTo(arc.sx, arc.sy); started = true; }
+			if (!started) { recorder.moveTo(arc.sx, arc.sy); started = true; }
 			for (const seg of arc.segs) {
 				if (seg.isBreak) {
-					path2d.moveTo(seg.ex, seg.ey);
+					recorder.moveTo(seg.ex, seg.ey);
 				} else {
-					path2d.bezierCurveTo(seg.cp1x, seg.cp1y, seg.cp2x, seg.cp2y, seg.ex, seg.ey);
+					recorder.bezierCurveTo(seg.cp1x, seg.cp1y, seg.cp2x, seg.cp2y, seg.ex, seg.ey);
 				}
 			}
 		}
 	}
 
-	if (started && close) path2d.closePath();
+	if (started && close) recorder.closePath();
 }
 
 /**

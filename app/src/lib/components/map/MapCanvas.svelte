@@ -4,8 +4,8 @@
 	import * as d3shape from 'd3-shape';
 	import * as d3gp from 'd3-geo-projection';
 	import { feature } from 'topojson-client';
-	import { buildBezierArcs, buildTopoPath } from '$lib/utils/bezier';
-	import { buildAdjacencyGraph, buildChunksBFS, buildChunksHilbert } from '$lib/utils/spatial';
+	import { workerBuildPaths } from '$lib/workers/geoWorker';
+	import type { PathCommand } from '$lib/workers/types';
 	import { layers, workingTopologyData, layerDrag } from '$lib/stores/layers.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
 	import { mapState } from '$lib/stores/mapState.svelte';
@@ -237,6 +237,26 @@
 	// cleared and rebuilt without re-running the topology pipeline.
 	const cachedBezierKeys = new Map<string, number>();
 
+	// Incremented on every full cache invalidation (projection/settings change).
+	// Worker callbacks capture their launch epoch and discard results if it has advanced.
+	let pathBuildEpoch = 0;
+	// Layers currently waiting on a worker response — prevents duplicate in-flight builds.
+	const inFlightBuilds = new Set<string>();
+	// Layers whose cached path is stale (topology changed) but kept visible until a fresh
+	// path arrives, so the layer never flashes invisible during a rebuild.
+	const stalePaths = new Set<string>();
+
+	function commandsToPath2D(commands: PathCommand[]): Path2D {
+		const path2d = new Path2D();
+		for (const cmd of commands) {
+			if (cmd.op === 'M') path2d.moveTo(cmd.x, cmd.y);
+			else if (cmd.op === 'L') path2d.lineTo(cmd.x, cmd.y);
+			else if (cmd.op === 'Z') path2d.closePath();
+			else if (cmd.op === 'C') path2d.bezierCurveTo(cmd.cp1x, cmd.cp1y, cmd.cp2x, cmd.cp2y, cmd.ex, cmd.ey);
+		}
+		return path2d;
+	}
+
 	// Fingerprint that changes when layers are added/removed or when hasTopology/bezierCacheKey
 	// changes on any layer — but NOT when layers are merely reordered. The sort() ensures
 	// order is irrelevant. Because this is a string, Svelte uses === to compare the previous
@@ -245,7 +265,7 @@
 		layers.map(l => `${l.id}:${l.hasTopology ? 1 : 0}:${l.bezierCacheKey}`).sort().join('|')
 	);
 
-	// Compute Path2D only for layers that don't have a cached entry yet.
+	// Dispatch path builds to the worker for layers that don't have a cached entry yet.
 	// Subscribes via cacheSignal (not layers directly) so that layer reordering — which
 	// produces an identical sorted fingerprint — does not trigger path recomputation.
 	// layers is read inside untrack() since cacheSignal already captures what matters.
@@ -260,122 +280,33 @@
 		const noChunking = debug.noChunking;
 		if (projection !== cachedProjection || maxChunkVertices !== cachedMaxChunkVertices || noChunking !== cachedNoChunking) {
 			pathCache.clear();
+			inFlightBuilds.clear();
+			stalePaths.clear();
+			pathBuildEpoch++;
 			cachedProjection = projection;
 			cachedMaxChunkVertices = maxChunkVertices;
 			cachedNoChunking = noChunking;
 		}
 
-		let updated = false;
-
 		// Read layers without subscribing — cacheSignal already tracks what matters.
 		const currentLayers = untrack(() => layers.slice());
 
+		// Synchronous housekeeping: mark stale entries so their old paths stay visible
+		// while the worker rebuilds them, rather than flashing invisible.
 		for (const layer of currentLayers) {
 			const { id, hasTopology } = layer;
-			if (!hasTopology) { pathCache.delete(id); cachedBezierKeys.delete(id); continue; } // stale — clear and wait for pipeline
-
-			// Bezier settings changed — invalidate this layer's path cache entry so it
-			// rebuilds with the new settings. Topology is unchanged so no pipeline re-run.
+			if (!hasTopology) {
+				stalePaths.add(id);
+				cachedBezierKeys.delete(id);
+				inFlightBuilds.delete(id);
+				continue;
+			}
 			const stored = cachedBezierKeys.get(id);
 			const current = layer.bezierCacheKey;
 			if (stored !== current) {
-				console.log(`[bezier-key mismatch] id=${id} stored=${stored} current=${current}`);
-				pathCache.delete(id);
+				stalePaths.add(id);
+				inFlightBuilds.delete(id);
 				cachedBezierKeys.set(id, current);
-			}
-
-			if (pathCache.has(id)) continue; // already cached, skip
-
-			console.log(`[cache rebuild] id=${id}`);
-
-			const topo = workingTopologyData.get(id);
-			if (!topo) continue;
-			const objectName = Object.keys(topo.objects)[0];
-
-			if (layer.processing.bezierEnabled) {
-				// Bezier path — built directly in screen space from topology arcs,
-				// bypassing the GeoJSON conversion. Covers Polygon, MultiPolygon,
-				// LineString, and MultiLineString; points are handled separately below.
-				const { bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias } = layer.processing;
-				const bezierArcs = buildBezierArcs(topo, projection, bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias);
-				pathCache.set(id, [{ path2d: buildTopoPath(topo, bezierArcs), bbox: [-Infinity, -Infinity, Infinity, Infinity] }]);
-				updated = true;
-			} else {
-				// Standard path — convert topology → GeoJSON inline. The result is
-				// temporary: used to build the Path2D and then GC'd.
-				const data = feature(topo, topo.objects[objectName]) as { type?: string; features?: { geometry?: { type?: string } }[] };
-
-				// Build parallel non-point arrays: GeoJSON features (for rendering) and
-				// TopoJSON geometries (for adjacency). Kept in sync by filtering together.
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				const topoGeoms: { arcs?: unknown }[] = ((topo.objects[objectName] as any).geometries ?? []);
-				type GeoFeature = NonNullable<typeof data.features>[number];
-				const nonPointGeo: GeoFeature[] = [];
-				const nonPointTopo: typeof topoGeoms = [];
-				for (let i = 0; i < (data.features?.length ?? 0); i++) {
-					const t = data.features![i]?.geometry?.type;
-					if (t !== 'Point' && t !== 'MultiPoint') {
-						nonPointGeo.push(data.features![i]);
-						nonPointTopo.push(topoGeoms[i] ?? {});
-					}
-				}
-
-				if (nonPointGeo.length > 0) {
-					// Use topology-based BFS chunking when shared arcs are present AND the
-					// layer contains only polygon features. BFS produces one chunk per
-					// connected component, which is compact and correct for polygon borders
-					// (countries, counties) but wrong for line networks (roads, rivers,
-					// graticules) where many segments are disconnected and would each become
-					// their own single-feature chunk — causing thousands of Path2D objects.
-					// Line layers use Hilbert sort, which packs many small features correctly.
-					const MAX_CHUNK_VERTICES = maxChunkVertices;
-					const isPolygonLayer = nonPointGeo.every(f => {
-						const t = f?.geometry?.type;
-						return t === 'Polygon' || t === 'MultiPolygon';
-					});
-					const adjacency = isPolygonLayer ? buildAdjacencyGraph(nonPointTopo) : [];
-					const hasTopology = isPolygonLayer && adjacency.some(s => s.size > 0);
-					const featureGroups = noChunking
-						? nonPointGeo.map(f => [f])
-						: hasTopology
-							? buildChunksBFS(nonPointGeo, adjacency, MAX_CHUNK_VERTICES)
-							: buildChunksHilbert(nonPointGeo, MAX_CHUNK_VERTICES);
-
-					// Build Path2D while tracking its bbox in projection space.
-					// Bbox is computed for free — we're already visiting every coordinate.
-					const chunks: CachedChunk[] = [];
-					for (const chunkFeatures of featureGroups) {
-						const path2d = new Path2D();
-						let xMin = Infinity, yMin = Infinity, xMax = -Infinity, yMax = -Infinity;
-						const pathCtx = {
-							beginPath: () => {},
-							moveTo: (x: number, y: number) => {
-								path2d.moveTo(x, y);
-								if (x < xMin) xMin = x; if (x > xMax) xMax = x;
-								if (y < yMin) yMin = y; if (y > yMax) yMax = y;
-							},
-							lineTo: (x: number, y: number) => {
-								path2d.lineTo(x, y);
-								if (x < xMin) xMin = x; if (x > xMax) xMax = x;
-								if (y < yMin) yMin = y; if (y > yMax) yMax = y;
-							},
-							closePath: () => { path2d.closePath(); },
-							arc: (x: number, y: number, r: number, a1: number, a2: number) => {
-								path2d.arc(x, y, r, a1, a2);
-							},
-						};
-						d3.geoPath(makeClampedProjection(projection) as unknown as d3.GeoProjection, pathCtx as any)({ ...data, features: chunkFeatures } as d3.GeoPermissibleObjects);
-						chunks.push({ path2d, bbox: [xMin, yMin, xMax, yMax] });
-					}
-
-					pathCache.set(id, chunks);
-					updated = true;
-				} else {
-					// Pure point layer — store an empty array so the paint loop knows
-					// data has arrived and cacheVersion bumps to trigger a repaint.
-					pathCache.set(id, []);
-					updated = true;
-				}
 			}
 		}
 
@@ -384,8 +315,42 @@
 		for (const id of pathCache.keys()) {
 			if (!activeIds.has(id)) pathCache.delete(id);
 		}
+		for (const id of inFlightBuilds) {
+			if (!activeIds.has(id)) inFlightBuilds.delete(id);
+		}
+		for (const id of stalePaths) {
+			if (!activeIds.has(id)) stalePaths.delete(id);
+		}
 
-		if (updated) cacheVersion++;
+		// Fire async builds for layers that need paths. Each resolves independently,
+		// writing to the cache and bumping cacheVersion when the worker responds.
+		const projId = projectionStore.id;
+		const w = width;
+		const h = height;
+		const epoch = pathBuildEpoch;
+
+		for (const layer of currentLayers) {
+			const { id } = layer;
+			if (!layer.hasTopology) continue;
+			if (pathCache.has(id) && !stalePaths.has(id)) continue; // fresh path, skip
+			if (inFlightBuilds.has(id)) continue; // already building, avoid duplicate requests
+
+			const topo = workingTopologyData.get(id);
+			if (!topo) continue;
+
+			inFlightBuilds.add(id);
+			workerBuildPaths(id, topo, projId, w, h, { ...layer.processing }, maxChunkVertices, noChunking)
+				.then((chunks) => {
+					if (epoch !== pathBuildEpoch) return; // projection/settings changed while building — discard
+					inFlightBuilds.delete(id);
+					stalePaths.delete(id);
+					pathCache.set(id, chunks.map(c => ({
+						path2d: commandsToPath2D(c.commands),
+						bbox: c.bbox,
+					})));
+					cacheVersion++;
+				});
+		}
 	});
 
 	// Clear layer.loading once its paths are in the cache. Runs after each
