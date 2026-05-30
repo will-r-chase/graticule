@@ -3,6 +3,7 @@ import type { Layer, LayerStyle, LayerProcessing, Dataset } from '$lib/types';
 import { catalog } from './catalog.svelte';
 import { countTopoPoints } from '$lib/utils/chaikin';
 import { workerChaikin } from '$lib/workers/geoWorker';
+import { workerSimplify } from '$lib/workers/simplifyWorker';
 import { showToast } from './toast.svelte';
 
 const DISPLAY_VERTEX_THRESHOLD = 500_000;
@@ -106,18 +107,13 @@ async function runSimplificationStage(id: string, applyDefaults: boolean): Promi
 	let topo: Topology = rawTopo;
 
 	if (layer.processing.simpEnabled) {
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const ms = (window as any).mapshaper;
-		if (ms) {
-			const retainPct = 100 - layer.processing.simpTolerance;
-			const keepShapes = layer.processing.simpKeepShapes ? 'keep-shapes' : '';
-			const weightParam = layer.processing.simpAlgorithm === 'weighted'
-				? `weighting=${layer.processing.simpWeight}` : '';
-			const cmd = `-i input.topojson -simplify ${retainPct}% ${layer.processing.simpAlgorithm} ${weightParam} ${keepShapes} -o output.topojson format=topojson`
-				.replace(/\s+/g, ' ').trim();
-			const output = await ms.applyCommands(cmd, { 'input.topojson': JSON.stringify(topo) });
-			topo = JSON.parse(output['output.topojson']) as Topology;
-		}
+		topo = await workerSimplify(
+			id, rawTopo,
+			layer.processing.simpAlgorithm,
+			layer.processing.simpTolerance,
+			layer.processing.simpWeight,
+			layer.processing.simpKeepShapes,
+		);
 	}
 
 	simplifiedTopologyData.set(id, topo);

@@ -6,7 +6,4 @@ export default defineConfig({
 	ssr: {
 		noExternal: ['phosphor-svelte']
 	},
-	optimizeDeps: {
-		exclude: ['mapshaper']
-	}
 });
