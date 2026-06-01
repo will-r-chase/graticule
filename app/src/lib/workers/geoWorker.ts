@@ -40,6 +40,7 @@ export function workerBuildPaths(
 	projId: string,
 	width: number,
 	height: number,
+	rotate: [number, number, number],
 	processing: LayerProcessing,
 	maxChunkVertices: number,
 	noChunking: boolean,
@@ -51,7 +52,7 @@ export function workerBuildPaths(
 		});
 		const msg: WorkerRequest = {
 			type: 'BUILD_PATHS',
-			requestId, id, topo, projId, width, height, processing, maxChunkVertices, noChunking,
+			requestId, id, topo, projId, width, height, rotate, processing, maxChunkVertices, noChunking,
 		};
 		getWorker().postMessage(msg);
 	});

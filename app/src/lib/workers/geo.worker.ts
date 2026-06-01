@@ -30,10 +30,11 @@ function makeClampedProjection(proj: d3.GeoProjection): { stream: (sink: d3.GeoS
 	};
 }
 
-function buildProjection(projId: string, width: number, height: number): d3.GeoProjection | null {
-	const fn = allProjections[projId] as (() => d3.GeoProjection) | undefined;
+function buildProjection(projId: string, width: number, height: number, rotate: [number, number, number]): d3.GeoProjection | null {
+	const resolvedId = projId === 'geoGlobe' ? 'geoOrthographic' : projId;
+	const fn = allProjections[resolvedId] as (() => d3.GeoProjection) | undefined;
 	if (!fn) return null;
-	return fn().fitSize([width, height], { type: 'Sphere' });
+	return fn().fitSize([width, height], { type: 'Sphere' }).rotate(rotate);
 }
 
 // A PathRecorder that accumulates path commands and tracks the bbox simultaneously.
@@ -71,8 +72,8 @@ class CommandRecorder implements PathRecorder {
 }
 
 function handleBuildPaths(msg: Extract<WorkerRequest, { type: 'BUILD_PATHS' }>): SerializedChunk[] {
-	const { topo, projId, width, height, processing, maxChunkVertices, noChunking } = msg;
-	const proj = buildProjection(projId, width, height);
+	const { topo, projId, width, height, rotate, processing, maxChunkVertices, noChunking } = msg;
+	const proj = buildProjection(projId, width, height, rotate);
 	if (!proj) return [];
 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
