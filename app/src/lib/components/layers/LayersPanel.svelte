@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { setContext } from 'svelte';
-	import { dndzone } from 'svelte-dnd-action';
+	import { dragHandleZone, DRAGGED_ELEMENT_ID } from 'svelte-dnd-action';
 	import type { Layer } from '$lib/types';
 	import { layers, reorderLayers, layerDrag } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -21,6 +21,47 @@
 		get pickerOpen() { return pickerOpen; },
 		setPickerOpen(open: boolean) { pickerOpen = open; },
 	});
+
+	// Lock the drag ghost to vertical movement only.
+	// The library moves the ghost via inline translate3d(dx, dy, 0). We watch the
+	// ghost's style attribute and zero out the X component before each paint.
+	$effect(() => {
+		let styleObserver: MutationObserver | null = null;
+
+		const bodyObserver = new MutationObserver((mutations) => {
+			for (const mutation of mutations) {
+				for (const node of mutation.addedNodes) {
+					if (node instanceof HTMLElement && node.id === DRAGGED_ELEMENT_ID) {
+						styleObserver = new MutationObserver(() => {
+							const t = (node as HTMLElement).style.transform;
+							if (!t.startsWith('translate3d(0px,')) {
+								const m = t.match(/translate3d\([^,]+,\s*([^,]+),/);
+								if (m) (node as HTMLElement).style.transform = `translate3d(0px, ${m[1]}, 0)`;
+							}
+						});
+						styleObserver.observe(node, { attributes: true, attributeFilter: ['style'] });
+					}
+				}
+				for (const node of mutation.removedNodes) {
+					if (node instanceof HTMLElement && node.id === DRAGGED_ELEMENT_ID) {
+						styleObserver?.disconnect();
+						styleObserver = null;
+					}
+				}
+			}
+		});
+
+		bodyObserver.observe(document.body, { childList: true });
+		return () => {
+			bodyObserver.disconnect();
+			styleObserver?.disconnect();
+		};
+	});
+
+	function collapseGhostAccordion(ghostEl: HTMLElement) {
+		const accordion = ghostEl.querySelector('.style-accordion') as HTMLElement | null;
+		if (accordion) accordion.style.display = 'none';
+	}
 
 	function handleConsider(e: CustomEvent<{ items: Layer[] }>) {
 		layerDrag.active = true;
@@ -47,7 +88,7 @@
 	{:else}
 		<div
 			class="layer-list"
-			use:dndzone={{ items: layers, flipDurationMs: 150, dropTargetStyle: {}, dragDisabled: pickerOpen }}
+			use:dragHandleZone={{ items: layers, flipDurationMs: 150, dropTargetStyle: {}, dragDisabled: pickerOpen, transformDraggedElement: collapseGhostAccordion }}
 			onconsider={handleConsider}
 			onfinalize={handleFinalize}
 		>

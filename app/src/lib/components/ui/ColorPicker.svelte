@@ -260,6 +260,13 @@
 			>
 				<div class="thumb" style="left: {(h / 360) * 100}%; background: {cssHue}"></div>
 			</div>
+			<input class="slider-num" type="number" min="0" max="360" step="1"
+				value={Math.round(h)}
+				onchange={(e) => {
+					h = Math.min(360, Math.max(0, Number((e.currentTarget as HTMLInputElement).value)));
+					(e.currentTarget as HTMLInputElement).value = String(Math.round(h));
+				}}
+			/>
 		</div>
 
 		<!-- Saturation (HSL) -->
@@ -275,6 +282,14 @@
 			>
 				<div class="thumb" style="left: {hslS}%; background: {cssColor}"></div>
 			</div>
+			<input class="slider-num" type="number" min="0" max="100" step="1"
+				value={Math.round(hslS)}
+				onchange={(e) => {
+					const newSl = Math.min(100, Math.max(0, Number((e.currentTarget as HTMLInputElement).value)));
+					[s, v] = hslToHsv(newSl, hslL);
+					(e.currentTarget as HTMLInputElement).value = String(Math.round(hslS));
+				}}
+			/>
 		</div>
 
 		<!-- Lightness (HSL) -->
@@ -290,6 +305,14 @@
 			>
 				<div class="thumb" style="left: {hslL}%; background: {cssColor}"></div>
 			</div>
+			<input class="slider-num" type="number" min="0" max="100" step="1"
+				value={Math.round(hslL)}
+				onchange={(e) => {
+					const newL = Math.min(100, Math.max(0, Number((e.currentTarget as HTMLInputElement).value)));
+					[s, v] = hslToHsv(hslS, newL);
+					(e.currentTarget as HTMLInputElement).value = String(Math.round(hslL));
+				}}
+			/>
 		</div>
 
 		<!-- Alpha -->
@@ -305,14 +328,22 @@
 			>
 				<div class="thumb" style="left: {alpha * 100}%; background: {cssColor}"></div>
 			</div>
+			<input class="slider-num" type="number" min="0" max="100" step="1"
+				value={Math.round(alpha * 100)}
+				onchange={(e) => {
+					alpha = Math.min(100, Math.max(0, Number((e.currentTarget as HTMLInputElement).value))) / 100;
+					(e.currentTarget as HTMLInputElement).value = String(Math.round(alpha * 100));
+				}}
+			/>
 		</div>
 	</div>
 
 	<!-- Hex + alpha inputs -->
 	<div class="inputs">
 		<div class="hex-wrapper" class:error={hexError}>
-			<span class="affix">#</span>
+			<span class="affix mono-small">#</span>
 			<input
+				class="mono-small"
 				type="text"
 				value={hexInput}
 				oninput={onHexInput}
@@ -321,12 +352,13 @@
 				onfocus={() => (hexFocused = true)}
 				maxlength={6}
 				spellcheck={false}
-				aria-label="Hex colour"
+				aria-label="Hex color"
 			/>
 		</div>
 
 		<div class="alpha-wrapper">
 			<input
+				class="mono-small"
 				type="number"
 				min={0}
 				max={100}
@@ -334,7 +366,7 @@
 				oninput={onAlphaInput}
 				aria-label="Opacity percentage"
 			/>
-			<span class="affix">%</span>
+			<span class="affix mono-small">%</span>
 		</div>
 	</div>
 </div>
@@ -502,8 +534,6 @@
 		border: none;
 		outline: none;
 		background: transparent;
-		font-family: var(--font-mono);
-		font-size: 12px;
 		min-width: 0;
 		color: var(--color-text-primary);
 	}
@@ -519,10 +549,32 @@
 	}
 
 	.affix {
-		font-family: var(--font-mono);
-		font-size: 12px;
 		color: var(--color-text-tertiary);
 		user-select: none;
 		flex-shrink: 0;
+	}
+
+	.slider-num {
+		width: 36px;
+		flex-shrink: 0;
+		text-align: right;
+		font-family: var(--font-mono);
+		font-size: 11px;
+		color: var(--color-text-secondary);
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: var(--radius);
+		padding: 0 2px;
+		-moz-appearance: textfield;
+	}
+
+	.slider-num:hover {
+		border-color: var(--color-border);
+	}
+
+	.slider-num::-webkit-outer-spin-button,
+	.slider-num::-webkit-inner-spin-button {
+		-webkit-appearance: none;
+		margin: 0;
 	}
 </style>

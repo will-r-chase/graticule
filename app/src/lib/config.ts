@@ -110,7 +110,7 @@ export const TYPE_FILTERS: { label: string; tags: string[] }[] = [
 	{ label: 'Utilities', tags: ['time-zones', 'geographic', 'reference'] },
 ];
 
-// Source badge display config — label and colours per data source.
+// Source badge display config — label and colors per data source.
 export const SOURCE_CONFIG: Record<string, { label: string; bg: string; text: string }> = {
 	'natural-earth': { label: 'Natural Earth', bg: 'var(--grey-200)', text: 'var(--grey-700)' },
 	'tiger': { label: 'US Census', bg: 'var(--grey-200)', text: 'var(--grey-700)' },

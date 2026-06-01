@@ -1,5 +1,5 @@
 <script lang="ts">
-	import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
+	import ColorPickerPopup from '$lib/components/ui/ColorPickerPopup.svelte';
 	import { background } from '$lib/stores/background.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 
@@ -43,7 +43,12 @@
 
 	{#if open}
 		<div class="popover">
-			<ColorPicker bind:hex={background.hex} bind:alpha={background.alpha} />
+			<ColorPickerPopup
+				bind:hex={background.hex}
+				bind:alpha={background.alpha}
+				title="Canvas background"
+				onclose={() => { open = false; }}
+			/>
 		</div>
 	{/if}
 </div>
@@ -97,6 +102,7 @@
 		outline-offset: -1px;
 	}
 
+	/* Positioned wrapper; card styling is in ColorPickerPopup */
 	.popover {
 		position: absolute;
 		bottom: calc(100% + var(--space-s));

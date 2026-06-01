@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
 	import { X } from 'phosphor-svelte';
-	import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
+	import ColorPickerPopup from '$lib/components/ui/ColorPickerPopup.svelte';
 	import ShapeSelect from '$lib/components/ui/ShapeSelect.svelte';
 	import { updateLayerStyle } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -31,12 +31,44 @@
 	const hasPoints   = $derived(layer.geometryTypes.some(t => t === 'Point' || t === 'MultiPoint'));
 	const hasNonPoint = $derived(layer.geometryTypes.some(t => t !== 'Point' && t !== 'MultiPoint'));
 
-	// Which picker is expanded inline (only one at a time).
+	// Which picker is open (only one at a time).
 	let activePicker = $state<'fill' | 'stroke' | null>(null);
+
+	// DOM refs for positioning and click-outside detection.
+	let panelEl          = $state<HTMLDivElement | null>(null);
+	let floatingPickerEl = $state<HTMLDivElement | null>(null);
+	let pickerPos        = $state({ left: 0, top: 0 });
 
 	// When this component is destroyed (e.g. undo/redo causes a remount via {#key}),
 	// ensure the picker-open flag is reset so drag-and-drop isn't left disabled.
 	$effect(() => () => styleCtx.setPickerOpen(false));
+
+	// Calculate floating picker position whenever it opens.
+	$effect(() => {
+		if (activePicker !== null && panelEl) {
+			const rect = panelEl.getBoundingClientRect();
+			const pickerWidth = 236; // 220px content + 16px padding
+			const gap = 8;
+			pickerPos = {
+				left: Math.max(8, rect.left - pickerWidth - gap),
+				top:  Math.max(8, rect.top),
+			};
+		}
+	});
+
+	// Close picker on click outside.
+	$effect(() => {
+		if (activePicker === null) return;
+
+		function onPointerDown(e: PointerEvent) {
+			if (!floatingPickerEl) return;
+			if (floatingPickerEl.contains(e.target as Node)) return;
+			closePicker();
+		}
+
+		document.addEventListener('pointerdown', onPointerDown);
+		return () => document.removeEventListener('pointerdown', onPointerDown);
+	});
 
 	// Push local state → store whenever it changes.
 	$effect(() => {
@@ -71,6 +103,12 @@
 		return `rgba(${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}, ${alpha})`;
 	}
 
+	function closePicker() {
+		activePicker = null;
+		styleCtx.setPickerOpen(false);
+		pushSnapshot();
+	}
+
 	function togglePicker(which: 'fill' | 'stroke') {
 		const wasOpen = activePicker === which;
 		activePicker = activePicker === which ? null : which;
@@ -79,7 +117,7 @@
 	}
 </script>
 
-<div class="style-panel">
+<div class="style-panel" bind:this={panelEl}>
 	<!-- Fill row -->
 	<div class="style-row">
 		<span class="label mono-small">Fill</span>
@@ -103,8 +141,8 @@
 				class="swatch"
 				class:ring={activePicker === 'fill'}
 				style="--c: {toRgba(fillHex, fillAlpha)}; visibility: {fillEnabled ? 'visible' : 'hidden'}"
-				onclick={() => togglePicker('fill')}
-				aria-label="Edit fill colour"
+				onpointerdown={(e) => { e.stopPropagation(); togglePicker('fill'); }}
+				aria-label="Edit fill color"
 				tabindex={fillEnabled ? 0 : -1}
 			></button>
 		</div>
@@ -140,8 +178,8 @@
 				class="swatch"
 				class:ring={activePicker === 'stroke'}
 				style="--c: {toRgba(strokeHex, strokeAlpha)}; visibility: {strokeEnabled ? 'visible' : 'hidden'}"
-				onclick={() => togglePicker('stroke')}
-				aria-label="Edit stroke colour"
+				onpointerdown={(e) => { e.stopPropagation(); togglePicker('stroke'); }}
+				aria-label="Edit stroke color"
 				tabindex={strokeEnabled ? 0 : -1}
 			></button>
 			<input
@@ -221,23 +259,22 @@
 			</div>
 		</div>
 	{/if}
-
-	<!-- Inline colour picker — only one open at a time -->
-	{#if activePicker !== null}
-		<div class="picker-area">
-			<div class="picker-header">
-				<button class="icon-btn" onclick={() => { activePicker = null; styleCtx.setPickerOpen(false); pushSnapshot(); }} aria-label="Close colour picker">
-					<X size={12} />
-				</button>
-			</div>
-			{#if activePicker === 'fill'}
-				<ColorPicker bind:hex={fillHex} bind:alpha={fillAlpha} />
-			{:else}
-				<ColorPicker bind:hex={strokeHex} bind:alpha={strokeAlpha} />
-			{/if}
-		</div>
-	{/if}
 </div>
+
+<!-- Floating color picker — rendered outside the panel div so position: fixed escapes cleanly -->
+{#if activePicker !== null}
+	<div
+		class="floating-picker"
+		bind:this={floatingPickerEl}
+		style="left: {pickerPos.left}px; top: {pickerPos.top}px"
+	>
+		{#if activePicker === 'fill'}
+			<ColorPickerPopup bind:hex={fillHex} bind:alpha={fillAlpha} title="Fill color" onclose={closePicker} />
+		{:else}
+			<ColorPickerPopup bind:hex={strokeHex} bind:alpha={strokeAlpha} title="Stroke color" onclose={closePicker} />
+		{/if}
+	</div>
+{/if}
 
 <style>
 	.style-panel {
@@ -351,16 +388,10 @@
 		width: 56px;
 	}
 
-	.picker-area {
-		border-top: 1px solid var(--color-border);
-		padding-top: var(--space-s);
-		margin-top: var(--space-xs);
-	}
-
-	.picker-header {
-		display: flex;
-		justify-content: flex-end;
-		margin-bottom: var(--space-xs);
+	/* Floating color picker — just a positioned wrapper; card styling is in ColorPickerPopup */
+	.floating-picker {
+		position: fixed;
+		z-index: 50;
 	}
 
 	.icon-btn {

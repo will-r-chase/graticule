@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Modal from '$lib/components/ui/Modal.svelte';
+	import Button from '$lib/components/ui/Button.svelte';
 	import { exportPNG, exportSVG } from '$lib/utils/export';
 
 	let { onclose }: { onclose: () => void } = $props();
@@ -40,8 +41,8 @@
 	{/snippet}
 
 	{#snippet footer()}
-		<button class="text-btn mono-regular" onclick={onclose}>Cancel</button>
-		<button class="primary-btn mono-regular" onclick={handleExport}>Export</button>
+		<Button onclick={onclose}>Cancel</Button>
+		<Button variant="filled" onclick={handleExport}>Export</Button>
 	{/snippet}
 </Modal>
 
@@ -111,27 +112,5 @@
 		background-position: center;
 	}
 
-	.text-btn {
-		height: 32px;
-		padding: 0 var(--space-m);
-		border: none;
-		background: transparent;
-		color: var(--color-text-secondary);
-		cursor: pointer;
-		border-radius: var(--radius);
-	}
 
-	.text-btn:hover { background: var(--color-surface-secondary); }
-
-	.primary-btn {
-		height: 32px;
-		padding: 0 var(--space-m);
-		border-radius: var(--radius);
-		border: none;
-		background: var(--color-accent);
-		color: var(--color-text-invert);
-		cursor: pointer;
-	}
-
-	.primary-btn:hover { filter: brightness(1.1); }
 </style>

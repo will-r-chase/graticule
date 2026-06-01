@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Modal from './Modal.svelte';
+	import Button from './Button.svelte';
 
 	let { title, message, confirmLabel = 'Confirm', onconfirm, oncancel }: {
 		title: string;
@@ -16,8 +17,8 @@
 	{/snippet}
 
 	{#snippet footer()}
-		<button class="text-btn mono-small" onclick={oncancel}>Cancel</button>
-		<button class="primary-btn mono-small" onclick={onconfirm}>{confirmLabel}</button>
+		<Button onclick={oncancel}>Cancel</Button>
+		<Button variant="filled" onclick={onconfirm}>{confirmLabel}</Button>
 	{/snippet}
 </Modal>
 
@@ -27,31 +28,4 @@
 		margin: 0;
 	}
 
-	.text-btn {
-		height: 32px;
-		padding: 0 var(--space-m);
-		border: none;
-		background: transparent;
-		color: var(--color-text-secondary);
-		cursor: pointer;
-		border-radius: var(--radius);
-	}
-
-	.text-btn:hover {
-		background: var(--color-surface-secondary);
-	}
-
-	.primary-btn {
-		height: 32px;
-		padding: 0 var(--space-m);
-		border-radius: var(--radius);
-		border: none;
-		background: var(--color-accent);
-		color: var(--color-text-invert);
-		cursor: pointer;
-	}
-
-	.primary-btn:hover {
-		filter: brightness(1.1);
-	}
 </style>

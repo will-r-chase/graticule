@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
-	import { Eye, EyeSlash, X, SlidersHorizontal, CircleNotch } from 'phosphor-svelte';
+	import { Eye, EyeSlash, DotsThree, SlidersHorizontal, CircleNotch, CopySimple, PencilSimple, Trash } from 'phosphor-svelte';
+	import { dragHandle } from 'svelte-dnd-action';
+	import DropdownMenu from '$lib/components/ui/DropdownMenu.svelte';
 	import type { Layer } from '$lib/types';
-	import { removeLayer, toggleVisibility, renameLayer } from '$lib/stores/layers.svelte';
+	import { removeLayer, toggleVisibility, renameLayer, duplicateLayer } from '$lib/stores/layers.svelte';
 	import { pushSnapshot, historyVersion } from '$lib/stores/history.svelte';
 	import LayerStylePanel from './LayerStylePanel.svelte';
 	import LayerProcessingPanel from './LayerProcessingPanel.svelte';
@@ -59,10 +61,39 @@
 		if (e.key === 'Enter') commitEdit();
 		if (e.key === 'Escape') cancelEdit();
 	}
+
+	// Context menu (... button)
+	let menuOpen = $state(false);
+	let menuPos = $state({ top: 0, left: 0 });
+	let menuEl = $state<HTMLDivElement | null>(null);
+	let triggerEl = $state<HTMLButtonElement | null>(null);
+
+	function openMenu() {
+		if (!triggerEl) return;
+		const rect = triggerEl.getBoundingClientRect();
+		menuPos = {
+			top: rect.bottom + 4,
+			left: rect.right,
+		};
+		menuOpen = true;
+	}
+
+	function closeMenu() {
+		menuOpen = false;
+	}
+
+	$effect(() => {
+		if (!menuOpen) return;
+		function onPointerDown(e: PointerEvent) {
+			if (!menuEl?.contains(e.target as Node)) closeMenu();
+		}
+		document.addEventListener('pointerdown', onPointerDown);
+		return () => document.removeEventListener('pointerdown', onPointerDown);
+	});
 </script>
 
 <div class="layer-item-wrapper" class:open={styleOpen}>
-	<div class="layer-item" class:selected={styleOpen}>
+	<div class="layer-item" class:selected={styleOpen} class:menu-open={menuOpen} use:dragHandle>
 		{#if showSpinner}
 			<div class="style-spinner" aria-label="Loading">
 				<CircleNotch size={14} color="var(--color-text-tertiary)" />
@@ -103,46 +134,69 @@
 				class="icon-btn"
 				class:active={styleOpen}
 				aria-label="Edit layer style"
+				title="Edit layer style"
 				onclick={() => styleCtx.toggle(layer.id)}
 			>
-				<SlidersHorizontal size={16} color="var(--color-icon-primary)" />
+				<SlidersHorizontal size={16} />
 			</button>
 
 			<button
 				class="icon-btn"
 				aria-label={layer.visible ? 'Hide layer' : 'Show layer'}
+				title={layer.visible ? 'Hide layer' : 'Show layer'}
 				onclick={() => { toggleVisibility(layer.id); pushSnapshot(); }}
 			>
 				{#if layer.visible}
-					<Eye size={16} color="var(--color-icon-primary)" />
+					<Eye size={16} />
 				{:else}
-					<EyeSlash size={16} color="var(--color-icon-secondary)" />
+					<EyeSlash size={16} />
 				{/if}
 			</button>
 
 			<button
 				class="icon-btn"
-				aria-label="Remove layer"
-				onclick={() => { removeLayer(layer.id); pushSnapshot(); }}
+				class:active={menuOpen}
+				bind:this={triggerEl}
+				aria-label="More options"
+				title="More options"
+				onpointerdown={(e) => { e.stopPropagation(); menuOpen ? closeMenu() : openMenu(); }}
 			>
-				<X size={16} color="var(--color-icon-secondary)" />
+				<DotsThree size={16} weight="bold" />
 			</button>
 		</div>
 	</div>
+
+	{#if menuOpen}
+		<DropdownMenu top={menuPos.top} left={menuPos.left} alignRight bind:el={menuEl}>
+			<button class="dropdown-item body-small" onclick={() => { duplicateLayer(layer.id); pushSnapshot(); closeMenu(); }}>
+				<CopySimple size={14} />
+				<span>Duplicate</span>
+			</button>
+			<button class="dropdown-item body-small" onclick={() => { startEditing(); closeMenu(); }}>
+				<PencilSimple size={14} />
+				<span>Rename</span>
+			</button>
+			<div class="dropdown-divider"></div>
+			<button class="dropdown-item body-small danger" onclick={() => { removeLayer(layer.id); pushSnapshot(); closeMenu(); }}>
+				<Trash size={14} />
+				<span>Delete</span>
+			</button>
+		</DropdownMenu>
+	{/if}
 
 	{#if styleOpen}
 		<div class="style-accordion">
 			<div class="tab-bar">
 				<button
-					class="tab-btn"
+					class="tab-btn mono-regular"
 					class:active={activeTab === 'style'}
 					onclick={() => activeTab = 'style'}
 				>Style</button>
 				<button
-					class="tab-btn"
+					class="tab-btn mono-regular"
 					class:active={activeTab === 'simplification'}
 					onclick={() => activeTab = 'simplification'}
-				>Simplification</button>
+				>Simplify</button>
 			</div>
 			{#key historyVersion()}
 				{#if activeTab === 'style'}
@@ -182,8 +236,6 @@
 		background: transparent;
 		color: var(--color-text-tertiary);
 		cursor: pointer;
-		font-size: 14px;
-		font-family: var(--font-mono);
 		transition: color 150ms, background 150ms;
 	}
 
@@ -296,8 +348,14 @@
 	}
 
 	.layer-item:hover .actions,
-	.layer-item.selected .actions {
+	.layer-item.selected .actions,
+	.layer-item.menu-open .actions {
 		display: flex;
+	}
+
+	/* Only apply the grey hover-lock when the row isn't already in the selected (green) state */
+	.layer-item.menu-open:not(.selected) {
+		background-color: var(--color-surface-secondary);
 	}
 
 	.icon-btn {
@@ -311,6 +369,7 @@
 		border-radius: var(--radius);
 		cursor: pointer;
 		padding: 0;
+		color: var(--color-icon-primary);
 	}
 
 	.icon-btn:hover {
@@ -318,7 +377,26 @@
 	}
 
 	.icon-btn.active {
-		color: var(--color-accent);
 		background-color: var(--color-accent-subtle);
+	}
+
+	/* On a selected row the row itself is already accent-subtle (green-100),
+	   so bump the active button one step darker so it reads as distinct */
+	.layer-item.selected .icon-btn.active {
+		background-color: var(--green-200);
+	}
+
+	.icon-btn.active:hover {
+		background-color: var(--green-50);
+	}
+
+	.layer-item.selected .icon-btn.active:hover {
+		background-color: var(--color-accent-subtle);
+	}
+
+
+	/* Collapse the accordion in the drag shadow placeholder and ghost */
+	:global([data-is-dnd-shadow-item-internal] .style-accordion) {
+		display: none;
 	}
 </style>

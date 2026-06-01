@@ -113,6 +113,7 @@
 <div class="combobox" bind:this={containerEl}>
 	<div class="trigger" onclick={handleInputClick}>
 		<input
+			class="mono-regular"
 			bind:this={inputEl}
 			type="text"
 			value={open ? search : selectedLabel}
@@ -135,7 +136,7 @@
 	{#if open}
 		<ul class="dropdown" class:up={direction === 'up'} bind:this={listEl} role="listbox">
 			{#if filteredOptions.length === 0}
-				<li class="empty">No results</li>
+				<li class="empty mono-small">No results</li>
 			{:else}
 				{#each groupedOptions as { group, opts }}
 					{#if group}
@@ -192,7 +193,6 @@
 		padding: 0 var(--space-m);
 		border: none;
 		background: transparent;
-		font-family: var(--font-mono);
 		color: var(--color-text-primary);
 		cursor: pointer;
 		outline: none;
@@ -276,8 +276,6 @@
 
 	.empty {
 		padding: var(--space-m);
-		font-family: var(--font-mono);
-		font-size: 12px;
 		color: var(--color-text-tertiary);
 	}
 </style>

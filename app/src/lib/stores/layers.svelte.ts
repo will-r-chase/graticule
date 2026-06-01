@@ -245,7 +245,7 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 			const id = generateId();
 			const baseName = copies === 0 ? dataset.name : `${dataset.name} (${copies + 1})`;
 
-			layers.push({
+			layers.unshift({
 				id,
 				datasetId: dataset.id,
 				name: `${baseName} — ${subLayer.name}`,
@@ -266,7 +266,7 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 		const id = generateId();
 		const name = copies === 0 ? dataset.name : `${dataset.name} (${copies + 1})`;
 
-		layers.push({
+		layers.unshift({
 			id,
 			datasetId: dataset.id,
 			name,
@@ -300,7 +300,7 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 
 export function addUploadedLayer(name: string, topology: Topology, uploadId: string, applyDefaults = true): void {
 	const id = generateId();
-	layers.push({
+	layers.unshift({
 		id,
 		datasetId: uploadId,
 		name,
@@ -315,6 +315,37 @@ export function addUploadedLayer(name: string, topology: Topology, uploadId: str
 	});
 	rawTopologyData.set(id, topology);
 	runLayerPipeline(id, applyDefaults); // resolves as a microtask — layer will be ready almost immediately
+}
+
+export function duplicateLayer(id: string): void {
+	const index = layers.findIndex((l) => l.id === id);
+	if (index === -1) return;
+	const source = layers[index];
+	const newId = generateId();
+
+	// Deep-copy style and processing so changes to the duplicate don't affect the original.
+	const newLayer: Layer = {
+		...source,
+		id: newId,
+		name: `${source.name} copy`,
+		// Reset transient state.
+		loading: false,
+		error: null,
+		style: JSON.parse(JSON.stringify(source.style)),
+		processing: JSON.parse(JSON.stringify(source.processing)),
+	};
+
+	// Copy all topology caches so the duplicate is immediately renderable and can
+	// re-run the pipeline from raw data if the user changes processing settings.
+	const raw = rawTopologyData.get(id);
+	if (raw) rawTopologyData.set(newId, raw);
+	const simplified = simplifiedTopologyData.get(id);
+	if (simplified) simplifiedTopologyData.set(newId, simplified);
+	const working = workingTopologyData.get(id);
+	if (working) workingTopologyData.set(newId, working);
+
+	// Insert immediately above the original.
+	layers.splice(index, 0, newLayer);
 }
 
 export function removeLayer(id: string): void {

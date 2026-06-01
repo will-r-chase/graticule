@@ -1,8 +1,9 @@
 <script lang="ts">
-	import { MagnifyingGlass, CaretDown, Plus } from 'phosphor-svelte';
+	import { MagnifyingGlass, CaretDown } from 'phosphor-svelte';
 	import type { Dataset } from '$lib/types';
 	import { TYPE_FILTERS, REGION_FILTERS, SOURCE_ORDER, SOURCE_CONFIG } from '$lib/config';
 	import DatasetItem from './DatasetItem.svelte';
+	import Button from '$lib/components/ui/Button.svelte';
 	import { uploadedDatasets } from '$lib/stores/uploadedDatasets.svelte';
 	import { layers, addUploadedLayer } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -66,12 +67,8 @@
 	<div class="panel-header">
 		<h3>Data</h3>
 		<div class="header-actions">
-			<button class="filter-toggle mono-small" class:active={filtersOpen} onclick={() => filtersOpen = !filtersOpen}>
-				Filter
-			</button>
-			<button class="icon-btn" onclick={onOpenUpload} aria-label="Upload data">
-				<Plus size={14} weight="bold" />
-			</button>
+			<Button size="sm" active={filtersOpen} onclick={() => filtersOpen = !filtersOpen}>Filter</Button>
+			<Button size="sm" onclick={onOpenUpload}>Upload</Button>
 		</div>
 	</div>
 
@@ -80,6 +77,7 @@
 		<div class="search-input-wrapper">
 			<MagnifyingGlass size={16} color="var(--color-icon-secondary)" />
 			<input
+				class="mono-regular"
 				type="text"
 				placeholder="Search datasets..."
 				bind:value={search}
@@ -93,7 +91,7 @@
 			<div class="chips">
 				{#each TYPE_FILTERS as filter}
 					<button
-						class="chip"
+						class="chip mono-small"
 						class:active={activeType === filter.label}
 						onclick={() => toggleType(filter.label)}
 					>
@@ -108,7 +106,7 @@
 			<div class="chips">
 				{#each REGION_FILTERS as region}
 					<button
-						class="chip"
+						class="chip mono-small"
 						class:active={activeRegion === region}
 						onclick={() => toggleRegion(region)}
 					>
@@ -204,44 +202,6 @@
 		gap: var(--space-xs);
 	}
 
-	.icon-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border: none;
-		background: transparent;
-		border-radius: var(--radius);
-		cursor: pointer;
-		padding: 0;
-		color: var(--color-icon-primary);
-	}
-
-	.icon-btn:hover {
-		background: var(--color-surface-secondary);
-		color: var(--color-icon-primary);
-	}
-
-	.filter-toggle {
-		height: 28px;
-		padding: 0 var(--space-m);
-		border-radius: var(--radius);
-		border: none;
-		background: transparent;
-		color: var(--color-text-primary);
-		font-family: var(--font-mono);
-		cursor: pointer;
-	}
-
-	.filter-toggle:hover {
-		background-color: var(--color-surface-secondary);
-	}
-
-	.filter-toggle.active {
-		background-color: var(--color-accent-subtle);
-	}
-
 	/* --- Search --- */
 
 	.search-bar {
@@ -264,7 +224,6 @@
 		border: none;
 		outline: none;
 		background: transparent;
-		font-family: var(--font-mono);
 		color: var(--color-text-primary);
 	}
 
@@ -305,8 +264,6 @@
 		border-radius: var(--radius);
 		border: 1px solid var(--color-border);
 		background: transparent;
-		font-family: var(--font-mono);
-		font-size: 12px; /* mono-small */
 		color: var(--color-text-primary);
 		cursor: pointer;
 		white-space: nowrap;

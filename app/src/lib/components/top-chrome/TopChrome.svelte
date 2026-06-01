@@ -3,6 +3,7 @@
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import ExportModal from './ExportModal.svelte';
 	import MappyMascot from './MappyMascot.svelte';
+	import Button from '$lib/components/ui/Button.svelte';
 	import { Warning } from 'phosphor-svelte';
 	import { prepareProject, downloadProject, loadProject, validateProject, formatBytes } from '$lib/utils/project';
 	import { clearLayers } from '$lib/stores/layers.svelte';
@@ -97,15 +98,15 @@
 
 	<div class="actions">
 		<a class="mono-regular experiments-link" href="/experiments">Experiments</a>
-		<button class="mono-regular debug-btn" class:active={debug.enabled} onclick={() => debug.enabled = !debug.enabled}>Debug</button>
+		<Button size="sm" active={debug.enabled} onclick={() => debug.enabled = !debug.enabled}>Debug</Button>
 		<div class="separator"></div>
-		<button class="mono-regular" disabled={!canUndo()} onclick={undo}>Undo</button>
-		<button class="mono-regular" disabled={!canRedo()} onclick={redo}>Redo</button>
+		<Button size="sm" disabled={!canUndo()} onclick={undo}>Undo</Button>
+		<Button size="sm" disabled={!canRedo()} onclick={redo}>Redo</Button>
 		<div class="separator"></div>
-		<button class="mono-regular" onclick={handleNew}>New</button>
-		<button class="mono-regular" onclick={handleOpen}>Open</button>
-		<button class="mono-regular" onclick={handleSave}>Save</button>
-		<button class="mono-regular" onclick={() => activeModal = 'export'}>Export</button>
+		<Button size="sm" onclick={handleNew}>New</Button>
+		<Button size="sm" onclick={handleOpen}>Open</Button>
+		<Button size="sm" onclick={handleSave}>Save</Button>
+		<Button size="sm" onclick={() => activeModal = 'export'}>Export</Button>
 	</div>
 </header>
 
@@ -151,7 +152,7 @@
 			</div>
 		{/snippet}
 		{#snippet footer()}
-			<button class="primary-btn mono-regular" onclick={() => activeModal = null}>OK</button>
+			<Button variant="filled" onclick={() => activeModal = null}>OK</Button>
 		{/snippet}
 	</Modal>
 {/if}
@@ -174,8 +175,8 @@
 			</p>
 		{/snippet}
 		{#snippet footer()}
-			<button class="text-btn mono-small" onclick={() => { activeModal = null; pendingSaveJson = null; }}>Cancel</button>
-			<button class="primary-btn mono-small" onclick={confirmSave}>Save anyway</button>
+			<Button onclick={() => { activeModal = null; pendingSaveJson = null; }}>Cancel</Button>
+			<Button variant="filled" onclick={confirmSave}>Save anyway</Button>
 		{/snippet}
 	</Modal>
 {/if}
@@ -210,26 +211,6 @@
 		gap: var(--space-l);
 	}
 
-	button {
-		height: 28px;
-		padding: 0 var(--space-m);
-		border-radius: var(--radius);
-		border: none;
-		background: transparent;
-		color: var(--color-text-primary);
-		font-family: var(--font-mono);
-		cursor: pointer;
-	}
-
-	button:hover:not(:disabled) {
-		background-color: var(--color-surface-secondary);
-	}
-
-	button:disabled {
-		opacity: 0.35;
-		cursor: default;
-	}
-
 	.experiments-link {
 		text-decoration: none;
 		color: var(--color-text-secondary);
@@ -243,11 +224,6 @@
 	.experiments-link:hover {
 		background-color: var(--color-surface-secondary);
 		color: var(--color-text-primary);
-	}
-
-	.debug-btn.active {
-		background-color: var(--color-surface-tertiary);
-		color: var(--color-accent);
 	}
 
 	.separator {
@@ -275,27 +251,5 @@
 		margin-top: 2px;
 	}
 
-	.text-btn {
-		height: 32px;
-		padding: 0 var(--space-m);
-		border: none;
-		background: transparent;
-		color: var(--color-text-secondary);
-		cursor: pointer;
-		border-radius: var(--radius);
-	}
 
-	.text-btn:hover { background: var(--color-surface-secondary); }
-
-	.primary-btn {
-		height: 32px;
-		padding: 0 var(--space-m);
-		border-radius: var(--radius);
-		border: none;
-		background: var(--color-accent);
-		color: var(--color-text-invert);
-		cursor: pointer;
-	}
-
-	.primary-btn:hover { filter: brightness(1.1); }
 </style>

@@ -320,7 +320,7 @@ h4,
 }
 
 /* Mono Regular — hex codes, coordinates, IDs, file names */
-.mono {
+.mono-regular {
 	font-family: var(--font-mono);
 	font-size: 14px;
 	line-height: 20px;
@@ -333,6 +333,18 @@ h4,
 	font-size: 12px;
 	line-height: 18px;
 	font-weight: 400;
+}
+
+/* Tooltip popup — rendered to document.body by the tooltip action */
+.tooltip-popup {
+	position: fixed;
+	z-index: 100;
+	max-width: 220px;
+	background: var(--color-surface-invert);
+	border-radius: var(--radius);
+	padding: var(--space-m);
+	pointer-events: none;
+	color: var(--color-text-invert);
 }
 
 /* Number input — compact numeric control used in style panels */

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { UploadSimple, SpinnerGap, Warning, Check, Info } from 'phosphor-svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
+	import Button from '$lib/components/ui/Button.svelte';
 	import { parseFile, applyFixes, type UploadResult, type UploadIssue } from '$lib/utils/fileUpload';
 	import { addUploadedDataset } from '$lib/stores/uploadedDatasets.svelte';
 	import type { Topology } from 'topojson-specification';
@@ -147,14 +148,8 @@
 </script>
 
 {#snippet footerContent()}
-	<button class="text-btn mono-small" onclick={reset}>Reset</button>
-	<button
-		class="primary-btn mono-small"
-		disabled={!canImport}
-		onclick={handleImport}
-	>
-		Import
-	</button>
+	<Button onclick={reset}>Reset</Button>
+	<Button variant="filled" disabled={!canImport} onclick={handleImport}>Import</Button>
 {/snippet}
 
 <Modal title="Upload data" {onclose} footer={selectedFile || result ? footerContent : undefined}>
@@ -170,10 +165,10 @@
 			/>
 
 			<div class="file-row">
-				<button class="choose-btn" onclick={() => inputEl?.click()}>
+				<Button variant="outline" onclick={() => inputEl?.click()}>
 					<UploadSimple size={16} />
 					{selectedFile ? 'Choose different file' : 'Choose file'}
-				</button>
+				</Button>
 				{#if selectedFile}
 					<span class="filename mono-small">{selectedFile.name}</span>
 				{:else}
@@ -257,7 +252,7 @@
 							Click a column header to assign it as the latitude or longitude source.
 						</p>
 						<div class="csv-table-wrap">
-							<table class="csv-table">
+							<table class="csv-table mono-small">
 								<thead>
 									<tr>
 										{#each csvAllCols as col}
@@ -309,27 +304,6 @@
 		align-items: center;
 		gap: var(--space-m);
 		flex-wrap: wrap;
-	}
-
-	.choose-btn {
-		display: flex;
-		align-items: center;
-		gap: var(--space-s);
-		height: 32px;
-		padding: 0 var(--space-m);
-		border-radius: var(--radius);
-		border: 1px solid var(--color-border);
-		background: var(--color-surface-primary);
-		color: var(--color-text-primary);
-		font-family: var(--font-mono);
-		font-size: 12px;
-		cursor: pointer;
-		flex-shrink: 0;
-	}
-
-	.choose-btn:hover {
-		background: var(--color-surface-secondary);
-		border-color: var(--color-text-primary);
 	}
 
 	.filename { color: var(--color-text-primary); }
@@ -454,9 +428,6 @@
 
 	.csv-table {
 		border-collapse: collapse;
-		font-family: var(--font-mono);
-		font-size: 12px;
-		line-height: 18px;
 		width: 100%;
 		min-width: max-content;
 	}
@@ -544,36 +515,6 @@
 		color: var(--color-text-invert);
 		opacity: 1;
 	}
-
-	/* Footer buttons */
-	.text-btn {
-		height: 32px;
-		padding: 0 var(--space-m);
-		border: none;
-		background: transparent;
-		color: var(--color-text-secondary);
-		cursor: pointer;
-		border-radius: var(--radius);
-	}
-
-	.text-btn:hover { background: var(--color-surface-secondary); }
-
-	.primary-btn {
-		height: 32px;
-		padding: 0 var(--space-m);
-		border-radius: var(--radius);
-		border: none;
-		background: var(--color-accent);
-		color: var(--color-text-invert);
-		cursor: pointer;
-	}
-
-	.primary-btn:disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
-	}
-
-	.primary-btn:not(:disabled):hover { filter: brightness(1.1); }
 
 	/* Spinner */
 	:global(.spin) { animation: spin 0.8s linear infinite; }
