@@ -619,7 +619,7 @@
 		position: relative;
 		flex: 1;
 		height: 100%;
-		background-color: white;
+		background-color: var(--grey-50);
 		overflow: hidden;
 	}
 

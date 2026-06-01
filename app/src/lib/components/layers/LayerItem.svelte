@@ -177,12 +177,12 @@
 
 	.tab-btn {
 		flex: 1;
-		padding: var(--space-s) var(--space-m);
+		padding: var(--space-l) var(--space-m) var(--space-m);
 		border: none;
 		background: transparent;
 		color: var(--color-text-tertiary);
 		cursor: pointer;
-		font-size: var(--text-xs);
+		font-size: 14px;
 		font-family: var(--font-mono);
 		transition: color 150ms, background 150ms;
 	}

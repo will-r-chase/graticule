@@ -80,14 +80,6 @@
 </script>
 
 <div class="style-panel">
-	<!-- Panel header with close button -->
-	<div class="panel-header">
-		<span class="h4">Style</span>
-		<button class="icon-btn" onclick={onclose} aria-label="Close style panel">
-			<X size={12} />
-		</button>
-	</div>
-
 	<!-- Fill row -->
 	<div class="style-row">
 		<span class="label mono-small">Fill</span>
@@ -116,6 +108,9 @@
 				tabindex={fillEnabled ? 0 : -1}
 			></button>
 		</div>
+		<button class="icon-btn" onclick={onclose} aria-label="Close style panel">
+			<X size={12} />
+		</button>
 	</div>
 
 	<!-- Stroke row -->
@@ -150,7 +145,7 @@
 				tabindex={strokeEnabled ? 0 : -1}
 			></button>
 			<input
-				class="width-input mono-small"
+				class="width-input number-input"
 				type="number"
 				min="0"
 				step="0.1"
@@ -177,7 +172,7 @@
 					<span class="toggle-thumb"></span>
 				</button>
 				<input
-					class="width-input mono-small"
+					class="width-input number-input"
 					type="number" min="1" step="1"
 					bind:value={strokeDash}
 					onblur={() => { updateLayerStyle(layer.id, { strokeDash }); pushSnapshot(); }}
@@ -186,7 +181,7 @@
 				/>
 				<span class="dash-sep mono-small" style="visibility: {strokeDashed ? 'visible' : 'hidden'}">gap</span>
 				<input
-					class="width-input mono-small"
+					class="width-input number-input"
 					type="number" min="1" step="1"
 					bind:value={strokeGap}
 					onblur={() => { updateLayerStyle(layer.id, { strokeGap }); pushSnapshot(); }}
@@ -208,7 +203,7 @@
 			<span class="label mono-small">Size</span>
 			<div class="controls">
 				<input
-					class="width-input mono-small"
+					class="width-input number-input"
 					type="number"
 					min="1"
 					step="1"
@@ -246,24 +241,18 @@
 
 <style>
 	.style-panel {
-		padding: var(--space-s) var(--space-m) var(--space-m);
+		padding: var(--space-m) var(--space-m) var(--space-m);
 		background: var(--color-surface-primary);
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-s);
-	}
-
-	.panel-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		color: var(--color-text-tertiary);
+		gap: var(--space-m);
 	}
 
 	.style-row {
 		display: flex;
 		align-items: center;
 		gap: var(--space-s);
+		height: 28px;
 	}
 
 	.label {
@@ -304,7 +293,7 @@
 		width: 12px;
 		height: 12px;
 		border-radius: 50%;
-		background: white;
+		background: var(--grey-0);
 		transition: transform 150ms;
 		pointer-events: none;
 	}
@@ -316,8 +305,8 @@
 	/* Checkerboard background shows through when alpha < 1 */
 	.swatch {
 		position: relative;
-		width: 20px;
-		height: 20px;
+		width: 24px;
+		height: 24px;
 		border-radius: 3px;
 		border: none;
 		cursor: pointer;
@@ -360,12 +349,6 @@
 
 	.width-input {
 		width: 56px;
-		padding: 2px var(--space-s);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
-		background: var(--color-surface-primary);
-		color: var(--color-text-primary);
-		text-align: right;
 	}
 
 	.picker-area {
@@ -395,7 +378,7 @@
 	}
 
 	.icon-btn:hover {
-		background: var(--color-surface-tertiary);
+		background: var(--color-surface-secondary);
 		color: var(--color-icon-primary);
 	}
 </style>

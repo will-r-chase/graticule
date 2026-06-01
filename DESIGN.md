@@ -19,17 +19,17 @@ A living reference document. All UI decisions should trace back to a principle o
 ## Typography
 
 Fonts used:
-- **Switzer** — primary UI font. Geometric, clean, legible at small sizes.
+- **MDUI** — primary UI font. Used for all sans-serif text: headings, body copy, UI labels.
 - **VCTR Mono** — monospaced. Used for labels, metadata, codes, and anything that benefits from tabular alignment.
 
 | Style | Font | Size | Line Height | Weight | Notes |
 |---|---|---|---|---|---|
-| H2 | Switzer | 24px | 28px | Bold (700) | Section or panel headings |
-| H3 | Switzer | 16px | 24px | Semibold (600) | Sub-section headings |
+| H2 | MDUI | 24px | 28px | Bold (700) | Section or panel headings |
+| H3 | MDUI | 16px | 24px | Semibold (600) | Sub-section headings |
 | H4 | VCTR Mono | 12px | 18px | Regular | All caps, 5% letter-spacing. Used for eyebrow labels and category headers |
-| Body Regular | Switzer | 14px | 20px | Regular (400) | Default body text |
-| Body Medium | Switzer | 14px | 20px | Medium (500) | Emphasis within body copy |
-| Body Small | Switzer | 12px | 18px | Regular (400) | Secondary / supporting text, metadata |
+| Body Regular | MDUI | 14px | 20px | Regular (400) | Default body text |
+| Body Medium | MDUI | 14px | 20px | Medium (500) | Emphasis within body copy |
+| Body Small | MDUI | 12px | 18px | Regular (400) | Secondary / supporting text, metadata |
 | Mono Regular | VCTR Mono | 14px | 20px | Regular | Hex codes, coordinates, IDs, file names |
 | Mono Small | VCTR Mono | 12px | 18px | Regular | Compact mono contexts (badges, status) |
 
@@ -80,118 +80,108 @@ A fixed scale. Use only these values — no arbitrary px numbers.
 
 | Token | Hex | Use |
 |---|---|---|
-| `grey-900` | `#161819` | Text primary, icon primary, surface invert |
-| `grey-800` | `#2D3137` | — |
-| `grey-700` | `#424952` | — |
-| `grey-600` | `#7D8289` | Text secondary, icon secondary |
-| `grey-500` | `#A8ACB1` | Placeholder text, disabled text |
-| `grey-400` | `#CFD1D3` | — |
-| `grey-300` | `#E3E5E7` | Borders |
-| `grey-200` | `#EEEFF1` | Surface tertiary |
-| `grey-100` | `#F4F4F5` | Surface secondary |
-| `grey-0` | `#FFFFFF` | Surface primary, text invert, icon invert |
+| `grey-1000` | `#020100` | Surface invert |
+| `grey-900` | `#38362E` | Text primary, icon primary |
+| `grey-800` | `#525043` | Text secondary |
+| `grey-700` | `#6E6B59` | — |
+| `grey-600` | `#858271` | Text tertiary, icon secondary |
+| `grey-500` | `#9C9989` | Placeholder text, disabled text |
+| `grey-400` | `#B4B1A2` | — |
+| `grey-300` | `#CDCABC` | Borders |
+| `grey-200` | `#DEDCD3` | Surface tertiary |
+| `grey-100` | `#F0EFEA` | Surface secondary |
+| `grey-50` | `#F7F7F4` | Map canvas background |
+| `grey-25` | `#FBFBF9` | Surface primary (panels, chrome) |
+| `grey-0` | `#FFFFFF` | Text invert, icon invert |
 
 ### Palette
 
 Each color runs from `0` (white) to `900` (black) in 10 stops. Index maps as: `0→0, 1→100, …, 9→900`.
 
-#### Turquoise
-| Token | Hex |
-|---|---|
-| `turquoise-0` | `#ffffff` |
-| `turquoise-100` | `#e3fbee` |
-| `turquoise-200` | `#c7f7dd` |
-| `turquoise-300` | `#a8f2cc` |
-| `turquoise-400` | `#85edbc` |
-| `turquoise-500` | `#5ae8ab` |
-| `turquoise-600` | `#3b9e73` |
-| `turquoise-700` | `#1e5940` |
-| `turquoise-800` | `#051d13` |
-| `turquoise-900` | `#000000` |
-
 #### Blue
 | Token | Hex |
 |---|---|
-| `blue-0` | `#ffffff` |
-| `blue-100` | `#daefff` |
-| `blue-200` | `#b5deff` |
-| `blue-300` | `#8fcdff` |
-| `blue-400` | `#65bbfe` |
-| `blue-500` | `#2ca9fc` |
-| `blue-600` | `#1a72ac` |
-| `blue-700` | `#0a3f62` |
-| `blue-800` | `#011221` |
-| `blue-900` | `#000000` |
+| `blue-0` | `#fafafa` |
+| `blue-25` | `#f0f1f8` |
+| `blue-50` | `#e6e9f5` |
+| `blue-100` | `#d2d8f0` |
+| `blue-200` | `#aeb9e8` |
+| `blue-300` | `#8e9ce1` |
+| `blue-400` | `#7784c7` |
+| `blue-500` | `#626eaf` |
+| `blue-600` | `#4e5998` |
+| `blue-700` | `#3c4583` |
+| `blue-800` | `#2b316d` |
+| `blue-900` | `#181a54` |
+| `blue-1000` | `#000009` |
+
+#### Green
+| Token | Hex |
+|---|---|
+| `green-0` | `#ffffff` |
+| `green-25` | `#ffffff` |
+| `green-50` | `#fcfff0` |
+| `green-100` | `#e9f1c8` |
+| `green-200` | `#c7d581` |
+| `green-300` | `#a9bb25` |
+| `green-400` | `#90a000` |
+| `green-500` | `#798700` |
+| `green-600` | `#647000` |
+| `green-700` | `#505a00` |
+| `green-800` | `#3c4400` |
+| `green-900` | `#262b00` |
+| `green-1000` | `#010100` |
 
 #### Red
 | Token | Hex |
 |---|---|
 | `red-0` | `#ffffff` |
-| `red-100` | `#ffe0d8` |
-| `red-200` | `#ffc0b1` |
-| `red-300` | `#ff9f8a` |
-| `red-400` | `#ff7b62` |
-| `red-500` | `#fa5234` |
-| `red-600` | `#aa3520` |
-| `red-700` | `#611a0e` |
-| `red-800` | `#210402` |
-| `red-900` | `#000000` |
-
-#### Pear
-| Token | Hex |
-|---|---|
-| `pear-0` | `#ffffff` |
-| `pear-100` | `#f6ffe0` |
-| `pear-200` | `#eefebf` |
-| `pear-300` | `#e6fc9b` |
-| `pear-400` | `#defa72` |
-| `pear-500` | `#d7f832` |
-| `pear-600` | `#92a91f` |
-| `pear-700` | `#52600d` |
-| `pear-800` | `#1a2002` |
-| `pear-900` | `#000000` |
-
-#### Pink
-| Token | Hex |
-|---|---|
-| `pink-0` | `#ffffff` |
-| `pink-100` | `#ffe2f2` |
-| `pink-200` | `#ffc5e5` |
-| `pink-300` | `#ffa7d8` |
-| `pink-400` | `#ff87cb` |
-| `pink-500` | `#ff64be` |
-| `pink-600` | `#ae4280` |
-| `pink-700` | `#632248` |
-| `pink-800` | `#220716` |
-| `pink-900` | `#000000` |
+| `red-25` | `#ffffff` |
+| `red-50` | `#ffffff` |
+| `red-100` | `#ffefeb` |
+| `red-200` | `#fec2b2` |
+| `red-300` | `#f19b85` |
+| `red-400` | `#e4765a` |
+| `red-500` | `#c95d42` |
+| `red-600` | `#ae452a` |
+| `red-700` | `#952d11` |
+| `red-800` | `#761a00` |
+| `red-900` | `#4f0e00` |
+| `red-1000` | `#050000` |
 
 #### Orange
 | Token | Hex |
 |---|---|
 | `orange-0` | `#ffffff` |
-| `orange-100` | `#fff1dc` |
-| `orange-200` | `#ffe2b7` |
-| `orange-300` | `#ffd392` |
-| `orange-400` | `#fec368` |
-| `orange-500` | `#fcb32c` |
-| `orange-600` | `#ac791a` |
-| `orange-700` | `#62430a` |
-| `orange-800` | `#211401` |
-| `orange-900` | `#000000` |
+| `orange-25` | `#ffffff` |
+| `orange-50` | `#ffffff` |
+| `orange-100` | `#ffeed4` |
+| `orange-200` | `#f6c87e` |
+| `orange-300` | `#e9a400` |
+| `orange-400` | `#c78c00` |
+| `orange-500` | `#a87500` |
+| `orange-600` | `#8c6100` |
+| `orange-700` | `#714d00` |
+| `orange-800` | `#563a00` |
+| `orange-900` | `#382400` |
+| `orange-1000` | `#020100` |
 
 #### Purple
 | Token | Hex |
 |---|---|
 | `purple-0` | `#ffffff` |
-| `purple-100` | `#f6e7ff` |
-| `purple-200` | `#ecceff` |
-| `purple-300` | `#e3b5ff` |
-| `purple-400` | `#d99cfd` |
-| `purple-500` | `#cf81fb` |
-| `purple-600` | `#8c56ab` |
-| `purple-700` | `#4f2e61` |
-| `purple-800` | `#190b21` |
-| `purple-900` | `#000000` |
+| `purple-25` | `#fcf9fd` |
+| `purple-50` | `#f5eff7` |
+| `purple-100` | `#e8ddeb` |
+| `purple-200` | `#cfbad6` |
+| `purple-300` | `#b99ac4` |
+| `purple-400` | `#a67cb3` |
+| `purple-500` | `#9361a4` |
+| `purple-600` | `#824595` |
+| `purple-700` | `#6d307f` |
+| `purple-800` | `#571a69` |
+| `purple-900` | `#3d004d` |
+| `purple-1000` | `#020004` |
 
 ---
 
@@ -202,18 +192,19 @@ These are the tokens components should reference. Never hardcode a raw hex value
 | Token | Value | Use |
 |---|---|---|
 | `color-text-primary` | `grey-900` | Default text and icons |
-| `color-text-secondary` | `grey-600` | Supporting text, metadata, placeholder |
+| `color-text-secondary` | `grey-800` | Supporting text, slightly muted from primary |
+| `color-text-tertiary` | `grey-600` | Metadata, placeholder, secondary labels |
 | `color-text-invert` | `grey-0` | Text on dark/filled surfaces |
 | `color-icon-primary` | `grey-900` | Default icon fill |
 | `color-icon-secondary` | `grey-600` | Secondary / decorative icons |
 | `color-icon-invert` | `grey-0` | Icons on dark surfaces |
 | `color-border` | `grey-300` | Default border |
-| `color-surface-primary` | `grey-0` | Default background (panels, modals, cards) |
+| `color-surface-primary` | `grey-25` | Default background (panels, chrome, modals, cards) |
 | `color-surface-secondary` | `grey-100` | Slightly recessed surfaces, input backgrounds |
 | `color-surface-tertiary` | `grey-200` | Hover states, zebra-striping, dividers |
 | `color-surface-invert` | `grey-900` | Dark surfaces, tooltips |
-| `color-accent` | `blue-500` | Primary interactive accent (buttons, links, focus rings, active states) |
-| `color-accent-subtle` | `blue-100` | Accent tint for selected/active backgrounds |
+| `color-accent` | `green-400` | Primary interactive accent (buttons, links, focus rings, active states) |
+| `color-accent-subtle` | `green-100` | Accent tint for selected/active backgrounds |
 | `color-error` | `red-500` | Error text and icons |
 | `color-error-subtle` | `red-100` | Error background tint |
 
@@ -311,7 +302,7 @@ Border radius: 4px.
 Source badges in the catalog use a fixed color per source:
 | Source | Color |
 |---|---|
-| Natural Earth | `turquoise-500` bg tint (`turquoise-100`), text `turquoise-700` |
+| Natural Earth | `green-500` bg tint (`green-100`), text `green-700` |
 | TIGER | `blue-500` bg tint (`blue-100`), text `blue-700` |
 | Eurostat | `orange-500` bg tint (`orange-100`), text `orange-700` |
 | Project Linework | `purple-500` bg tint (`purple-100`), text `purple-700` |

@@ -200,7 +200,7 @@
 				<!-- Summary line -->
 				<div class="summary body-regular">
 					{#if result.canProceed}
-						<span class="check-badge"><Check size={9} weight="bold" color="var(--color-text-primary)" /></span>
+						<Check size={13} color="var(--color-text-primary)" />
 						{result.featureCount.toLocaleString()} feature{result.featureCount === 1 ? '' : 's'}
 						{#if result.geometryTypes.length}
 							· {result.geometryTypes.join(', ')}
@@ -216,7 +216,7 @@
 						{#each sortedIssues(result.issues) as issue}
 							<li class="issue body-small issue--{issue.level}">
 								{#if issue.level === 'error'}
-									<Warning size={13} weight="fill" />
+									<Warning size={13} />
 								{:else if issue.level === 'warning'}
 									<Warning size={13} />
 								{:else}
@@ -350,17 +350,6 @@
 		color: var(--color-text-primary);
 	}
 
-	.check-badge {
-		width: 14px;
-		height: 14px;
-		border-radius: 50%;
-		background: var(--pear-500);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-	}
-
 	/* Issues */
 	.issues {
 		list-style: none;
@@ -402,6 +391,47 @@
 		gap: var(--space-s);
 		color: var(--color-text-primary);
 		cursor: pointer;
+	}
+
+	.radio-row input[type="radio"],
+	.radio-row input[type="checkbox"] {
+		appearance: none;
+		-webkit-appearance: none;
+		width: 14px;
+		height: 14px;
+		border: 1.5px solid var(--color-border);
+		background: transparent;
+		cursor: pointer;
+		flex-shrink: 0;
+		margin: 0;
+		transition: border-color 100ms;
+	}
+
+	.radio-row input[type="radio"] {
+		border-radius: 50%;
+	}
+
+	.radio-row input[type="checkbox"] {
+		border-radius: 2px;
+	}
+
+	.radio-row input[type="radio"]:not(:checked):hover,
+	.radio-row input[type="checkbox"]:not(:checked):hover {
+		border-color: var(--color-accent);
+	}
+
+	.radio-row input[type="radio"]:checked {
+		border-color: var(--color-accent);
+		background: radial-gradient(circle, var(--color-accent) 38%, transparent 38%);
+	}
+
+	.radio-row input[type="checkbox"]:checked {
+		border-color: var(--color-accent);
+		background-color: var(--color-accent);
+		background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 5l2.5 2.5 4.5-4.5' stroke='%23ffffff' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+		background-size: 10px;
+		background-repeat: no-repeat;
+		background-position: center;
 	}
 
 	/* CSV table */
@@ -461,7 +491,7 @@
 
 	.csv-table th.lon,
 	.csv-table td.lon {
-		background: color-mix(in srgb, var(--turquoise-500) 12%, transparent);
+		background: color-mix(in srgb, var(--blue-500) 12%, transparent);
 	}
 
 	/* Column header with badges */
@@ -499,19 +529,19 @@
 
 	.badge-lat.active {
 		background: var(--purple-500);
-		color: white;
+		color: var(--color-text-invert);
 		opacity: 1;
 	}
 
 	.badge-lon {
-		background: color-mix(in srgb, var(--turquoise-500) 15%, transparent);
-		border-color: var(--turquoise-500);
-		color: var(--turquoise-600);
+		background: color-mix(in srgb, var(--blue-500) 15%, transparent);
+		border-color: var(--blue-500);
+		color: var(--blue-600);
 	}
 
 	.badge-lon.active {
-		background: var(--turquoise-500);
-		color: white;
+		background: var(--blue-500);
+		color: var(--color-text-invert);
 		opacity: 1;
 	}
 
@@ -534,7 +564,7 @@
 		border-radius: var(--radius);
 		border: none;
 		background: var(--color-accent);
-		color: white;
+		color: var(--color-text-invert);
 		cursor: pointer;
 	}
 

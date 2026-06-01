@@ -222,7 +222,7 @@
 	}
 
 	button:hover:not(:disabled) {
-		background-color: var(--color-surface-tertiary);
+		background-color: var(--color-surface-secondary);
 	}
 
 	button:disabled {
@@ -241,7 +241,7 @@
 	}
 
 	.experiments-link:hover {
-		background-color: var(--color-surface-tertiary);
+		background-color: var(--color-surface-secondary);
 		color: var(--color-text-primary);
 	}
 
@@ -293,7 +293,7 @@
 		border-radius: var(--radius);
 		border: none;
 		background: var(--color-accent);
-		color: white;
+		color: var(--color-text-invert);
 		cursor: pointer;
 	}
 

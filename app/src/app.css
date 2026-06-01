@@ -3,17 +3,65 @@
    ============================================================ */
 
 @font-face {
-	font-family: 'Switzer';
-	src: url('/fonts/switzer/Switzer-Variable.woff2') format('woff2-variations');
-	font-weight: 100 900;
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-Regular.woff2') format('woff2');
+	font-weight: 400;
 	font-style: normal;
 	font-display: swap;
 }
 
 @font-face {
-	font-family: 'Switzer';
-	src: url('/fonts/switzer/Switzer-VariableItalic.woff2') format('woff2-variations');
-	font-weight: 100 900;
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-Italic.woff2') format('woff2');
+	font-weight: 400;
+	font-style: italic;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-Medium.woff2') format('woff2');
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-MediumItalic.woff2') format('woff2');
+	font-weight: 500;
+	font-style: italic;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-Semibold.woff2') format('woff2');
+	font-weight: 600;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-SemiboldItalic.woff2') format('woff2');
+	font-weight: 600;
+	font-style: italic;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-Bold.woff2') format('woff2');
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-BoldItalic.woff2') format('woff2');
+	font-weight: 700;
 	font-style: italic;
 	font-display: swap;
 }
@@ -48,7 +96,7 @@
 
 :root {
 	/* --- Fonts --- */
-	--font-sans: 'Switzer', sans-serif;
+	--font-sans: 'MDUI', sans-serif;
 	--font-mono: 'VCTR Mono', monospace;
 
 	/* --- Spacing --- */
@@ -64,100 +112,94 @@
 	--radius: 4px;
 
 	/* --- Grey scale --- */
-	--grey-900: #161819;
-	--grey-800: #2d3137;
-	--grey-700: #424952;
-	--grey-600: #7d8289;
-	--grey-500: #a8acb1;
-	--grey-400: #cfd1d3;
-	--grey-300: #e3e5e7;
-	--grey-200: #eeeff1;
-	--grey-100: #f4f4f5;
 	--grey-0: #ffffff;
-
-	/* --- Turquoise --- */
-	--turquoise-0: #ffffff;
-	--turquoise-100: #e3fbee;
-	--turquoise-200: #c7f7dd;
-	--turquoise-300: #a8f2cc;
-	--turquoise-400: #85edbc;
-	--turquoise-500: #5ae8ab;
-	--turquoise-600: #3b9e73;
-	--turquoise-700: #1e5940;
-	--turquoise-800: #051d13;
-	--turquoise-900: #000000;
+	--grey-25: #fbfbf9;
+	--grey-50: #f7f7f4;
+	--grey-100: #f0efea;
+	--grey-200: #dedcd3;
+	--grey-300: #cdcabc;
+	--grey-400: #b4b1a2;
+	--grey-500: #9c9989;
+	--grey-600: #858271;
+	--grey-700: #6e6b59;
+	--grey-800: #525043;
+	--grey-900: #38362e;
+	--grey-1000: #020100;
 
 	/* --- Blue --- */
-	--blue-0: #ffffff;
-	--blue-100: #daefff;
-	--blue-200: #b5deff;
-	--blue-300: #8fcdff;
-	--blue-400: #65bbfe;
-	--blue-500: #2ca9fc;
-	--blue-600: #1a72ac;
-	--blue-700: #0a3f62;
-	--blue-800: #011221;
-	--blue-900: #000000;
+	--blue-0: #fafafa;
+	--blue-25: #f0f1f8;
+	--blue-50: #e6e9f5;
+	--blue-100: #d2d8f0;
+	--blue-200: #aeb9e8;
+	--blue-300: #8e9ce1;
+	--blue-400: #7784c7;
+	--blue-500: #626eaf;
+	--blue-600: #4e5998;
+	--blue-700: #3c4583;
+	--blue-800: #2b316d;
+	--blue-900: #181a54;
+	--blue-1000: #000009;
+
+	/* --- Green --- */
+	--green-0: #ffffff;
+	--green-25: #ffffff;
+	--green-50: #fcfff0;
+	--green-100: #e9f1c8;
+	--green-200: #c7d581;
+	--green-300: #a9bb25;
+	--green-400: #90a000;
+	--green-500: #798700;
+	--green-600: #647000;
+	--green-700: #505a00;
+	--green-800: #3c4400;
+	--green-900: #262b00;
+	--green-1000: #010100;
 
 	/* --- Red --- */
 	--red-0: #ffffff;
-	--red-100: #ffe0d8;
-	--red-200: #ffc0b1;
-	--red-300: #ff9f8a;
-	--red-400: #ff7b62;
-	--red-500: #fa5234;
-	--red-600: #aa3520;
-	--red-700: #611a0e;
-	--red-800: #210402;
-	--red-900: #000000;
-
-	/* --- Pear --- */
-	--pear-0: #ffffff;
-	--pear-100: #f6ffe0;
-	--pear-200: #eefebf;
-	--pear-300: #e6fc9b;
-	--pear-400: #defa72;
-	--pear-500: #d7f832;
-	--pear-600: #92a91f;
-	--pear-700: #52600d;
-	--pear-800: #1a2002;
-	--pear-900: #000000;
-
-	/* --- Pink --- */
-	--pink-0: #ffffff;
-	--pink-100: #ffe2f2;
-	--pink-200: #ffc5e5;
-	--pink-300: #ffa7d8;
-	--pink-400: #ff87cb;
-	--pink-500: #ff64be;
-	--pink-600: #ae4280;
-	--pink-700: #632248;
-	--pink-800: #220716;
-	--pink-900: #000000;
+	--red-25: #ffffff;
+	--red-50: #ffffff;
+	--red-100: #ffefeb;
+	--red-200: #fec2b2;
+	--red-300: #f19b85;
+	--red-400: #e4765a;
+	--red-500: #c95d42;
+	--red-600: #ae452a;
+	--red-700: #952d11;
+	--red-800: #761a00;
+	--red-900: #4f0e00;
+	--red-1000: #050000;
 
 	/* --- Orange --- */
 	--orange-0: #ffffff;
-	--orange-100: #fff1dc;
-	--orange-200: #ffe2b7;
-	--orange-300: #ffd392;
-	--orange-400: #fec368;
-	--orange-500: #fcb32c;
-	--orange-600: #ac791a;
-	--orange-700: #62430a;
-	--orange-800: #211401;
-	--orange-900: #000000;
+	--orange-25: #ffffff;
+	--orange-50: #ffffff;
+	--orange-100: #ffeed4;
+	--orange-200: #f6c87e;
+	--orange-300: #e9a400;
+	--orange-400: #c78c00;
+	--orange-500: #a87500;
+	--orange-600: #8c6100;
+	--orange-700: #714d00;
+	--orange-800: #563a00;
+	--orange-900: #382400;
+	--orange-1000: #020100;
 
 	/* --- Purple --- */
 	--purple-0: #ffffff;
-	--purple-100: #f6e7ff;
-	--purple-200: #ecceff;
-	--purple-300: #e3b5ff;
-	--purple-400: #d99cfd;
-	--purple-500: #cf81fb;
-	--purple-600: #8c56ab;
-	--purple-700: #4f2e61;
-	--purple-800: #190b21;
-	--purple-900: #000000;
+	--purple-25: #fcf9fd;
+	--purple-50: #f5eff7;
+	--purple-100: #e8ddeb;
+	--purple-200: #cfbad6;
+	--purple-300: #b99ac4;
+	--purple-400: #a67cb3;
+	--purple-500: #9361a4;
+	--purple-600: #824595;
+	--purple-700: #6d307f;
+	--purple-800: #571a69;
+	--purple-900: #3d004d;
+	--purple-1000: #020004;
 
 	/* --- Semantic tokens --- */
 	--color-text-primary: var(--grey-900);
@@ -167,13 +209,13 @@
 	--color-icon-primary: var(--grey-900);
 	--color-icon-secondary: var(--grey-600);
 	--color-icon-invert: var(--grey-0);
-	--color-border: var(--grey-300);
-	--color-surface-primary: var(--grey-0);
+	--color-border: var(--grey-200);
+	--color-surface-primary: var(--grey-25);
 	--color-surface-secondary: var(--grey-100);
 	--color-surface-tertiary: var(--grey-200);
 	--color-surface-invert: var(--grey-900);
-	--color-accent: var(--blue-500);
-	--color-accent-subtle: var(--blue-100);
+	--color-accent: var(--green-400);
+	--color-accent-subtle: var(--green-100);
 	--color-error: var(--red-500);
 	--color-error-subtle: var(--red-100);
 }
@@ -291,4 +333,18 @@ h4,
 	font-size: 12px;
 	line-height: 18px;
 	font-weight: 400;
+}
+
+/* Number input — compact numeric control used in style panels */
+.number-input {
+	height: 24px;
+	padding: 0 var(--space-s);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius);
+	background: var(--color-surface-primary);
+	color: var(--color-text-primary);
+	text-align: right;
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 18px;
 }

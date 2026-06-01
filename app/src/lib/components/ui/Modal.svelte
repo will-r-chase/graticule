@@ -101,7 +101,7 @@
 	}
 
 	.icon-btn:hover {
-		background: var(--color-surface-tertiary);
+		background: var(--color-surface-secondary);
 		color: var(--color-icon-primary);
 	}
 </style>

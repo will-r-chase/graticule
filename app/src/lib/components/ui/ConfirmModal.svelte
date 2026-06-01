@@ -47,7 +47,7 @@
 		border-radius: var(--radius);
 		border: none;
 		background: var(--color-accent);
-		color: white;
+		color: var(--color-text-invert);
 		cursor: pointer;
 	}
 
