@@ -2,6 +2,7 @@
 	import ConfirmModal from '$lib/components/ui/ConfirmModal.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import ExportModal from './ExportModal.svelte';
+	import MappyMascot from './MappyMascot.svelte';
 	import { Warning } from 'phosphor-svelte';
 	import { prepareProject, downloadProject, loadProject, validateProject, formatBytes } from '$lib/utils/project';
 	import { clearLayers } from '$lib/stores/layers.svelte';
@@ -89,7 +90,10 @@
 </script>
 
 <header class="top-chrome">
-	<span class="brand">Mappy</span>
+	<div class="brand-group">
+		<MappyMascot />
+		<h2 class="brand">Mappy</h2>
+	</div>
 
 	<div class="actions">
 		<a class="mono-regular experiments-link" href="/experiments">Experiments</a>
@@ -187,10 +191,16 @@
 		background-color: var(--color-surface-primary);
 	}
 
+	.brand-group {
+		display: flex;
+		align-items: center;
+		gap: var(--space-m);
+	}
+
+	/* Global h2 styles carry font-family, font-size, font-weight.
+	   Only override what the global rule doesn't set. */
 	.brand {
-		font-family: var(--font-sans);
-		font-size: 14px;
-		font-weight: 700;
+		margin: 0;
 		color: var(--color-text-primary);
 	}
 

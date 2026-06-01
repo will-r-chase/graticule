@@ -228,9 +228,9 @@ body {
 /* H2 — panel or section headings */
 h2 {
 	font-family: var(--font-sans);
-	font-size: 24px;
+	font-size: 20px;
 	line-height: 28px;
-	font-weight: 700;
+	font-weight: 500;
 }
 
 /* H3 — sub-section headings */
