@@ -75,7 +75,7 @@ These likely need to be designed together as a coherent water-handling workflow 
 
 - [ ] **Fix Node.js 20 deprecation warning** in GitHub Actions (minor, non-blocking).
 - [ ] **IndexedDB autosave** — recovery buffer for accidental tab closure. Not the canonical save, just a safety net. PRD calls for this but it was deferred.
-- [ ] **Auto-simplification toast — copy and styling** — revisit the wording and visual design of the toast shown when a large dataset is auto-simplified on load.
+- [x] **Auto-simplification toast — copy and styling** — revisit the wording and visual design of the toast shown when a large dataset is auto-simplified on load.
 - [x] **Simplification panel styling** — the Process panel (simplify / smooth / bezier) needs visual polish to match the rest of the layer settings UI.
 - [x] **Rendering performance: viewport culling** — skip features whose bounding box falls entirely outside the current viewport before building Path2D. Significant win for large datasets at high zoom.
 - [ ] **Rendering performance: duplicate pixel detection** — skip `lineTo` calls where consecutive projected coordinates round to the same half-pixel, matching Mapshaper's `drawPath2` strategy. Reduces Path2D command count dramatically at low zoom on dense datasets.
