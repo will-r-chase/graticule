@@ -27,7 +27,7 @@
 
 - [ ] **Simplification** — global simplification setting affecting all layers, with optional per-layer override. Global is simpler UX; per-layer gives control for mixed-scale datasets.
 - [ ] **Local simplification** — apply different simplification levels to different geographic areas within the same layer (e.g. preserve detail on a narrow peninsula while aggressively simplifying a long straight coastline). Requires interaction primitives for defining regions — probably a brush or polygon-draw tool on the canvas. Defer until the interaction model is clearer.
-- [ ] **Curve styles** — control the feel of linework beyond simplification: curved/organic, hand-drawn, sharp/geometric. Algorithm design is an open research question.
+- [x] **Curve styles** — control the feel of linework beyond simplification: curved/organic, hand-drawn, sharp/geometric. Algorithm design is an open research question.
 - [ ] **More line styles** — additional stroke treatments based on or inspired by simplification (e.g. tapered lines, variable weight).
 - [x] **Duplicate a layer** — copy a layer with its current style as a new independent layer.
 - [ ] **Labeling concept** — how labels work as a first-class feature: place names from bundled sources, smart default placement (collision-aware, scale-appropriate).
@@ -77,7 +77,7 @@ These likely need to be designed together as a coherent water-handling workflow 
 - [ ] **IndexedDB autosave** — recovery buffer for accidental tab closure. Not the canonical save, just a safety net. PRD calls for this but it was deferred.
 - [ ] **Auto-simplification toast — copy and styling** — revisit the wording and visual design of the toast shown when a large dataset is auto-simplified on load.
 - [x] **Simplification panel styling** — the Process panel (simplify / smooth / bezier) needs visual polish to match the rest of the layer settings UI.
-- [ ] **Rendering performance: viewport culling** — skip features whose bounding box falls entirely outside the current viewport before building Path2D. Significant win for large datasets at high zoom.
+- [x] **Rendering performance: viewport culling** — skip features whose bounding box falls entirely outside the current viewport before building Path2D. Significant win for large datasets at high zoom.
 - [ ] **Rendering performance: duplicate pixel detection** — skip `lineTo` calls where consecutive projected coordinates round to the same half-pixel, matching Mapshaper's `drawPath2` strategy. Reduces Path2D command count dramatically at low zoom on dense datasets.
 
 ---
