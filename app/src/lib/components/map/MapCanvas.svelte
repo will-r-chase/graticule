@@ -4,7 +4,7 @@
 	import * as d3shape from 'd3-shape';
 	import * as d3gp from 'd3-geo-projection';
 	import { feature } from 'topojson-client';
-	import { workerBuildPaths } from '$lib/workers/geoWorker';
+	import { workerBuildPaths, workerStoreTopology, workerRemoveTopology } from '$lib/workers/geoWorker';
 	import type { PathCommand } from '$lib/workers/types';
 	import { layers, workingTopologyData, layerDrag } from '$lib/stores/layers.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
@@ -56,6 +56,20 @@
 	let lastPointerX = 0;
 	let lastPointerY = 0;
 
+	// Rotation drag tracking (rotate-mode projections only).
+	let localRotate: [number, number, number] = [0, 0, 0];
+	let rotateThrottleActive = false;
+	// Rotation at the time of the last dispatched worker build. Used to skip builds
+	// where the globe has barely moved — the first tiny pointer wiggle doesn't warrant
+	// a full 950ms rebuild; wait until the rotation has changed by at least this many degrees.
+	const ROTATE_BUILD_THRESHOLD = 2;
+	let lastBuiltRotate: [number, number, number] = [0, 0, 0];
+
+	// Derived projection metadata from the PROJECTIONS config.
+	const projectionEntry = $derived(PROJECTIONS.find(p => p.id === projectionStore.id) ?? PROJECTIONS[0]);
+	const interactionMode = $derived(projectionEntry.interactionMode);
+	const isGlobe = $derived(projectionEntry.isGlobe === true);
+
 	// Resize debounce — true while the container is actively being resized.
 	// The cache effect bails out while this is set, deferring path recomputation
 	// until the resize settles. Works for both window resize and future panel drags
@@ -80,6 +94,28 @@
 	function fitToExtent() {
 		const visibleLayers = layers.filter((l) => l.visible && l.hasTopology);
 		if (!projection || visibleLayers.length === 0) {
+			tx = 0; ty = 0; mapScale = 1;
+			mapState.tx = 0; mapState.ty = 0; mapState.mapScale = 1;
+			return;
+		}
+
+		// In rotate mode, fitting means pointing the globe at the data's centroid.
+		// tx/ty/mapScale are left unchanged — zoom level is preserved.
+		if (interactionMode === 'rotate') {
+			const features = visibleLayers.flatMap((l) => {
+				const topo = workingTopologyData.get(l.id);
+				if (!topo) return [];
+				const objectName = Object.keys(topo.objects)[0];
+				const fc = feature(topo, topo.objects[objectName]) as { features?: unknown[] };
+				return fc?.features ?? [];
+			});
+			if (features.length === 0) return;
+
+			const combined = { type: 'FeatureCollection' as const, features };
+			const [cLon, cLat] = d3.geoCentroid(combined as d3.GeoPermissibleObjects);
+			if (!isFinite(cLon) || !isFinite(cLat)) return;
+
+			projectionStore.rotate = [-cLon, -cLat, 0];
 			tx = 0; ty = 0; mapScale = 1;
 			mapState.tx = 0; mapState.ty = 0; mapState.mapScale = 1;
 			return;
@@ -156,27 +192,55 @@
 		isDragging = true;
 		lastPointerX = e.clientX;
 		lastPointerY = e.clientY;
+		if (interactionMode === 'rotate') {
+			localRotate = [...projectionStore.rotate];
+			lastBuiltRotate = [...projectionStore.rotate]; // reset so delta is measured from drag start
+		}
 		(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
 	}
 
 	function handlePointerMove(e: PointerEvent) {
 		if (!isDragging) return;
-		tx += e.clientX - lastPointerX;
-		ty += e.clientY - lastPointerY;
-		mapState.tx = tx;
-		mapState.ty = ty;
+
+		if (interactionMode === 'rotate' && projection) {
+			const scale = projection.scale();
+			const dλ = (e.clientX - lastPointerX) / scale * (180 / Math.PI);
+			const dφ = -(e.clientY - lastPointerY) / scale * (180 / Math.PI);
+			localRotate = [
+				localRotate[0] + dλ,
+				Math.max(-90, Math.min(90, localRotate[1] + dφ)),
+				0,
+			];
+			if (!rotateThrottleActive) {
+				projectionStore.rotate = [...localRotate];
+				rotateThrottleActive = true;
+				setTimeout(() => { rotateThrottleActive = false; }, 50);
+			}
+		} else {
+			tx += e.clientX - lastPointerX;
+			ty += e.clientY - lastPointerY;
+			mapState.tx = tx;
+			mapState.ty = ty;
+		}
+
 		lastPointerX = e.clientX;
 		lastPointerY = e.clientY;
 	}
 
 	function handlePointerUp() {
 		isDragging = false;
+		if (interactionMode === 'rotate') {
+			rotateThrottleActive = false;
+			projectionStore.rotate = [...localRotate];
+		}
 	}
 
 	let projection = $derived.by(() => {
-		const fn = allProjections[projectionStore.id] as (() => d3.GeoProjection) | undefined;
+		const resolvedId = projectionStore.id === 'geoGlobe' ? 'geoOrthographic' : projectionStore.id;
+		const fn = allProjections[resolvedId] as (() => d3.GeoProjection) | undefined;
 		if (!fn || !width || !height) return null;
-		return fn().fitSize([width, height], { type: 'Sphere' });
+		const rot = projectionEntry.interactionMode === 'rotate' ? projectionStore.rotate : [0, 0, 0] as [number, number, number];
+		return fn().fitSize([width, height], { type: 'Sphere' }).rotate(rot);
 	});
 
 	// Wraps a projection's stream to clamp lon/lat before the projection math runs.
@@ -213,6 +277,17 @@
 		}
 	});
 
+	// Reset tx/ty to center when switching into rotate mode so the view starts centered.
+	let _lastInteractionMode = interactionMode;
+	$effect(() => {
+		const mode = interactionMode;
+		if (mode === 'rotate' && _lastInteractionMode !== 'rotate') {
+			tx = 0; ty = 0;
+			mapState.tx = 0; mapState.ty = 0;
+		}
+		_lastInteractionMode = mode;
+	});
+
 	interface CachedChunk {
 		path2d: Path2D;
 		bbox: [number, number, number, number]; // xmin, ymin, xmax, ymax in projection space
@@ -245,6 +320,16 @@
 	// Layers whose cached path is stale (topology changed) but kept visible until a fresh
 	// path arrives, so the layer never flashes invisible during a rebuild.
 	const stalePaths = new Set<string>();
+	// Projection ID the cache was last built for — tracks type changes independently of
+	// the d3 projection object so rotation-only changes can skip clearing inFlightBuilds.
+	let cachedProjectionId = '';
+	// Bumped when a stale build completes, re-triggering the cache effect so the next
+	// build fires immediately rather than waiting for another reactive change.
+	let staleBuildVersion = $state(0);
+	// Tracks the topology object reference last sent to the worker per layer.
+	// We compare by reference: if workingTopologyData is updated (post-pipeline),
+	// the reference changes and we resend. Rotation-only changes skip the send entirely.
+	const sentTopologyRefs = new Map<string, unknown>();
 
 	function commandsToPath2D(commands: PathCommand[]): Path2D {
 		const path2d = new Path2D();
@@ -273,17 +358,30 @@
 		if (layerDrag.active) return; // bail out during drag — all paths already cached, no computation needed
 		if (isResizing) return;       // defer during resize — recompute once after container settles
 		void cacheSignal; // re-run when layers change meaningfully; stable across reorders
+		void staleBuildVersion; // re-run when a stale build completes, to fire the next one
 		if (!projection) return;
 
-		// Projection or chunk settings changed — all cached paths are now wrong.
+		// Projection or chunk settings changed — mark all cached paths as stale so
+		// old paths stay visible during rebuild rather than flashing invisible.
 		const maxChunkVertices = debug.maxChunkVertices;
 		const noChunking = debug.noChunking;
+		const currentProjId = projectionStore.id;
 		if (projection !== cachedProjection || maxChunkVertices !== cachedMaxChunkVertices || noChunking !== cachedNoChunking) {
-			pathCache.clear();
-			inFlightBuilds.clear();
-			stalePaths.clear();
-			pathBuildEpoch++;
+			for (const id of pathCache.keys()) stalePaths.add(id);
+			// For rotation-only changes keep inFlightBuilds intact — at most one build
+			// per layer in-flight at a time, preventing worker queue buildup during drag.
+			const rotationOnly = projection !== cachedProjection && currentProjId === cachedProjectionId;
+			if (!rotationOnly) {
+				inFlightBuilds.clear();
+				// Only invalidate in-flight builds when the projection type (or chunk
+				// settings) changes — a result built for a slightly different rotation is
+				// still a valid render and should display. Incrementing the epoch on every
+				// throttle tick during drag means every ~950ms build completes stale and is
+				// discarded, so the user never sees intermediate frames.
+				pathBuildEpoch++;
+			}
 			cachedProjection = projection;
+			cachedProjectionId = currentProjId;
 			cachedMaxChunkVertices = maxChunkVertices;
 			cachedNoChunking = noChunking;
 		}
@@ -313,7 +411,11 @@
 		// Remove entries for layers that no longer exist.
 		const activeIds = new Set(currentLayers.map((l) => l.id));
 		for (const id of pathCache.keys()) {
-			if (!activeIds.has(id)) pathCache.delete(id);
+			if (!activeIds.has(id)) {
+				pathCache.delete(id);
+				workerRemoveTopology(id);
+				sentTopologyRefs.delete(id);
+			}
 		}
 		for (const id of inFlightBuilds) {
 			if (!activeIds.has(id)) inFlightBuilds.delete(id);
@@ -325,6 +427,7 @@
 		// Fire async builds for layers that need paths. Each resolves independently,
 		// writing to the cache and bumping cacheVersion when the worker responds.
 		const projId = projectionStore.id;
+		const rotate = (projectionEntry.interactionMode === 'rotate' ? [...projectionStore.rotate] : [0, 0, 0]) as [number, number, number];
 		const w = width;
 		const h = height;
 		const epoch = pathBuildEpoch;
@@ -338,11 +441,35 @@
 			const topo = workingTopologyData.get(id);
 			if (!topo) continue;
 
+			// During a rotation drag, skip builds where the globe hasn't moved enough to
+			// be worth a full rebuild. The first tiny pointer wiggle always fires the
+			// leading-edge throttle; without this guard, a ~950ms build kicks off for a
+			// near-identical frame. isDragging is read via untrack so it doesn't become
+			// a reactive dependency of this effect. When the pointer is released,
+			// isDragging is already false, so the final build always goes through.
+			if (untrack(() => isDragging) && projectionEntry.interactionMode === 'rotate') {
+				const dλ = Math.abs(rotate[0] - lastBuiltRotate[0]);
+				const dφ = Math.abs(rotate[1] - lastBuiltRotate[1]);
+				if (dλ < ROTATE_BUILD_THRESHOLD && dφ < ROTATE_BUILD_THRESHOLD) continue;
+			}
+			lastBuiltRotate = [...rotate]; // record the rotation we're about to build for
+
+			// Send topology to the worker only when it changes (new layer or post-pipeline
+			// update). Compare by reference — workingTopologyData replaces the object when
+			// the pipeline reruns, so a changed reference means new topology.
+			if (sentTopologyRefs.get(id) !== topo) {
+				workerStoreTopology(id, topo);
+				sentTopologyRefs.set(id, topo);
+			}
+
 			inFlightBuilds.add(id);
-			workerBuildPaths(id, topo, projId, w, h, { ...layer.processing }, maxChunkVertices, noChunking)
+			workerBuildPaths(id, projId, w, h, rotate, { ...layer.processing }, maxChunkVertices, noChunking)
 				.then((chunks) => {
-					if (epoch !== pathBuildEpoch) return; // projection/settings changed while building — discard
-					inFlightBuilds.delete(id);
+					inFlightBuilds.delete(id); // always unblock, regardless of epoch
+					if (epoch !== pathBuildEpoch) {
+						staleBuildVersion++; // re-trigger the effect to fire the next build
+						return;
+					}
 					stalePaths.delete(id);
 					pathCache.set(id, chunks.map(c => ({
 						path2d: commandsToPath2D(c.commands),
@@ -373,12 +500,16 @@
 		if (!canvasEl) return;
 		function handleWheel(e: WheelEvent) {
 			e.preventDefault();
-			const rect = canvasEl!.getBoundingClientRect();
-			const cx = e.clientX - rect.left;
-			const cy = e.clientY - rect.top;
-			// exp gives smooth logarithmic zoom on both trackpad and mouse wheel.
 			const factor = Math.exp(-e.deltaY * 0.007);
-			zoomAt(cx, cy, factor);
+			// In rotate mode, zoom toward screen center to keep the projection centered.
+			if (interactionMode === 'rotate') {
+				zoomAt(width / 2, height / 2, factor);
+			} else {
+				const rect = canvasEl!.getBoundingClientRect();
+				const cx = e.clientX - rect.left;
+				const cy = e.clientY - rect.top;
+				zoomAt(cx, cy, factor);
+			}
 		}
 		canvasEl.addEventListener('wheel', handleWheel, { passive: false });
 		return () => canvasEl!.removeEventListener('wheel', handleWheel);
@@ -435,6 +566,16 @@
 
 		ctx.translate(tx, ty);
 		ctx.scale(mapScale, mapScale);
+
+		// Draw the globe disk outline when in globe mode.
+		if (isGlobe && projection) {
+			const spherePathStr = d3.geoPath(projection)({ type: 'Sphere' });
+			if (spherePathStr) {
+				ctx.strokeStyle = '#888';
+				ctx.lineWidth = 2 / mapScale;
+				ctx.stroke(new Path2D(spherePathStr));
+			}
+		}
 
 		const debugStats: LayerChunkStats[] = [];
 		let debugChunkOffset = 0;

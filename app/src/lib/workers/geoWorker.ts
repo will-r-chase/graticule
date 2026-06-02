@@ -34,12 +34,25 @@ export function workerChaikin(id: string, topo: Topology, iterations: number): P
 	});
 }
 
+// Send a topology to the worker once (or when it changes). Fire-and-forget —
+// no response needed. The worker stores it and BUILD_PATHS reads from there.
+export function workerStoreTopology(id: string, topo: Topology): void {
+	const msg: WorkerRequest = { type: 'STORE_TOPOLOGY', id, topo };
+	getWorker().postMessage(msg);
+}
+
+// Tell the worker to discard a layer's stored topology and chunk cache.
+export function workerRemoveTopology(id: string): void {
+	const msg: WorkerRequest = { type: 'REMOVE_TOPOLOGY', id };
+	getWorker().postMessage(msg);
+}
+
 export function workerBuildPaths(
 	id: string,
-	topo: Topology,
 	projId: string,
 	width: number,
 	height: number,
+	rotate: [number, number, number],
 	processing: LayerProcessing,
 	maxChunkVertices: number,
 	noChunking: boolean,
@@ -51,7 +64,7 @@ export function workerBuildPaths(
 		});
 		const msg: WorkerRequest = {
 			type: 'BUILD_PATHS',
-			requestId, id, topo, projId, width, height, processing, maxChunkVertices, noChunking,
+			requestId, id, projId, width, height, rotate, processing, maxChunkVertices, noChunking,
 		};
 		getWorker().postMessage(msg);
 	});
