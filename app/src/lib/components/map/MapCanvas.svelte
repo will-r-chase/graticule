@@ -59,6 +59,11 @@
 	// Rotation drag tracking (rotate-mode projections only).
 	let localRotate: [number, number, number] = [0, 0, 0];
 	let rotateThrottleActive = false;
+	// Rotation at the time of the last dispatched worker build. Used to skip builds
+	// where the globe has barely moved — the first tiny pointer wiggle doesn't warrant
+	// a full 950ms rebuild; wait until the rotation has changed by at least this many degrees.
+	const ROTATE_BUILD_THRESHOLD = 2;
+	let lastBuiltRotate: [number, number, number] = [0, 0, 0];
 
 	// Derived projection metadata from the PROJECTIONS config.
 	const projectionEntry = $derived(PROJECTIONS.find(p => p.id === projectionStore.id) ?? PROJECTIONS[0]);
@@ -189,6 +194,7 @@
 		lastPointerY = e.clientY;
 		if (interactionMode === 'rotate') {
 			localRotate = [...projectionStore.rotate];
+			lastBuiltRotate = [...projectionStore.rotate]; // reset so delta is measured from drag start
 		}
 		(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
 	}
@@ -365,8 +371,15 @@
 			// For rotation-only changes keep inFlightBuilds intact — at most one build
 			// per layer in-flight at a time, preventing worker queue buildup during drag.
 			const rotationOnly = projection !== cachedProjection && currentProjId === cachedProjectionId;
-			if (!rotationOnly) inFlightBuilds.clear();
-			pathBuildEpoch++;
+			if (!rotationOnly) {
+				inFlightBuilds.clear();
+				// Only invalidate in-flight builds when the projection type (or chunk
+				// settings) changes — a result built for a slightly different rotation is
+				// still a valid render and should display. Incrementing the epoch on every
+				// throttle tick during drag means every ~950ms build completes stale and is
+				// discarded, so the user never sees intermediate frames.
+				pathBuildEpoch++;
+			}
 			cachedProjection = projection;
 			cachedProjectionId = currentProjId;
 			cachedMaxChunkVertices = maxChunkVertices;
@@ -427,6 +440,19 @@
 
 			const topo = workingTopologyData.get(id);
 			if (!topo) continue;
+
+			// During a rotation drag, skip builds where the globe hasn't moved enough to
+			// be worth a full rebuild. The first tiny pointer wiggle always fires the
+			// leading-edge throttle; without this guard, a ~950ms build kicks off for a
+			// near-identical frame. isDragging is read via untrack so it doesn't become
+			// a reactive dependency of this effect. When the pointer is released,
+			// isDragging is already false, so the final build always goes through.
+			if (untrack(() => isDragging) && projectionEntry.interactionMode === 'rotate') {
+				const dλ = Math.abs(rotate[0] - lastBuiltRotate[0]);
+				const dφ = Math.abs(rotate[1] - lastBuiltRotate[1]);
+				if (dλ < ROTATE_BUILD_THRESHOLD && dφ < ROTATE_BUILD_THRESHOLD) continue;
+			}
+			lastBuiltRotate = [...rotate]; // record the rotation we're about to build for
 
 			// Send topology to the worker only when it changes (new layer or post-pipeline
 			// update). Compare by reference — workingTopologyData replaces the object when
