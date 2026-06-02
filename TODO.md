@@ -4,7 +4,7 @@
 
 ## 🔴 Top Priorities
 
-- [ ] **Globe / orthographic mode** — `geoOrthographic` is already in the projection list but the interaction is wrong: dragging currently translates tx/ty rather than rotating the projection. A proper globe needs drag-to-rotate updating `projection.rotate([λ, φ])`, which is a fundamentally different interaction model from flat-map pan. Needs its own mode: detect when an orthographic-family projection is active and switch to rotation-based drag. Back-face clipping is handled automatically by d3-geo.
+- [x] **Globe / orthographic mode** — `geoOrthographic` is already in the projection list but the interaction is wrong: dragging currently translates tx/ty rather than rotating the projection. A proper globe needs drag-to-rotate updating `projection.rotate([λ, φ])`, which is a fundamentally different interaction model from flat-map pan. Needs its own mode: detect when an orthographic-family projection is active and switch to rotation-based drag. Back-face clipping is handled automatically by d3-geo.
 
 - [x] **Undo / Redo** — snapshot-based history stack (50 entries). Covers layer add/remove, style changes, projection, background, visibility, rename, reorder. `Cmd+Z` / `Cmd+Shift+Z` keyboard shortcuts plus Undo/Redo buttons in the toolbar. See Notes.md for architecture details and gotchas.
 
@@ -29,7 +29,7 @@
 - [ ] **Local simplification** — apply different simplification levels to different geographic areas within the same layer (e.g. preserve detail on a narrow peninsula while aggressively simplifying a long straight coastline). Requires interaction primitives for defining regions — probably a brush or polygon-draw tool on the canvas. Defer until the interaction model is clearer.
 - [ ] **Curve styles** — control the feel of linework beyond simplification: curved/organic, hand-drawn, sharp/geometric. Algorithm design is an open research question.
 - [ ] **More line styles** — additional stroke treatments based on or inspired by simplification (e.g. tapered lines, variable weight).
-- [ ] **Duplicate a layer** — copy a layer with its current style as a new independent layer.
+- [x] **Duplicate a layer** — copy a layer with its current style as a new independent layer.
 - [ ] **Labeling concept** — how labels work as a first-class feature: place names from bundled sources, smart default placement (collision-aware, scale-appropriate).
 - [ ] **Label matching** — match a custom name list to features in a layer; normalize across sources.
 - [ ] **Direct label editing and dragging** — manual override for label placement and formatting directly on the canvas.
