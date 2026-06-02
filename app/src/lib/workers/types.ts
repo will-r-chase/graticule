@@ -14,7 +14,9 @@ export type SerializedChunk = {
 
 export type WorkerRequest =
 	| { type: 'CHAIKIN'; requestId: string; id: string; topo: Topology; iterations: number }
-	| { type: 'BUILD_PATHS'; requestId: string; id: string; topo: Topology; projId: string; width: number; height: number; rotate: [number, number, number]; processing: LayerProcessing; maxChunkVertices: number; noChunking: boolean };
+	| { type: 'STORE_TOPOLOGY'; id: string; topo: Topology }
+	| { type: 'REMOVE_TOPOLOGY'; id: string }
+	| { type: 'BUILD_PATHS'; requestId: string; id: string; projId: string; width: number; height: number; rotate: [number, number, number]; processing: LayerProcessing; maxChunkVertices: number; noChunking: boolean };
 
 export type WorkerResponse =
 	| { type: 'CHAIKIN_DONE'; requestId: string; id: string; topo: Topology }

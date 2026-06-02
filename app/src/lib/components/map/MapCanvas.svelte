@@ -4,7 +4,7 @@
 	import * as d3shape from 'd3-shape';
 	import * as d3gp from 'd3-geo-projection';
 	import { feature } from 'topojson-client';
-	import { workerBuildPaths } from '$lib/workers/geoWorker';
+	import { workerBuildPaths, workerStoreTopology, workerRemoveTopology } from '$lib/workers/geoWorker';
 	import type { PathCommand } from '$lib/workers/types';
 	import { layers, workingTopologyData, layerDrag } from '$lib/stores/layers.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
@@ -320,6 +320,10 @@
 	// Bumped when a stale build completes, re-triggering the cache effect so the next
 	// build fires immediately rather than waiting for another reactive change.
 	let staleBuildVersion = $state(0);
+	// Tracks the topology object reference last sent to the worker per layer.
+	// We compare by reference: if workingTopologyData is updated (post-pipeline),
+	// the reference changes and we resend. Rotation-only changes skip the send entirely.
+	const sentTopologyRefs = new Map<string, unknown>();
 
 	function commandsToPath2D(commands: PathCommand[]): Path2D {
 		const path2d = new Path2D();
@@ -394,7 +398,11 @@
 		// Remove entries for layers that no longer exist.
 		const activeIds = new Set(currentLayers.map((l) => l.id));
 		for (const id of pathCache.keys()) {
-			if (!activeIds.has(id)) pathCache.delete(id);
+			if (!activeIds.has(id)) {
+				pathCache.delete(id);
+				workerRemoveTopology(id);
+				sentTopologyRefs.delete(id);
+			}
 		}
 		for (const id of inFlightBuilds) {
 			if (!activeIds.has(id)) inFlightBuilds.delete(id);
@@ -420,8 +428,16 @@
 			const topo = workingTopologyData.get(id);
 			if (!topo) continue;
 
+			// Send topology to the worker only when it changes (new layer or post-pipeline
+			// update). Compare by reference — workingTopologyData replaces the object when
+			// the pipeline reruns, so a changed reference means new topology.
+			if (sentTopologyRefs.get(id) !== topo) {
+				workerStoreTopology(id, topo);
+				sentTopologyRefs.set(id, topo);
+			}
+
 			inFlightBuilds.add(id);
-			workerBuildPaths(id, topo, projId, w, h, rotate, { ...layer.processing }, maxChunkVertices, noChunking)
+			workerBuildPaths(id, projId, w, h, rotate, { ...layer.processing }, maxChunkVertices, noChunking)
 				.then((chunks) => {
 					inFlightBuilds.delete(id); // always unblock, regardless of epoch
 					if (epoch !== pathBuildEpoch) {

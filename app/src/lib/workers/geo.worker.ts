@@ -10,6 +10,10 @@ import type { PathRecorder } from '../utils/bezier';
 
 const allProjections = { ...d3, ...d3gp } as Record<string, unknown>;
 
+// Persistent topology store: topology is sent once per layer (or on change)
+// rather than with every BUILD_PATHS message, eliminating repeated large transfers.
+const topologyStore = new Map<string, Topology>();
+
 // Wraps a projection to clamp lon/lat before projection math runs.
 // Matches the same guard in MapCanvas — prevents NaN coords from quantization artifacts.
 function makeClampedProjection(proj: d3.GeoProjection): { stream: (sink: d3.GeoStream) => d3.GeoStream } {
@@ -71,8 +75,18 @@ class CommandRecorder implements PathRecorder {
 	}
 }
 
+// Chunk groups cache: maps layerId → pre-computed feature groups + the
+// chunking settings they were built with. Adjacency and grouping depend only
+// on topology structure, not on projection or rotation, so they can be built
+// once and reused across all rotation-only rebuilds. The version string
+// captures the settings that affect grouping; a mismatch triggers a rebuild.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const chunkGroupsCache = new Map<string, { groups: any[][], version: string }>();
+
 function handleBuildPaths(msg: Extract<WorkerRequest, { type: 'BUILD_PATHS' }>): SerializedChunk[] {
-	const { topo, projId, width, height, rotate, processing, maxChunkVertices, noChunking } = msg;
+	const { id, projId, width, height, rotate, processing, maxChunkVertices, noChunking } = msg;
+	const topo = topologyStore.get(id);
+	if (!topo) return [];
 	const proj = buildProjection(projId, width, height, rotate);
 	if (!proj) return [];
 
@@ -121,17 +135,29 @@ function handleBuildPaths(msg: Extract<WorkerRequest, { type: 'BUILD_PATHS' }>):
 
 	if (nonPointGeo.length === 0) return [];
 
-	const isPolygonLayer = nonPointGeo.every(f => {
-		const t = f?.geometry?.type;
-		return t === 'Polygon' || t === 'MultiPolygon';
-	});
-	const adjacency = isPolygonLayer ? buildAdjacencyGraph(nonPointTopo) : [];
-	const hasAdjacency = isPolygonLayer && adjacency.some(s => s.size > 0);
-	const featureGroups = noChunking
-		? nonPointGeo.map(f => [f])
-		: hasAdjacency
-			? buildChunksBFS(nonPointGeo, adjacency, maxChunkVertices)
-			: buildChunksHilbert(nonPointGeo, maxChunkVertices);
+	// Check whether we have pre-computed chunk groups for this layer.
+	// Groups only depend on topology structure and chunking settings, not on
+	// projection or rotation, so they can be reused across rotation rebuilds.
+	const chunkVersion = `${maxChunkVertices}:${noChunking ? 1 : 0}`;
+	const cached = chunkGroupsCache.get(id);
+	let featureGroups: GeoFeature[][];
+
+	if (cached && cached.version === chunkVersion) {
+		featureGroups = cached.groups;
+	} else {
+		const isPolygonLayer = nonPointGeo.every(f => {
+			const t = f?.geometry?.type;
+			return t === 'Polygon' || t === 'MultiPolygon';
+		});
+		const adjacency = isPolygonLayer ? buildAdjacencyGraph(nonPointTopo) : [];
+		const hasAdjacency = isPolygonLayer && adjacency.some(s => s.size > 0);
+		featureGroups = noChunking
+			? nonPointGeo.map(f => [f])
+			: hasAdjacency
+				? buildChunksBFS(nonPointGeo, adjacency, maxChunkVertices)
+				: buildChunksHilbert(nonPointGeo, maxChunkVertices);
+		chunkGroupsCache.set(id, { groups: featureGroups, version: chunkVersion });
+	}
 
 	const clampedProj = makeClampedProjection(proj) as unknown as d3.GeoProjection;
 	const chunks: SerializedChunk[] = [];
@@ -160,6 +186,18 @@ function handleBuildPaths(msg: Extract<WorkerRequest, { type: 'BUILD_PATHS' }>):
 
 self.onmessage = (e: MessageEvent<WorkerRequest>) => {
 	const msg = e.data;
+
+	if (msg.type === 'STORE_TOPOLOGY') {
+		topologyStore.set(msg.id, msg.topo);
+		chunkGroupsCache.delete(msg.id); // new topology → old chunk groups are invalid
+		return;
+	}
+
+	if (msg.type === 'REMOVE_TOPOLOGY') {
+		topologyStore.delete(msg.id);
+		chunkGroupsCache.delete(msg.id);
+		return;
+	}
 
 	if (msg.type === 'CHAIKIN') {
 		const topo = applyChaikinToTopology(msg.topo, msg.iterations);
