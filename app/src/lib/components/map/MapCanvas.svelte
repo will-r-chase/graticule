@@ -326,6 +326,10 @@
 	// Bumped when a stale build completes, re-triggering the cache effect so the next
 	// build fires immediately rather than waiting for another reactive change.
 	let staleBuildVersion = $state(0);
+	// Incremented whenever the projection changes (rotation or type). Captured at
+	// dispatch time so the .then() callback can detect if the projection moved on
+	// while the build was in-flight and re-mark the layer stale for a fresh build.
+	let projectionVersion = 0;
 	// Tracks the topology object reference last sent to the worker per layer.
 	// We compare by reference: if workingTopologyData is updated (post-pipeline),
 	// the reference changes and we resend. Rotation-only changes skip the send entirely.
@@ -380,6 +384,7 @@
 				// discarded, so the user never sees intermediate frames.
 				pathBuildEpoch++;
 			}
+			projectionVersion++;
 			cachedProjection = projection;
 			cachedProjectionId = currentProjId;
 			cachedMaxChunkVertices = maxChunkVertices;
@@ -432,27 +437,27 @@
 		const h = height;
 		const epoch = pathBuildEpoch;
 
+		// Compute the rotation threshold gate once, outside the layer loop, so all
+		// layers get the same decision. Previously this was checked per-layer: the first
+		// layer to pass would update lastBuiltRotate, causing every subsequent layer to
+		// see a zero delta and get skipped — only the top layer ever got intermediate frames.
+		const skipRotation = (() => {
+			if (!untrack(() => isDragging) || projectionEntry.interactionMode !== 'rotate') return false;
+			const dλ = Math.abs(rotate[0] - lastBuiltRotate[0]);
+			const dφ = Math.abs(rotate[1] - lastBuiltRotate[1]);
+			return dλ < ROTATE_BUILD_THRESHOLD && dφ < ROTATE_BUILD_THRESHOLD;
+		})();
+		if (!skipRotation) lastBuiltRotate = [...rotate];
+
 		for (const layer of currentLayers) {
 			const { id } = layer;
 			if (!layer.hasTopology) continue;
 			if (pathCache.has(id) && !stalePaths.has(id)) continue; // fresh path, skip
 			if (inFlightBuilds.has(id)) continue; // already building, avoid duplicate requests
+			if (skipRotation) continue;
 
 			const topo = workingTopologyData.get(id);
 			if (!topo) continue;
-
-			// During a rotation drag, skip builds where the globe hasn't moved enough to
-			// be worth a full rebuild. The first tiny pointer wiggle always fires the
-			// leading-edge throttle; without this guard, a ~950ms build kicks off for a
-			// near-identical frame. isDragging is read via untrack so it doesn't become
-			// a reactive dependency of this effect. When the pointer is released,
-			// isDragging is already false, so the final build always goes through.
-			if (untrack(() => isDragging) && projectionEntry.interactionMode === 'rotate') {
-				const dλ = Math.abs(rotate[0] - lastBuiltRotate[0]);
-				const dφ = Math.abs(rotate[1] - lastBuiltRotate[1]);
-				if (dλ < ROTATE_BUILD_THRESHOLD && dφ < ROTATE_BUILD_THRESHOLD) continue;
-			}
-			lastBuiltRotate = [...rotate]; // record the rotation we're about to build for
 
 			// Send topology to the worker only when it changes (new layer or post-pipeline
 			// update). Compare by reference — workingTopologyData replaces the object when
@@ -462,6 +467,7 @@
 				sentTopologyRefs.set(id, topo);
 			}
 
+			const projVer = projectionVersion; // snapshot at dispatch time
 			inFlightBuilds.add(id);
 			workerBuildPaths(id, projId, w, h, rotate, { ...layer.processing }, maxChunkVertices, noChunking)
 				.then((chunks) => {
@@ -476,6 +482,15 @@
 						bbox: c.bbox,
 					})));
 					cacheVersion++;
+					// If the projection changed while this build was in-flight (e.g. the
+					// user kept rotating or released the pointer), re-mark stale so the
+					// next effect run dispatches a fresh build for the current rotation.
+					// Without this, layers that complete mid-drag clear their stale flag
+					// and get stuck at an intermediate rotation after pointer-up.
+					if (projVer !== projectionVersion) {
+						stalePaths.add(id);
+						staleBuildVersion++;
+					}
 				});
 		}
 	});
@@ -660,7 +675,15 @@
 										? (geom.coordinates as [number, number][])
 										: [];
 
+							// For rotate-mode projections (globe etc.), projection(coord) bypasses
+							// d3's stream preclip and returns valid coordinates even for back-
+							// hemisphere points. Check visibility explicitly before projecting.
+							const projCenter: [number, number] | null = interactionMode === 'rotate'
+								? [-projectionStore.rotate[0], -projectionStore.rotate[1]]
+								: null;
+
 							for (const coord of coordsList) {
+								if (projCenter && d3.geoDistance(coord, projCenter) >= Math.PI / 2) continue;
 								const pt = projection(coord);
 								if (!pt) continue;
 								const [px, py] = pt;
