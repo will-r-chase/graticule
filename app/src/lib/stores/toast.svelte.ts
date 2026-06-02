@@ -14,4 +14,9 @@ export function showToast(message: string, duration = 6000): void {
 	}, duration);
 }
 
+export function dismissToast(id: string): void {
+	const i = toasts.findIndex((t) => t.id === id);
+	if (i !== -1) toasts.splice(i, 1);
+}
+
 export { toasts };

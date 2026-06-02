@@ -7,7 +7,7 @@ import { workerSimplify } from '$lib/workers/simplifyWorker';
 import { showToast } from './toast.svelte';
 
 const DISPLAY_VERTEX_THRESHOLD = 500_000;
-const DISPLAY_SIMP_TOLERANCE = 70;
+const DISPLAY_SIMP_TOLERANCE = 90;
 
 // Reactive array of layers currently added to the map.
 // Components import `layers` to read, and call the functions below to modify.
@@ -100,7 +100,7 @@ async function runSimplificationStage(id: string, applyDefaults: boolean): Promi
 		if (pointCount > DISPLAY_VERTEX_THRESHOLD) {
 			layer.processing.simpEnabled = true;
 			layer.processing.simpTolerance = DISPLAY_SIMP_TOLERANCE;
-			showToast('Large dataset auto-simplified to 70% for performance. Adjust in the layer\'s Process panel.');
+			showToast('Large dataset automatically simplified for performance. You can adjust this in the layer settings.');
 		}
 	}
 

@@ -826,4 +826,5 @@
 		align-items: flex-end;
 		gap: var(--space-s);
 	}
+
 </style>
