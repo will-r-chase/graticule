@@ -300,6 +300,9 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 
 export function addUploadedLayer(name: string, topology: Topology, uploadId: string, applyDefaults = true): void {
 	const id = generateId();
+	// Strip any Svelte reactive Proxy wrapper before the topology enters the pipeline.
+	// Proxies can't be structured-cloned, which causes postMessage to the geo worker to fail.
+	const plainTopology = $state.snapshot(topology) as unknown as Topology;
 	layers.unshift({
 		id,
 		datasetId: uploadId,
@@ -313,7 +316,7 @@ export function addUploadedLayer(name: string, topology: Topology, uploadId: str
 		geometryTypes: [],
 		bezierCacheKey: 0,
 	});
-	rawTopologyData.set(id, topology);
+	rawTopologyData.set(id, plainTopology);
 	runLayerPipeline(id, applyDefaults); // resolves as a microtask — layer will be ready almost immediately
 }
 
