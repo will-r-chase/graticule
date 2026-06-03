@@ -1,6 +1,6 @@
 import { layers, runLayerPipeline } from './layers.svelte';
 import { projection } from './projection.svelte';
-import { background } from './background.svelte';
+import { canvasStyles } from './canvasStyles.svelte';
 import type { LayerStyle, LayerProcessing } from '$lib/types';
 
 const MAX_HISTORY = 50;
@@ -48,8 +48,8 @@ function capture(): Snapshot {
 			bezierCacheKey: l.bezierCacheKey,
 		})),
 		projectionId: projection.id,
-		bgHex: background.hex,
-		bgAlpha: background.alpha,
+		bgHex: canvasStyles.background.hex,
+		bgAlpha: canvasStyles.background.alpha,
 	};
 }
 
@@ -74,8 +74,8 @@ function restore(snapshot: Snapshot): void {
 		}))
 	);
 	projection.id = snapshot.projectionId;
-	background.hex = snapshot.bgHex;
-	background.alpha = snapshot.bgAlpha;
+	canvasStyles.background.hex = snapshot.bgHex;
+	canvasStyles.background.alpha = snapshot.bgAlpha;
 
 	// Re-run the pipeline for every layer that had data in the snapshot so
 	// workingTopologyData reflects the restored processing settings.

@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { CaretDown } from 'phosphor-svelte';
 	import ColorPickerPopup from '$lib/components/ui/ColorPickerPopup.svelte';
-	import { globeStyles } from '$lib/stores/globeStyles.svelte';
-	import { background } from '$lib/stores/background.svelte';
+	import { canvasStyles } from '$lib/stores/canvasStyles.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
 	import { PROJECTIONS } from '$lib/config';
@@ -12,7 +11,7 @@
 
 	let open = $state(true); // open by default
 
-	type PickerTarget = 'background' | 'ocean' | 'halo';
+	type PickerTarget = 'background' | 'graticule' | 'ocean' | 'halo';
 	let activePicker = $state<PickerTarget | null>(null);
 
 	let panelEl          = $state<HTMLDivElement | null>(null);
@@ -75,12 +74,12 @@
 				<div class="controls">
 					<button
 						class="toggle-track"
-						class:on={background.enabled}
+						class:on={canvasStyles.background.enabled}
 						role="switch"
-						aria-checked={background.enabled}
+						aria-checked={canvasStyles.background.enabled}
 						onclick={() => {
-							background.enabled = !background.enabled;
-							if (!background.enabled) activePicker = null;
+							canvasStyles.background.enabled = !canvasStyles.background.enabled;
+							if (!canvasStyles.background.enabled) activePicker = null;
 							pushSnapshot();
 						}}
 					><span class="toggle-thumb"></span></button>
@@ -88,11 +87,52 @@
 					<button
 						class="swatch"
 						class:ring={activePicker === 'background'}
-						style="--c: {toRgba(background.hex, background.alpha)}; visibility: {background.enabled ? 'visible' : 'hidden'}"
+						style="--c: {toRgba(canvasStyles.background.hex, canvasStyles.background.alpha)}; visibility: {canvasStyles.background.enabled ? 'visible' : 'hidden'}"
 						onpointerdown={(e) => { e.stopPropagation(); togglePicker('background'); }}
 						aria-label="Edit background color"
-						tabindex={background.enabled ? 0 : -1}
+						tabindex={canvasStyles.background.enabled ? 0 : -1}
 					></button>
+				</div>
+			</div>
+
+			<!-- Graticule -->
+			<div class="style-row">
+				<span class="label mono-small">Graticules</span>
+				<div class="controls">
+					<button
+						class="toggle-track"
+						class:on={canvasStyles.graticule.enabled}
+						role="switch"
+						aria-checked={canvasStyles.graticule.enabled}
+						onclick={() => {
+							canvasStyles.graticule.enabled = !canvasStyles.graticule.enabled;
+							if (!canvasStyles.graticule.enabled) activePicker = null;
+							pushSnapshot();
+						}}
+					><span class="toggle-thumb"></span></button>
+
+					{#if canvasStyles.graticule.enabled}
+						<select
+							class="step-select mono-small"
+							value={canvasStyles.graticule.step}
+							onchange={(e) => { canvasStyles.graticule.step = +(e.currentTarget as HTMLSelectElement).value; }}
+							aria-label="Graticule step"
+						>
+							<option value={5}>5°</option>
+							<option value={10}>10°</option>
+							<option value={15}>15°</option>
+							<option value={30}>30°</option>
+							<option value={45}>45°</option>
+						</select>
+
+						<button
+							class="swatch"
+							class:ring={activePicker === 'graticule'}
+							style="--c: {toRgba(canvasStyles.graticule.hex, canvasStyles.graticule.alpha)}"
+							onpointerdown={(e) => { e.stopPropagation(); togglePicker('graticule'); }}
+							aria-label="Edit graticule color"
+						></button>
+					{/if}
 				</div>
 			</div>
 
@@ -104,22 +144,22 @@
 					<div class="controls">
 						<button
 							class="toggle-track"
-							class:on={globeStyles.ocean.enabled}
+							class:on={canvasStyles.ocean.enabled}
 							role="switch"
-							aria-checked={globeStyles.ocean.enabled}
+							aria-checked={canvasStyles.ocean.enabled}
 							onclick={() => {
-								globeStyles.ocean.enabled = !globeStyles.ocean.enabled;
-								if (!globeStyles.ocean.enabled) activePicker = null;
+								canvasStyles.ocean.enabled = !canvasStyles.ocean.enabled;
+								if (!canvasStyles.ocean.enabled) activePicker = null;
 							}}
 						><span class="toggle-thumb"></span></button>
 
 						<button
 							class="swatch"
 							class:ring={activePicker === 'ocean'}
-							style="--c: {toRgba(globeStyles.ocean.hex, globeStyles.ocean.alpha)}; visibility: {globeStyles.ocean.enabled ? 'visible' : 'hidden'}"
+							style="--c: {toRgba(canvasStyles.ocean.hex, canvasStyles.ocean.alpha)}; visibility: {canvasStyles.ocean.enabled ? 'visible' : 'hidden'}"
 							onpointerdown={(e) => { e.stopPropagation(); togglePicker('ocean'); }}
 							aria-label="Edit ocean color"
-							tabindex={globeStyles.ocean.enabled ? 0 : -1}
+							tabindex={canvasStyles.ocean.enabled ? 0 : -1}
 						></button>
 					</div>
 				</div>
@@ -130,19 +170,19 @@
 					<div class="controls">
 						<button
 							class="toggle-track"
-							class:on={globeStyles.shadow.enabled}
+							class:on={canvasStyles.shadow.enabled}
 							role="switch"
-							aria-checked={globeStyles.shadow.enabled}
-							onclick={() => { globeStyles.shadow.enabled = !globeStyles.shadow.enabled; }}
+							aria-checked={canvasStyles.shadow.enabled}
+							onclick={() => { canvasStyles.shadow.enabled = !canvasStyles.shadow.enabled; }}
 						><span class="toggle-thumb"></span></button>
 
-						{#if globeStyles.shadow.enabled}
+						{#if canvasStyles.shadow.enabled}
 							<input
 								type="range"
 								min="0"
 								max="1"
 								step="0.05"
-								bind:value={globeStyles.shadow.intensity}
+								bind:value={canvasStyles.shadow.intensity}
 								class="slider"
 								aria-label="Shadow intensity"
 							/>
@@ -156,22 +196,22 @@
 					<div class="controls">
 						<button
 							class="toggle-track"
-							class:on={globeStyles.halo.enabled}
+							class:on={canvasStyles.halo.enabled}
 							role="switch"
-							aria-checked={globeStyles.halo.enabled}
+							aria-checked={canvasStyles.halo.enabled}
 							onclick={() => {
-								globeStyles.halo.enabled = !globeStyles.halo.enabled;
-								if (!globeStyles.halo.enabled) activePicker = null;
+								canvasStyles.halo.enabled = !canvasStyles.halo.enabled;
+								if (!canvasStyles.halo.enabled) activePicker = null;
 							}}
 						><span class="toggle-thumb"></span></button>
 
 						<button
 							class="swatch"
 							class:ring={activePicker === 'halo'}
-							style="--c: {toRgba(globeStyles.halo.hex, globeStyles.halo.alpha)}; visibility: {globeStyles.halo.enabled ? 'visible' : 'hidden'}"
+							style="--c: {toRgba(canvasStyles.halo.hex, canvasStyles.halo.alpha)}; visibility: {canvasStyles.halo.enabled ? 'visible' : 'hidden'}"
 							onpointerdown={(e) => { e.stopPropagation(); togglePicker('halo'); }}
 							aria-label="Edit halo color"
-							tabindex={globeStyles.halo.enabled ? 0 : -1}
+							tabindex={canvasStyles.halo.enabled ? 0 : -1}
 						></button>
 					</div>
 				</div>
@@ -189,22 +229,29 @@
 	>
 		{#if activePicker === 'background'}
 			<ColorPickerPopup
-				bind:hex={background.hex}
-				bind:alpha={background.alpha}
+				bind:hex={canvasStyles.background.hex}
+				bind:alpha={canvasStyles.background.alpha}
 				title="Background color"
+				onclose={closePicker}
+			/>
+		{:else if activePicker === 'graticule'}
+			<ColorPickerPopup
+				bind:hex={canvasStyles.graticule.hex}
+				bind:alpha={canvasStyles.graticule.alpha}
+				title="Graticule color"
 				onclose={closePicker}
 			/>
 		{:else if activePicker === 'ocean'}
 			<ColorPickerPopup
-				bind:hex={globeStyles.ocean.hex}
-				bind:alpha={globeStyles.ocean.alpha}
+				bind:hex={canvasStyles.ocean.hex}
+				bind:alpha={canvasStyles.ocean.alpha}
 				title="Ocean color"
 				onclose={closePicker}
 			/>
 		{:else if activePicker === 'halo'}
 			<ColorPickerPopup
-				bind:hex={globeStyles.halo.hex}
-				bind:alpha={globeStyles.halo.alpha}
+				bind:hex={canvasStyles.halo.hex}
+				bind:alpha={canvasStyles.halo.alpha}
 				title="Halo color"
 				onclose={closePicker}
 			/>
@@ -341,6 +388,18 @@
 	.swatch.ring {
 		outline: 2px solid var(--color-accent);
 		outline-offset: 1px;
+	}
+
+	/* Graticule step dropdown */
+	.step-select {
+		background: var(--color-surface-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		color: var(--color-text-primary);
+		font-size: inherit;
+		font-family: inherit;
+		padding: 1px 4px;
+		cursor: pointer;
 	}
 
 	/* Intensity slider */

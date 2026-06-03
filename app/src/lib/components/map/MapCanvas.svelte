@@ -10,8 +10,7 @@
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
 	import { mapState } from '$lib/stores/mapState.svelte';
 	import { mapView } from '$lib/stores/mapView.svelte';
-	import { globeStyles } from '$lib/stores/globeStyles.svelte';
-	import { background } from '$lib/stores/background.svelte';
+	import { canvasStyles } from '$lib/stores/canvasStyles.svelte';
 	import { PROJECTIONS } from '$lib/config';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import Toaster from '$lib/components/ui/Toaster.svelte';
@@ -693,17 +692,17 @@
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, width, height);
 
-		if (background.enabled) {
-			ctx.globalAlpha = background.alpha;
-			ctx.fillStyle = background.hex;
+		if (canvasStyles.background.enabled) {
+			ctx.globalAlpha = canvasStyles.background.alpha;
+			ctx.fillStyle = canvasStyles.background.hex;
 			ctx.fillRect(0, 0, width, height);
 			ctx.globalAlpha = 1;
 		}
 
 		// Drop shadow — drawn in screen space so it sits naturally behind the globe.
 		// Must come before ctx.translate/scale so coordinates are in CSS pixels.
-		if (isGlobe && globeStyles.shadow.enabled && projection) {
-			const intensity = globeStyles.shadow.intensity;
+		if (isGlobe && canvasStyles.shadow.enabled && projection) {
+			const intensity = canvasStyles.shadow.intensity;
 			const globeR    = Math.min(width, height) / 2 * mapScale;
 			ctx.save();
 			ctx.filter = `blur(${Math.max(6, globeR * 0.06)}px)`;
@@ -725,8 +724,8 @@
 
 		// Atmospheric halo — drawn in projection space before the globe disk so the
 		// ocean fill covers the interior and leaves only the glowing ring at the rim.
-		if (isGlobe && globeStyles.halo.enabled && projection) {
-			const { hex, alpha } = globeStyles.halo;
+		if (isGlobe && canvasStyles.halo.enabled && projection) {
+			const { hex, alpha } = canvasStyles.halo;
 			const rgb = hexToRgb(hex);
 			if (rgb) {
 				const [r, g, b] = rgb;
@@ -758,8 +757,8 @@
 				const css = getComputedStyle(canvasEl!);
 
 				// Ocean fill — only when enabled in globe styles.
-				if (globeStyles.ocean.enabled) {
-					const { hex, alpha } = globeStyles.ocean;
+				if (canvasStyles.ocean.enabled) {
+					const { hex, alpha } = canvasStyles.ocean;
 					const rgb = hexToRgb(hex);
 					ctx.fillStyle = rgb
 						? `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`
@@ -771,6 +770,24 @@
 				ctx.strokeStyle = css.getPropertyValue('--color-border').trim();
 				ctx.lineWidth = 1 / mapScale;
 				ctx.stroke(spherePath);
+			}
+		}
+
+		// Graticule — works for all projection types; d3 clips lines to the
+		// visible hemisphere automatically for globe projections.
+		if (canvasStyles.graticule.enabled && projection) {
+			const { hex, alpha, step } = canvasStyles.graticule;
+			const rgb = hexToRgb(hex);
+			const graticulePath = d3.geoPath(projection)(d3.geoGraticule().step([step, step])());
+			if (graticulePath) {
+				ctx.beginPath();
+				ctx.strokeStyle = rgb
+					? `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`
+					: hex;
+				ctx.lineWidth = 0.5 / mapScale;
+				ctx.setLineDash([]);
+				ctx.globalAlpha = 1;
+				ctx.stroke(new Path2D(graticulePath));
 			}
 		}
 
