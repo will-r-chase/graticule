@@ -1,0 +1,142 @@
+---
+const { siteTitleHref } = Astro.locals.starlightRoute;
+---
+
+<a href={siteTitleHref} class="site-title">
+	<svg class="mascot" viewBox="0 0 544 361" overflow="visible" aria-hidden="true">
+		<g id="mm">
+			<g id="mm-body">
+				<path id="mm-body-path"
+					d="M47.3821 20.1406C65.3453 10.9984 113.67 40.1412 146.911 40.3256C180.152 40.51 221.811 49.8263 246.612 52.9722C271.413 56.1181 283.451 52.605 294.727 59.0753C306.002 65.5456 306.187 72.4536 314.703 74.2093C323.22 75.965 328.294 59.805 346.982 58.1434C365.669 56.4818 411.119 95.5113 434.601 98.4898C458.083 101.468 487.75 52.9863 502.085 59.1694C516.421 65.3525 538.55 63.9659 539.485 72.4814C541.171 87.8153 498.238 115.967 493.466 127.125C488.694 138.283 475.879 159.842 471.553 172.73C467.227 185.618 473.13 192.082 467.526 204.475C461.922 216.869 449.104 232.712 442.787 250.73C439.326 278.012 447.614 311.148 441.528 314.075C420.893 323.999 416.704 268.257 408.035 262.45C399.367 256.643 379.237 274.926 367.317 281.478C355.398 288.03 354.147 293.919 342.102 301.464C330.057 309.008 316.962 336.751 304.024 335.442C291.085 334.134 274.837 297.971 256.29 290.579C237.742 283.186 220.476 282.004 194.018 278.648C167.56 275.292 133.185 269.087 110.906 264.577C88.626 260.068 57.3012 242.154 57.3012 242.154C47.2353 231.472 40.013 212.916 36.6116 194.673C33.2102 176.43 32.1059 169.738 31.0233 149.107C29.9408 128.477 27.3555 100.762 28.6286 82.7788C29.9016 64.796 29.4189 29.2829 47.3821 20.1406Z"
+				/>
+			</g>
+			<g id="mm-face">
+				<g id="mm-blob-face">
+					<g id="mm-eye-left">
+						<path d="M199.978 143.097C212.033 143.989 222.547 148.137 229.809 153.941C237.087 159.758 240.828 166.967 240.297 174.155C239.765 181.343 235.004 187.924 226.95 192.607C218.913 197.28 207.903 199.836 195.848 198.945C183.792 198.053 173.278 193.905 166.016 188.101C158.739 182.284 154.997 175.075 155.528 167.887C156.06 160.699 160.822 154.118 168.876 149.435C176.913 144.762 187.922 142.206 199.978 143.097Z"/>
+						<ellipse id="mm-pupil-left" cx="200.9" cy="171.1" rx="21" ry="15.8"/>
+					</g>
+					<g id="mm-eye-right">
+						<path d="M350.721 153.893C362.72 155.365 373.021 160.015 379.995 166.163C386.984 172.323 390.374 179.705 389.496 186.859C388.619 194.013 383.545 200.357 375.275 204.646C367.022 208.925 355.902 210.948 343.903 209.477C331.905 208.005 321.604 203.354 314.63 197.207C307.641 191.047 304.251 183.665 305.128 176.511C306.006 169.357 311.08 163.013 319.35 158.724C327.603 154.444 338.722 152.421 350.721 153.893Z"/>
+						<ellipse id="mm-pupil-right" cx="347.4" cy="182.2" rx="21" ry="15.8"/>
+					</g>
+					<g id="mm-eyebrows">
+						<path id="mm-brow-left"  d="M236.436 123.66C226.98 115.177 192.072 97.6435 144.773 123.045"/>
+						<path id="mm-brow-right" d="M314.622 131.081C330.261 121.914 356.603 117.662 393.051 142.148"/>
+					</g>
+					<path id="mm-mouth" d="M234 242C256.667 259.333 280.667 260.667 306 246"/>
+				</g>
+			</g>
+		</g>
+	</svg>
+	<span class="title-text">Graticule docs</span>
+</a>
+
+<style>
+	.site-title {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		text-decoration: none;
+		white-space: nowrap;
+		min-width: 0;
+	}
+
+	.mascot {
+		height: 28px;
+		width: auto;
+		flex-shrink: 0;
+	}
+
+	.title-text {
+		font-family: 'MDUI', sans-serif;
+		font-size: 20px;
+		font-weight: 500;
+		line-height: 28px;
+		color: #38362e;
+	}
+
+	/* ---- transform context ---- */
+	#mm,
+	#mm * {
+		transform-box: fill-box;
+		transform-origin: center;
+	}
+
+	/* ---- idle animations ---- */
+	#mm {
+		animation: mm-bob 3.4s ease-in-out infinite;
+	}
+
+	@keyframes mm-bob {
+		0%, 100% { transform: rotate(-0.6deg); }
+		50%       { transform: rotate(0.6deg);  }
+	}
+
+	#mm-eye-left,
+	#mm-eye-right {
+		animation: mm-blink 4.6s ease-in-out infinite;
+	}
+
+	@keyframes mm-blink {
+		0%, 92%, 100% { transform: scaleY(1);   }
+		95%            { transform: scaleY(.08); }
+	}
+
+	#mm-pupil-left,
+	#mm-pupil-right {
+		animation: mm-glance 5.2s ease-in-out infinite;
+	}
+
+	@keyframes mm-glance {
+		0%,  20% { transform: translate(0,    0);   }
+		30%, 44% { transform: translate(6px, -2px); }
+		56%, 72% { transform: translate(-7px, 1px); }
+		84%,100% { transform: translate(0,    0);   }
+	}
+
+	#mm-brow-left,
+	#mm-brow-right {
+		animation: mm-browraise 5.2s ease-in-out infinite;
+	}
+
+	@keyframes mm-browraise {
+		0%,  55%, 100% { transform: translateY(0);    }
+		62%, 78%        { transform: translateY(-5px); }
+	}
+
+	/* ---- strokes / fills ---- */
+	#mm-body-path {
+		fill: none;
+		stroke: #38362e;
+		stroke-width: 14;
+		stroke-linejoin: round;
+	}
+
+	#mm-eye-left path,
+	#mm-eye-right path {
+		fill: none;
+		stroke: #38362e;
+		stroke-width: 10;
+	}
+
+	#mm-pupil-left,
+	#mm-pupil-right {
+		fill: #38362e;
+	}
+
+	#mm-brow-left,
+	#mm-brow-right {
+		fill: none;
+		stroke: #38362e;
+		stroke-width: 10;
+		stroke-linecap: round;
+	}
+
+	#mm-mouth {
+		fill: none;
+		stroke: #38362e;
+		stroke-width: 10;
+		stroke-linecap: round;
+	}
+</style>

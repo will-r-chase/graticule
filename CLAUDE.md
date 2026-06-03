@@ -6,7 +6,7 @@
 
 ---
 
-# Claude Instructions for Mappy
+# Claude Instructions for Graticule
 
 ## Slow Mode
 

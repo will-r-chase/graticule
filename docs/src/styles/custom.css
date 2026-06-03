@@ -1,0 +1,285 @@
+/* ============================================================
+   FONTS
+   ============================================================ */
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-Italic.woff2') format('woff2');
+	font-weight: 400;
+	font-style: italic;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-Medium.woff2') format('woff2');
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-MediumItalic.woff2') format('woff2');
+	font-weight: 500;
+	font-style: italic;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-Semibold.woff2') format('woff2');
+	font-weight: 600;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-SemiboldItalic.woff2') format('woff2');
+	font-weight: 600;
+	font-style: italic;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-Bold.woff2') format('woff2');
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'MDUI';
+	src: url('/fonts/mdui/MDUI-BoldItalic.woff2') format('woff2');
+	font-weight: 700;
+	font-style: italic;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'VCTR Mono';
+	src: url('/fonts/vctr-mono/VCTRMonov0.12-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'VCTR Mono';
+	src: url('/fonts/vctr-mono/VCTRMonov0.12-Medium.woff2') format('woff2');
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'VCTR Mono';
+	src: url('/fonts/vctr-mono/VCTRMonov0.12-Bold.woff2') format('woff2');
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}
+
+/* ============================================================
+   MAPPY RAW PALETTE + SEMANTIC TOKENS
+   Available globally for custom components.
+   ============================================================ */
+
+:root {
+	/* Fonts */
+	--sl-font: 'MDUI', sans-serif;
+	--sl-font-mono: 'VCTR Mono', monospace;
+
+	/* Spacing */
+	--space-none: 0px;
+	--space-xs:   2px;
+	--space-s:    4px;
+	--space-m:    8px;
+	--space-l:    16px;
+	--space-xl:   24px;
+	--space-xxl:  48px;
+
+	/* Grey */
+	--grey-0:    #ffffff;
+	--grey-25:   #fbfbf9;
+	--grey-50:   #f7f7f4;
+	--grey-100:  #f0efea;
+	--grey-200:  #dedcd3;
+	--grey-300:  #cdcabc;
+	--grey-400:  #b4b1a2;
+	--grey-500:  #9c9989;
+	--grey-600:  #858271;
+	--grey-700:  #6e6b59;
+	--grey-800:  #525043;
+	--grey-900:  #38362e;
+	--grey-1000: #020100;
+
+	/* Blue */
+	--blue-100:  #d2d8f0;
+	--blue-200:  #aeb9e8;
+	--blue-300:  #8e9ce1;
+	--blue-400:  #7784c7;
+	--blue-500:  #626eaf;
+	--blue-600:  #4e5998;
+	--blue-700:  #3c4583;
+	--blue-800:  #2b316d;
+	--blue-900:  #181a54;
+
+	/* Green */
+	--green-50:   #fcfff0;
+	--green-100:  #e9f1c8;
+	--green-200:  #c7d581;
+	--green-300:  #a9bb25;
+	--green-400:  #90a000;
+	--green-500:  #798700;
+	--green-600:  #647000;
+	--green-700:  #505a00;
+	--green-800:  #3c4400;
+	--green-900:  #262b00;
+
+	/* Red */
+	--red-100:  #ffefeb;
+	--red-200:  #fec2b2;
+	--red-300:  #f19b85;
+	--red-400:  #e4765a;
+	--red-500:  #c95d42;
+	--red-600:  #ae452a;
+	--red-700:  #952d11;
+
+	/* Orange */
+	--orange-100:  #ffeed4;
+	--orange-200:  #f6c87e;
+	--orange-300:  #e9a400;
+	--orange-400:  #c78c00;
+	--orange-500:  #a87500;
+	--orange-600:  #8c6100;
+	--orange-700:  #714d00;
+
+	/* Purple */
+	--purple-100:  #e8ddeb;
+	--purple-200:  #cfbad6;
+	--purple-300:  #b99ac4;
+	--purple-400:  #a67cb3;
+	--purple-500:  #9361a4;
+	--purple-600:  #824595;
+	--purple-700:  #6d307f;
+
+	/* Semantic tokens */
+	--color-text-primary:      var(--grey-900);
+	--color-text-secondary:    var(--grey-800);
+	--color-text-tertiary:     var(--grey-600);
+	--color-text-invert:       var(--grey-0);
+	--color-border:            var(--grey-200);
+	--color-surface-primary:   var(--grey-25);
+	--color-surface-secondary: var(--grey-100);
+	--color-surface-tertiary:  var(--grey-200);
+	--color-surface-invert:    var(--grey-900);
+	--color-accent:            var(--green-400);
+	--color-accent-subtle:     var(--green-100);
+	--color-error:             var(--red-500);
+	--color-error-subtle:      var(--red-100);
+}
+
+/* ============================================================
+   STARLIGHT THEME OVERRIDES — LIGHT MODE ONLY
+   These are declared outside @layer so they beat Starlight's
+   layered defaults regardless of which data-theme is set.
+   ============================================================ */
+
+:root,
+:root[data-theme='light'],
+:root[data-theme='dark'] {
+	/* Gray scale: gray-1 = darkest text, black = lightest bg.
+	   Starlight uses --sl-color-white as the foreground/text color in light mode
+	   (it gets remapped from literal white — confusing but correct). */
+	--sl-color-white:  #38362e;   /* grey-900 — foreground/text in Starlight's naming */
+	--sl-color-gray-1: #38362e;   /* grey-900 */
+	--sl-color-gray-2: #525043;   /* grey-800 */
+	--sl-color-gray-3: #6e6b59;   /* grey-700 */
+	--sl-color-gray-4: #9c9989;   /* grey-500 */
+	--sl-color-gray-5: #cdcabc;   /* grey-300 */
+	--sl-color-gray-6: #dedcd3;   /* grey-200 */
+	--sl-color-gray-7: #f0efea;   /* grey-100 */
+	--sl-color-black:  #fbfbf9;   /* grey-25  */
+
+	/* Accent */
+	--sl-color-accent-low:  #e9f1c8;   /* green-100 */
+	--sl-color-accent:      #90a000;   /* green-400 */
+	--sl-color-accent-high: #647000;   /* green-600 */
+
+	/* Semantic overrides — explicit so nothing falls back to dark-mode values */
+	--sl-color-text:            #38362e;   /* grey-900 */
+	--sl-color-text-accent:     #647000;   /* green-600, used for links */
+	--sl-color-text-invert:     #fbfbf9;   /* grey-25, text on dark surfaces */
+	--sl-color-bg:              #fbfbf9;   /* grey-25, page background */
+	--sl-color-bg-nav:          #fbfbf9;   /* grey-25, top chrome */
+	--sl-color-bg-sidebar:      #fbfbf9;   /* grey-25, sidebar */
+	--sl-color-bg-inline-code:  #f0efea;   /* grey-100 */
+	--sl-color-hairline:        #dedcd3;   /* grey-200 */
+	--sl-color-hairline-light:  #f0efea;   /* grey-100 */
+	--sl-color-hairline-shade:  #dedcd3;   /* grey-200 */
+	--sl-color-backdrop-overlay: rgba(2, 1, 0, 0.4);
+
+	/* Light-mode shadows */
+	--sl-shadow-sm: 0px 1px 1px hsla(0, 0%, 0%, 0.06), 0px 2px 1px hsla(0, 0%, 0%, 0.06);
+	--sl-shadow-md: 0px 8px 4px hsla(0, 0%, 0%, 0.03), 0px 5px 2px hsla(0, 0%, 0%, 0.03),
+		0px 3px 2px hsla(0, 0%, 0%, 0.06), 0px 1px 1px hsla(0, 0%, 0%, 0.06);
+}
+
+/* ============================================================
+   HIDE THEME TOGGLE
+   Dark mode is not supported; the toggle only creates confusion.
+   ============================================================ */
+
+starlight-theme-select {
+	display: none !important;
+}
+
+/* ============================================================
+   SIDEBAR — HOVER AND ACTIVE STATES
+   Starlight's scoped styles use :where() (zero specificity),
+   so these unscoped rules win cleanly.
+   ============================================================ */
+
+/* Hover: surface-secondary */
+nav.sidebar a:not([aria-current='page']):hover {
+	background-color: var(--grey-100);
+	color: var(--grey-900);
+}
+
+/* Selected: green-100 bg, text-primary text */
+nav.sidebar a[aria-current='page'],
+nav.sidebar a[aria-current='page']:hover,
+nav.sidebar a[aria-current='page']:focus {
+	background-color: var(--green-100);
+	color: var(--grey-900);
+}
+
+/* ============================================================
+   TOP CHROME BORDER
+   Starlight adds a bottom border on the nav; match our token.
+   ============================================================ */
+
+header.header {
+	border-bottom-color: var(--grey-200);
+	box-shadow: none;
+}
+
+/* ============================================================
+   TYPOGRAPHY
+   ============================================================ */
+
+/* Use VCTR Mono for code consistently */
+code, kbd, samp {
+	font-family: var(--sl-font-mono);
+}

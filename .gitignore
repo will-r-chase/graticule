@@ -1,3 +1,8 @@
 .DS_Store
 Thumbs.db
 node_modules
+
+# Internal working docs — kept local only
+PRD.md
+TODO.md
+NOTES.md

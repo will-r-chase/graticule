@@ -1,0 +1,23 @@
+---
+title: What is Graticule
+description: An overview of Graticule — what it does, who it's for, and the basic workflow.
+---
+
+Graticule is a browser-based tool for building map linework. Load geographic boundary data from the built-in catalog or your own files, choose a projection, style your layers, and export to SVG, PNG, or geodata formats.
+
+It's a linework tool, not a full GIS application. It doesn't do thematic mapping, raster data, or spatial analysis. For those, QGIS or Observable Plot are better fits.
+
+## Principles
+
+**Nothing leaves your machine.** Graticule runs entirely in the browser — no account, no server, no data upload.
+
+**File-over-app.** Projects save as plain `.json` files you own. Exports are standard formats (SVG, PNG, GeoJSON, Shapefile).
+
+**Non-destructive.** Projections, simplification, and styling are all applied on top of the stored data. The underlying geometry is never modified, so you can always change settings or re-export.
+
+## Workflow
+
+1. **Add data** — browse the catalog, or upload a GeoJSON, Shapefile, KML, CSV, or other file.
+2. **Project** — choose from 80+ projections grouped by type. Azimuthal and conic projections use drag-to-rotate; flat projections use pan and zoom.
+3. **Style** — per-layer fill, stroke, simplification, and smoothing controls.
+4. **Export** — SVG or PNG. Save a project file to resume later.
