@@ -9,7 +9,7 @@
 	const projectionEntry = $derived(PROJECTIONS.find(p => p.id === projectionStore.id) ?? PROJECTIONS[0]);
 	const isGlobe = $derived(projectionEntry.isGlobe === true);
 
-	let open = $state(true); // open by default
+	let open = $state(false);
 
 	type PickerTarget = 'background' | 'graticule' | 'ocean' | 'halo';
 	let activePicker = $state<PickerTarget | null>(null);
@@ -261,8 +261,6 @@
 
 <style>
 	.panel-root {
-		margin-top: var(--space-m);
-		margin-bottom: var(--space-m);
 	}
 
 	.heading {

@@ -4,7 +4,7 @@
 	import ExportModal from './ExportModal.svelte';
 	import MappyMascot from './MappyMascot.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
-	import { Warning } from 'phosphor-svelte';
+	import { Warning, GithubLogo } from 'phosphor-svelte';
 	import { prepareProject, downloadProject, loadProject, validateProject, formatBytes } from '$lib/utils/project';
 	import { clearLayers } from '$lib/stores/layers.svelte';
 	import { clearUploadedDatasets } from '$lib/stores/uploadedDatasets.svelte';
@@ -97,6 +97,16 @@
 	</div>
 
 	<div class="actions">
+		<a
+			class="github-link mono-small"
+			href="https://github.com/will-r-chase/graticule"
+			target="_blank"
+			rel="noopener noreferrer"
+			aria-label="View on GitHub"
+		>
+			<GithubLogo size={14} />
+			<span>GitHub</span>
+		</a>
 		<div class="separator"></div>
 		<Button size="sm" disabled={!canUndo()} onclick={undo}>Undo</Button>
 		<Button size="sm" disabled={!canRedo()} onclick={redo}>Redo</Button>
@@ -225,6 +235,21 @@
 		height: 16px;
 		background: var(--color-border);
 		flex-shrink: 0;
+	}
+
+	.github-link {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		color: var(--color-icon-secondary);
+		text-decoration: none;
+		border-radius: var(--radius-sm);
+		padding: 2px;
+		transition: color 150ms;
+	}
+
+	.github-link:hover {
+		color: var(--color-text-primary);
 	}
 
 	.message {

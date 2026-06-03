@@ -210,8 +210,12 @@
 	<div class="canvas-section">
 		<h3>Canvas</h3>
 
-		<span class="section-label h4">Projection</span>
-		<Combobox options={PROJECTIONS} bind:value={projectionStore.id} placeholder="Search projections…" direction="up" />
+		<div class="proj-field">
+			<span class="section-label h4">Projection</span>
+			<Combobox options={PROJECTIONS} bind:value={projectionStore.id} placeholder="Search projections…" direction="up" />
+		</div>
+
+		<StylePanel />
 
 		<!-- Details: collapsible projection metadata -->
 		<button class="sub-heading h4" onclick={() => (detailsOpen = !detailsOpen)}>
@@ -262,9 +266,11 @@
 			</div>
 		{/if}
 
-		<StylePanel />
-
 		<Minimap />
+	</div>
+
+	<div class="attribution mono-small">
+		Made with 💚 by <a href="https://www.williamrchase.com/" target="_blank" rel="noopener noreferrer">Will Chase</a>
 	</div>
 </div>
 
@@ -464,10 +470,16 @@
 	.canvas-section {
 		flex-shrink: 0;
 		border-top: 1px solid var(--color-border);
-		padding: var(--space-m) var(--space-l) var(--space-l);
+		padding: var(--space-m) var(--space-l) var(--space-m);
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-s);
+		gap: var(--space-m);
+	}
+
+	.proj-field {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-xs);
 	}
 
 	.section-label {
@@ -532,6 +544,25 @@
 
 	.detail-value {
 		color: var(--color-text-secondary);
+	}
+
+	/* --- Attribution --- */
+
+	.attribution {
+		flex-shrink: 0;
+		padding: 0 var(--space-l) var(--space-s);
+		text-align: center;
+		color: var(--color-text-tertiary);
+	}
+
+	.attribution a {
+		color: var(--color-text-tertiary);
+		text-decoration: none;
+	}
+
+	.attribution a:hover {
+		color: var(--color-text-secondary);
+		text-decoration: underline;
 	}
 
 </style>
