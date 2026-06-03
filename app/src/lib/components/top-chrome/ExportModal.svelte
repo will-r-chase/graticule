@@ -7,11 +7,10 @@
 
 	let format = $state<'svg' | 'png'>('svg');
 	let clipToViewport = $state(false);
-	let includeBackground = $state(false);
 
 	function handleExport() {
-		if (format === 'svg') exportSVG(includeBackground);
-		else exportPNG(clipToViewport, includeBackground);
+		if (format === 'svg') exportSVG();
+		else exportPNG(clipToViewport);
 		onclose();
 	}
 </script>
@@ -34,10 +33,6 @@
 				Clip to current viewport
 			</label>
 		{/if}
-		<label class="checkbox-row mono-small">
-			<input type="checkbox" bind:checked={includeBackground} />
-			Include background
-		</label>
 	{/snippet}
 
 	{#snippet footer()}

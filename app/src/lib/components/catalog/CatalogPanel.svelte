@@ -1,12 +1,18 @@
 <script lang="ts">
 	import { MagnifyingGlass, CaretDown } from 'phosphor-svelte';
 	import type { Dataset } from '$lib/types';
-	import { TYPE_FILTERS, REGION_FILTERS, SOURCE_ORDER, SOURCE_CONFIG } from '$lib/config';
+	import { TYPE_FILTERS, REGION_FILTERS, SOURCE_ORDER, SOURCE_CONFIG, PROJECTIONS } from '$lib/config';
 	import DatasetItem from './DatasetItem.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
+	import Combobox from '$lib/components/ui/Combobox.svelte';
+	import { projection as projectionStore } from '$lib/stores/projection.svelte';
+	import { mapView } from '$lib/stores/mapView.svelte';
 	import { uploadedDatasets } from '$lib/stores/uploadedDatasets.svelte';
 	import { layers, addUploadedLayer } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
+	import type { ProjectionProperty } from '$lib/config';
+	import Minimap from './Minimap.svelte';
+	import StylePanel from './StylePanel.svelte';
 
 	let { datasets, onOpenUpload }: { datasets: Dataset[]; onOpenUpload: () => void } = $props();
 
@@ -54,12 +60,39 @@
 	}
 
 	let collapsedSections = $state(new Set<string>());
+	let detailsOpen = $state(false);
 
 	function toggleSection(source: string) {
 		const next = new Set(collapsedSections);
 		if (next.has(source)) next.delete(source);
 		else next.add(source);
 		collapsedSections = next;
+	}
+
+	// Projection details — derived from the active projection entry + live mapView store.
+	const projectionEntry = $derived(PROJECTIONS.find(p => p.id === projectionStore.id) ?? PROJECTIONS[0]);
+
+	const PROPERTY_LABELS: Record<ProjectionProperty, string> = {
+		'equal-area':  'Equal Area',
+		'conformal':   'Conformal',
+		'compromise':  'Compromise',
+		'perspective': 'Perspective',
+		'equidistant': 'Equidistant',
+	};
+
+	// Geographic center: for rotate-mode projections use the rotation store directly
+	// (inversion is reliable at the screen center, but this is simpler and always accurate).
+	// For pan-mode projections use mapView.center which is computed by inverting the canvas center.
+	const projCenter = $derived.by((): [number, number] | null => {
+		if (projectionEntry.interactionMode === 'rotate') {
+			const [λ, φ] = projectionStore.rotate;
+			return [-λ, -φ];
+		}
+		return mapView.center;
+	});
+
+	function fmtCoord(v: number, posLabel: string, negLabel: string): string {
+		return `${Math.abs(v).toFixed(1)}° ${v >= 0 ? posLabel : negLabel}`;
 	}
 </script>
 
@@ -172,6 +205,66 @@
 				{/if}
 			</div>
 		{/each}
+	</div>
+
+	<div class="canvas-section">
+		<h3>Canvas</h3>
+
+		<span class="section-label h4">Projection</span>
+		<Combobox options={PROJECTIONS} bind:value={projectionStore.id} placeholder="Search projections…" direction="up" />
+
+		<!-- Details: collapsible projection metadata -->
+		<button class="sub-heading h4" onclick={() => (detailsOpen = !detailsOpen)}>
+			<span class="sub-caret" class:open={detailsOpen}><CaretDown size={8} weight="bold" /></span>
+			Details
+		</button>
+		{#if detailsOpen}
+			<div class="proj-details">
+				<div class="proj-detail-row">
+					<span class="detail-label mono-small">Property</span>
+					<span class="detail-value mono-small">{PROPERTY_LABELS[projectionEntry.property]}</span>
+				</div>
+
+				{#if projectionEntry.parallels}
+					<div class="proj-detail-row">
+						<span class="detail-label mono-small">Parallels</span>
+						<span class="detail-value mono-small">{projectionEntry.parallels[0]}° / {projectionEntry.parallels[1]}°</span>
+					</div>
+				{/if}
+
+				<div class="proj-detail-row">
+					<span class="detail-label mono-small">Center</span>
+					<span class="detail-value mono-small">
+						{#if projCenter}
+							{fmtCoord(projCenter[0], 'E', 'W')}, {fmtCoord(projCenter[1], 'N', 'S')}
+						{:else}
+							—
+						{/if}
+					</span>
+				</div>
+
+				<div class="proj-detail-row">
+					<span class="detail-label mono-small">Extent</span>
+					<span class="detail-value mono-small">
+						{#if mapView.extent}
+							W {mapView.extent[0].toFixed(1)}°&ensp;E {mapView.extent[2].toFixed(1)}°<br>
+							S {mapView.extent[1].toFixed(1)}°&ensp;N {mapView.extent[3].toFixed(1)}°
+						{:else}
+							—
+						{/if}
+					</span>
+				</div>
+
+				<div class="proj-detail-row">
+					<span class="detail-label mono-small">Datum</span>
+					<span class="detail-value mono-small">WGS84 / EPSG:4326</span>
+				</div>
+			</div>
+		{/if}
+
+		<StylePanel />
+
+		<Minimap />
 	</div>
 </div>
 
@@ -365,4 +458,80 @@
 		background-color: var(--color-accent);
 		flex-shrink: 0;
 	}
+
+	/* --- Canvas section --- */
+
+	.canvas-section {
+		flex-shrink: 0;
+		border-top: 1px solid var(--color-border);
+		padding: var(--space-m) var(--space-l) var(--space-l);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-s);
+	}
+
+	.section-label {
+		color: var(--color-text-secondary);
+	}
+
+	/* Details collapsible heading */
+	.sub-heading {
+		position: relative;
+		display: flex;
+		align-items: center;
+		gap: var(--space-s);
+		background: none;
+		border: none;
+		margin-left: calc(-1 * var(--space-l));
+		width: calc(100% + 2 * var(--space-l));
+		padding: var(--space-s) var(--space-l);
+		cursor: pointer;
+		text-align: left;
+		color: var(--color-text-secondary);
+	}
+
+	.sub-caret {
+		position: absolute;
+		left: calc(var(--space-l) - 14px);
+		display: flex;
+		color: var(--color-icon-secondary);
+		opacity: 0;
+		transition: opacity 150ms, transform 150ms;
+		transform: rotate(-90deg);
+	}
+
+	.sub-heading:hover .sub-caret {
+		opacity: 1;
+	}
+
+	.sub-caret.open {
+		transform: rotate(0deg);
+	}
+
+	/* --- Projection details --- */
+
+	.proj-details {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-s);
+		padding-top: var(--space-s);
+		padding-left: var(--space-m);
+	}
+
+	.proj-detail-row {
+		display: flex;
+		align-items: baseline;
+		gap: var(--space-s);
+	}
+
+	.detail-label {
+		color: var(--color-text-tertiary);
+		flex-shrink: 0;
+		width: 56px;
+	}
+
+	.detail-value {
+		color: var(--color-text-secondary);
+	}
+
 </style>

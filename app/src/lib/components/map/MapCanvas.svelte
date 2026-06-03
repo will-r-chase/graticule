@@ -9,20 +9,13 @@
 	import { layers, workingTopologyData, layerDrag } from '$lib/stores/layers.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
 	import { mapState } from '$lib/stores/mapState.svelte';
+	import { mapView } from '$lib/stores/mapView.svelte';
+	import { globeStyles } from '$lib/stores/globeStyles.svelte';
 	import { background } from '$lib/stores/background.svelte';
 	import { PROJECTIONS } from '$lib/config';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
-	import Combobox from '$lib/components/ui/Combobox.svelte';
-	import BackgroundControl from '$lib/components/map/BackgroundControl.svelte';
 	import Toaster from '$lib/components/ui/Toaster.svelte';
 	import { MagnifyingGlassPlus, MagnifyingGlassMinus, CornersOut } from 'phosphor-svelte';
-	import { debug } from '$lib/stores/debug.svelte';
-	import type { LayerChunkStats } from '$lib/stores/debug.svelte';
-
-	const DEBUG_COLORS = [
-		'#e63946', '#2a9d8f', '#e9c46a', '#f4a261', '#264653',
-		'#6a4c93', '#1982c4', '#8ac926', '#ff595e', '#6a994e',
-	];
 
 	// Merge core and extended projection namespaces so we can look up any
 	// projection by its function name regardless of which package it comes from.
@@ -243,6 +236,12 @@
 		return fn().fitSize([width, height], { type: 'Sphere' }).rotate(rot);
 	});
 
+	// Parse a 6-digit hex string to [r, g, b], or null on failure.
+	function hexToRgb(hex: string): [number, number, number] | null {
+		const m = hex.replace('#', '').match(/^([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
+		return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : null;
+	}
+
 	// Wraps a projection's stream to clamp lon/lat before the projection math runs.
 	// TopoJSON quantization decodes pole coordinates as lat = 90 + ε (floating-point
 	// artifact of integer scale/translate arithmetic). Mercator returns NaN for lat > 90°,
@@ -304,8 +303,6 @@
 	// The projection object and max-chunk-vertices setting the cache was built for.
 	// When either changes we invalidate all entries and recompute from scratch.
 	let cachedProjection: d3.GeoProjection | null = null;
-	let cachedMaxChunkVertices = debug.maxChunkVertices;
-	let cachedNoChunking = debug.noChunking;
 
 	// Per-layer bezierCacheKey values at the time the path cache entry was built.
 	// When layer.bezierCacheKey changes (bezier settings updated), the entry is
@@ -365,12 +362,10 @@
 		void staleBuildVersion; // re-run when a stale build completes, to fire the next one
 		if (!projection) return;
 
-		// Projection or chunk settings changed — mark all cached paths as stale so
+		// Projection changed — mark all cached paths as stale so
 		// old paths stay visible during rebuild rather than flashing invisible.
-		const maxChunkVertices = debug.maxChunkVertices;
-		const noChunking = debug.noChunking;
 		const currentProjId = projectionStore.id;
-		if (projection !== cachedProjection || maxChunkVertices !== cachedMaxChunkVertices || noChunking !== cachedNoChunking) {
+		if (projection !== cachedProjection) {
 			for (const id of pathCache.keys()) stalePaths.add(id);
 			// For rotation-only changes keep inFlightBuilds intact — at most one build
 			// per layer in-flight at a time, preventing worker queue buildup during drag.
@@ -387,8 +382,6 @@
 			projectionVersion++;
 			cachedProjection = projection;
 			cachedProjectionId = currentProjId;
-			cachedMaxChunkVertices = maxChunkVertices;
-			cachedNoChunking = noChunking;
 		}
 
 		// Read layers without subscribing — cacheSignal already tracks what matters.
@@ -469,7 +462,7 @@
 
 			const projVer = projectionVersion; // snapshot at dispatch time
 			inFlightBuilds.add(id);
-			workerBuildPaths(id, projId, w, h, rotate, { ...layer.processing }, maxChunkVertices, noChunking)
+			workerBuildPaths(id, projId, w, h, rotate, { ...layer.processing })
 				.then((chunks) => {
 					inFlightBuilds.delete(id); // always unblock, regardless of epoch
 					if (epoch !== pathBuildEpoch) {
@@ -550,6 +543,132 @@
 		};
 	});
 
+	// Keep the mapView store in sync with the current viewport so the projection
+	// details panel and minimap always show up-to-date center/extent.
+	// Runs on any change to projection, pan, zoom, or canvas size.
+	$effect(() => {
+		mapView.mapScale = mapScale;
+
+		if (!projection || !width || !height) {
+			mapView.center = null;
+			mapView.extent = null;
+			return;
+		}
+
+		// Convert a canvas pixel (cx, cy) to geographic [lon, lat] by inverting the
+		// tx/ty/mapScale transform and then inverting the projection itself.
+		// Returns RAW (un-normalised) longitude so the caller can measure true span.
+		function canvasToGeo(cx: number, cy: number): [number, number] | null {
+			const px = (cx - tx) / mapScale;
+			const py = (cy - ty) / mapScale;
+			return projection!.invert?.([px, py]) ?? null;
+		}
+
+		// Normalise a longitude to [-180, 180].
+		function normLon(lon: number): number {
+			return ((lon + 180) % 360 + 360) % 360 - 180;
+		}
+
+		// Geographic center of the viewport.
+		const c = canvasToGeo(width / 2, height / 2);
+		mapView.center = c ? [+normLon(c[0]).toFixed(1), +c[1].toFixed(1)] : null;
+
+		// Geographic extent — rotate mode (globe projections).
+		//
+		// Sample points along the canvas perimeter and invert them to geographic
+		// coordinates. At mapScale > 1 the hemisphere circle is larger than the
+		// canvas, so all perimeter points are guaranteed to be within the visible
+		// hemisphere (projection.invert returns null only for out-of-hemisphere points).
+		// At mapScale ≤ 1 the full hemisphere (or more) is visible — no bounded
+		// rectangular extent makes sense, so we leave it null.
+		if (interactionMode === 'rotate') {
+			if (mapScale <= 1) {
+				mapView.extent = null;
+				return;
+			}
+			const centerLon = normLon(-projectionStore.rotate[0]);
+			const lats: number[] = [];
+			const dLons: number[] = [];
+			const N = 10; // samples per edge
+			for (let i = 0; i <= N; i++) {
+				const t = i / N;
+				const pts: Array<[number, number]> = [
+					[t * width, 0],      // top edge
+					[t * width, height], // bottom edge
+					[0, t * height],     // left edge
+					[width, t * height], // right edge
+				];
+				for (const [cx, cy] of pts) {
+					const geo = canvasToGeo(cx, cy);
+					if (!geo) continue;
+					lats.push(geo[1]);
+					dLons.push(normLon(geo[0] - centerLon));
+				}
+			}
+			if (lats.length < 4) {
+				mapView.extent = null;
+				return;
+			}
+			const south   = +Math.max(-90,  Math.min(...lats)).toFixed(1);
+			const north   = +Math.min( 90,  Math.max(...lats)).toFixed(1);
+			const westLon = +normLon(centerLon + Math.min(...dLons)).toFixed(1);
+			let   eastLon = +normLon(centerLon + Math.max(...dLons)).toFixed(1);
+			if (eastLon === -180) eastLon = 180;
+			mapView.extent = [westLon, south, eastLon, north];
+			return;
+		}
+
+		// Geographic extent — pan mode (flat projections).
+		//
+		// Find where the world's geographic edges (lon ±180°) appear on the canvas,
+		// then clip them to the visible area. The extent box shrinks naturally as the
+		// world edges slide off screen — no wrapping or antimeridian special-casing needed.
+		const westWorldPt = projection([-180, 0]);
+		const eastWorldPt = projection([ 180, 0]);
+		if (!westWorldPt || !eastWorldPt) {
+			mapView.extent = null;
+			return;
+		}
+
+		// Convert projection coordinates to canvas coordinates.
+		const westWorldCanvasX = westWorldPt[0] * mapScale + tx;
+		const eastWorldCanvasX = eastWorldPt[0] * mapScale + tx;
+
+		// Clip world edges to visible canvas.
+		const visWestCanvasX = Math.max(0, westWorldCanvasX);
+		const visEastCanvasX = Math.min(width, eastWorldCanvasX);
+
+		// If the entire world has scrolled off screen, show nothing.
+		if (visEastCanvasX <= visWestCanvasX) {
+			mapView.extent = null;
+			return;
+		}
+
+		// Invert the clipped edge positions back to geographic coords.
+		const projY      = (height / 2 - ty) / mapScale;
+		const visWestGeo = projection.invert?.([(visWestCanvasX - tx) / mapScale, projY]);
+		const visEastGeo = projection.invert?.([(visEastCanvasX - tx) / mapScale, projY]);
+		if (!visWestGeo || !visEastGeo) {
+			mapView.extent = null;
+			return;
+		}
+
+		// Latitude from the vertical centre line — no wrapping issues for lat.
+		const topGeo    = canvasToGeo(width / 2, 0);
+		const bottomGeo = canvasToGeo(width / 2, height);
+		const south = bottomGeo ? +Math.max(-90, Math.min(90, bottomGeo[1])).toFixed(1) : -90;
+		const north = topGeo    ? +Math.max(-90, Math.min(90, topGeo[1])).toFixed(1)    : 90;
+
+		// normLon maps to [-180, 180). For the east edge we want (-180, 180] —
+		// when the east world edge is exactly lon 180°, normLon returns -180, which
+		// makes the box width appear as zero. Flip that specific case to +180.
+		const westLon = +normLon(visWestGeo[0]).toFixed(1);
+		let eastLon   = +normLon(visEastGeo[0]).toFixed(1);
+		if (eastLon === -180) eastLon = 180;
+
+		mapView.extent = [westLon, south, eastLon, north];
+	});
+
 	// Repaint the canvas whenever styles, visibility, layer order, or the
 	// path cache changes. No geometry computation happens here — just
 	// stamping pre-built Path2D objects onto the canvas with current styles.
@@ -574,26 +693,86 @@
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, width, height);
 
-		ctx.globalAlpha = background.alpha;
-		ctx.fillStyle = background.hex;
-		ctx.fillRect(0, 0, width, height);
-		ctx.globalAlpha = 1;
+		if (background.enabled) {
+			ctx.globalAlpha = background.alpha;
+			ctx.fillStyle = background.hex;
+			ctx.fillRect(0, 0, width, height);
+			ctx.globalAlpha = 1;
+		}
+
+		// Drop shadow — drawn in screen space so it sits naturally behind the globe.
+		// Must come before ctx.translate/scale so coordinates are in CSS pixels.
+		if (isGlobe && globeStyles.shadow.enabled && projection) {
+			const intensity = globeStyles.shadow.intensity;
+			const globeR    = Math.min(width, height) / 2 * mapScale;
+			ctx.save();
+			ctx.filter = `blur(${Math.max(6, globeR * 0.06)}px)`;
+			ctx.beginPath();
+			ctx.ellipse(
+				width / 2,
+				height / 2 + globeR,  // centred at the bottom edge of the globe
+				globeR * 0.75,
+				globeR * 0.05,
+				0, 0, Math.PI * 2,
+			);
+			ctx.fillStyle = `rgba(0,0,0,${(intensity * 0.55).toFixed(3)})`;
+			ctx.fill();
+			ctx.restore();
+		}
 
 		ctx.translate(tx, ty);
 		ctx.scale(mapScale, mapScale);
 
-		// Draw the globe disk outline when in globe mode.
-		if (isGlobe && projection) {
-			const spherePathStr = d3.geoPath(projection)({ type: 'Sphere' });
-			if (spherePathStr) {
-				ctx.strokeStyle = '#888';
-				ctx.lineWidth = 2 / mapScale;
-				ctx.stroke(new Path2D(spherePathStr));
+		// Atmospheric halo — drawn in projection space before the globe disk so the
+		// ocean fill covers the interior and leaves only the glowing ring at the rim.
+		if (isGlobe && globeStyles.halo.enabled && projection) {
+			const { hex, alpha } = globeStyles.halo;
+			const rgb = hexToRgb(hex);
+			if (rgb) {
+				const [r, g, b] = rgb;
+				const globeRProj = Math.min(width, height) / 2;
+				const cx         = width / 2;
+				const cy         = height / 2;
+				// Width of the halo ring in screen pixels, converted to projection units.
+				const haloW  = 28 / mapScale;
+				const innerR = globeRProj * 0.85;
+				const outerR = globeRProj + haloW;
+				// Fraction along the gradient where the halo colour peaks (at the globe rim).
+				const peakFrac = (globeRProj - innerR) / (outerR - innerR);
+				const grad = ctx.createRadialGradient(cx, cy, innerR, cx, cy, outerR);
+				grad.addColorStop(0,        `rgba(${r},${g},${b},0)`);
+				grad.addColorStop(peakFrac, `rgba(${r},${g},${b},${alpha})`);
+				grad.addColorStop(1,        `rgba(${r},${g},${b},0)`);
+				ctx.beginPath();
+				ctx.arc(cx, cy, outerR, 0, 2 * Math.PI);
+				ctx.fillStyle = grad;
+				ctx.fill();
 			}
 		}
 
-		const debugStats: LayerChunkStats[] = [];
-		let debugChunkOffset = 0;
+		// Draw the globe disk (ocean fill + rim outline) when in globe mode.
+		if (isGlobe && projection) {
+			const spherePathStr = d3.geoPath(projection)({ type: 'Sphere' });
+			if (spherePathStr) {
+				const spherePath = new Path2D(spherePathStr);
+				const css = getComputedStyle(canvasEl!);
+
+				// Ocean fill — only when enabled in globe styles.
+				if (globeStyles.ocean.enabled) {
+					const { hex, alpha } = globeStyles.ocean;
+					const rgb = hexToRgb(hex);
+					ctx.fillStyle = rgb
+						? `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`
+						: hex;
+					ctx.fill(spherePath);
+				}
+
+				// Rim outline
+				ctx.strokeStyle = css.getPropertyValue('--color-border').trim();
+				ctx.lineWidth = 1 / mapScale;
+				ctx.stroke(spherePath);
+			}
+		}
 
 		for (const layer of [...layers].reverse()) {
 			if (!layer.visible) continue;
@@ -610,43 +789,25 @@
 				const vyMin = -ty / mapScale;
 				const vyMax = (height - ty) / mapScale;
 
-				if (!debug.enabled) {
-					ctx.strokeStyle = layer.style.stroke;
-					ctx.lineWidth = layer.style.strokeWidth / mapScale;
-					if (layer.style.strokeDashed) {
-						ctx.setLineDash([layer.style.strokeDash / mapScale, layer.style.strokeGap / mapScale]);
-					}
+				ctx.strokeStyle = layer.style.stroke;
+				ctx.lineWidth = layer.style.strokeWidth / mapScale;
+				if (layer.style.strokeDashed) {
+					ctx.setLineDash([layer.style.strokeDash / mapScale, layer.style.strokeGap / mapScale]);
 				}
 
-				let visibleChunks = 0;
 				for (let ci = 0; ci < chunks.length; ci++) {
 					const { path2d, bbox } = chunks[ci];
 					const [xMin, yMin, xMax, yMax] = bbox;
 					if (xMax < vxMin || xMin > vxMax || yMax < vyMin || yMin > vyMax) continue;
-					visibleChunks++;
 
-					if (debug.enabled) {
-						const color = DEBUG_COLORS[(debugChunkOffset + ci) % DEBUG_COLORS.length];
-						ctx.globalAlpha = 0.35;
-						ctx.fillStyle = color;
+					if (layer.style.fill !== 'none') {
+						ctx.globalAlpha = layer.style.fillOpacity;
+						ctx.fillStyle = layer.style.fill;
 						ctx.fill(path2d, 'evenodd');
-						ctx.globalAlpha = 0.85;
-						ctx.strokeStyle = color;
-						ctx.lineWidth = 1.5 / mapScale;
-						ctx.setLineDash([]);
-						ctx.stroke(path2d);
-					} else {
-						if (layer.style.fill !== 'none') {
-							ctx.globalAlpha = layer.style.fillOpacity;
-							ctx.fillStyle = layer.style.fill;
-							ctx.fill(path2d, 'evenodd');
-						}
-						ctx.globalAlpha = layer.style.strokeOpacity;
-						ctx.stroke(path2d);
 					}
+					ctx.globalAlpha = layer.style.strokeOpacity;
+					ctx.stroke(path2d);
 				}
-				debugChunkOffset += chunks.length;
-				debugStats.push({ layerId: layer.id, layerName: layer.name, total: chunks.length, visible: visibleChunks });
 				ctx.setLineDash([]);
 			}
 
@@ -715,41 +876,10 @@
 			ctx.globalAlpha = 1;
 		}
 
-		if (debug.enabled) debug.chunkStats = debugStats;
-
-		if (debug.enabled && debug.showBboxes) {
-			let bboxOffset = 0;
-			for (const layer of [...layers].reverse()) {
-				if (!layer.visible) continue;
-				const chunks = pathCache.get(layer.id);
-				if (!chunks) { continue; }
-				const hasNonPoint = layer.geometryTypes.some((t) => t !== 'Point' && t !== 'MultiPoint');
-				if (!hasNonPoint) { bboxOffset += chunks.length; continue; }
-
-				for (let ci = 0; ci < chunks.length; ci++) {
-					const { bbox } = chunks[ci];
-					const [xMin, yMin, xMax, yMax] = bbox;
-					if (!isFinite(xMin)) continue;
-					const color = DEBUG_COLORS[(bboxOffset + ci) % DEBUG_COLORS.length];
-					ctx.globalAlpha = 0.7;
-					ctx.strokeStyle = color;
-					ctx.lineWidth = 1.5 / mapScale;
-					ctx.setLineDash([5 / mapScale, 5 / mapScale]);
-					ctx.strokeRect(xMin, yMin, xMax - xMin, yMax - yMin);
-				}
-				bboxOffset += chunks.length;
-			}
-			ctx.setLineDash([]);
-			ctx.globalAlpha = 1;
-		}
 	});
 </script>
 
 <div class="map-canvas" bind:this={containerEl}>
-	<div class="projection-selector">
-		<Combobox options={PROJECTIONS} bind:value={projectionStore.id} placeholder="Search projections…" direction="up" />
-	</div>
-
 	<div class="zoom-controls">
 		<button class="zoom-btn" aria-label="Zoom in" onclick={zoomIn}>
 			<MagnifyingGlassPlus size={16} />
@@ -765,7 +895,6 @@
 
 	<div class="bottom-right-stack">
 		<Toaster />
-		<BackgroundControl />
 	</div>
 
 	<canvas
@@ -794,14 +923,6 @@
 
 	canvas.dragging {
 		cursor: grabbing;
-	}
-
-	.projection-selector {
-		position: absolute;
-		bottom: var(--space-m);
-		left: var(--space-m);
-		z-index: 10;
-		width: 220px;
 	}
 
 	.zoom-controls {

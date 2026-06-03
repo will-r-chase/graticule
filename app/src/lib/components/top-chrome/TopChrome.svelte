@@ -10,7 +10,6 @@
 	import { clearUploadedDatasets } from '$lib/stores/uploadedDatasets.svelte';
 	import { projection } from '$lib/stores/projection.svelte';
 	import { clearHistory, pushSnapshot, undo, redo, canUndo, canRedo } from '$lib/stores/history.svelte';
-	import { debug } from '$lib/stores/debug.svelte';
 
 	let fileInputEl = $state<HTMLInputElement | null>(null);
 
@@ -94,11 +93,10 @@
 	<div class="brand-group">
 		<MappyMascot />
 		<h2 class="brand">Mappy</h2>
+		<span class="beta-tag mono-small">Beta</span>
 	</div>
 
 	<div class="actions">
-		<a class="mono-regular experiments-link" href="/experiments">Experiments</a>
-		<Button size="sm" active={debug.enabled} onclick={() => debug.enabled = !debug.enabled}>Debug</Button>
 		<div class="separator"></div>
 		<Button size="sm" disabled={!canUndo()} onclick={undo}>Undo</Button>
 		<Button size="sm" disabled={!canRedo()} onclick={redo}>Redo</Button>
@@ -205,26 +203,22 @@
 		color: var(--color-text-primary);
 	}
 
+	.beta-tag {
+		background-color: var(--blue-50);
+		color: var(--blue-600);
+		padding: 0 var(--space-s);
+		border-radius: var(--radius);
+		letter-spacing: 0.04em;
+		margin-left: var(--space-s);
+		font-size: 10px;
+	}
+
 	.actions {
 		display: flex;
 		align-items: center;
 		gap: var(--space-l);
 	}
 
-	.experiments-link {
-		text-decoration: none;
-		color: var(--color-text-secondary);
-		height: 28px;
-		padding: 0 var(--space-m);
-		border-radius: var(--radius);
-		display: flex;
-		align-items: center;
-	}
-
-	.experiments-link:hover {
-		background-color: var(--color-surface-secondary);
-		color: var(--color-text-primary);
-	}
 
 	.separator {
 		width: 1px;

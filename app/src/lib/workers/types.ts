@@ -16,7 +16,7 @@ export type WorkerRequest =
 	| { type: 'CHAIKIN'; requestId: string; id: string; topo: Topology; iterations: number }
 	| { type: 'STORE_TOPOLOGY'; id: string; topo: Topology }
 	| { type: 'REMOVE_TOPOLOGY'; id: string }
-	| { type: 'BUILD_PATHS'; requestId: string; id: string; projId: string; width: number; height: number; rotate: [number, number, number]; processing: LayerProcessing; maxChunkVertices: number; noChunking: boolean };
+	| { type: 'BUILD_PATHS'; requestId: string; id: string; projId: string; width: number; height: number; rotate: [number, number, number]; processing: LayerProcessing };
 
 export type WorkerResponse =
 	| { type: 'CHAIKIN_DONE'; requestId: string; id: string; topo: Topology }

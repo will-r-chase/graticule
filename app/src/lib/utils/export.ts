@@ -49,8 +49,8 @@ function triggerDownload(blob: Blob, filename: string): void {
 	URL.revokeObjectURL(url);
 }
 
-export function exportPNG(clip: boolean, includeBackground: boolean): void {
-	const svgString = buildSVGString({ clip, includeBackground });
+export function exportPNG(clip: boolean): void {
+	const svgString = buildSVGString({ clip });
 	if (!svgString) return;
 
 	const { width, height } = mapState;
@@ -76,12 +76,10 @@ export function exportPNG(clip: boolean, includeBackground: boolean): void {
 
 interface SVGOptions {
 	clip: boolean;
-	includeBackground: boolean;
 }
 
 function buildSVGString(options: SVGOptions): string | null {
 	const { width, height, tx, ty, mapScale } = mapState;
-	const bgColor = background.hex;
 	if (!width || !height) return null;
 
 	const combined = getCombinedGeoJSON();
@@ -94,8 +92,9 @@ function buildSVGString(options: SVGOptions): string | null {
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" overflow="hidden">`,
 	];
 
-	if (options.includeBackground) {
-		parts.push(`  <rect width="${width}" height="${height}" fill="${bgColor}" />`);
+	// Background rect — included only when the user has it enabled in the Canvas panel.
+	if (background.enabled) {
+		parts.push(`  <rect width="${width}" height="${height}" fill="${background.hex}" fill-opacity="${background.alpha}" />`);
 	}
 
 	if (options.clip) {
@@ -178,8 +177,8 @@ function buildSVGString(options: SVGOptions): string | null {
 	return parts.join('\n');
 }
 
-export function exportSVG(includeBackground: boolean): void {
-	const svgString = buildSVGString({ clip: false, includeBackground });
+export function exportSVG(): void {
+	const svgString = buildSVGString({ clip: false });
 	if (!svgString) return;
 	const blob = new Blob([svgString], { type: 'image/svg+xml' });
 	triggerDownload(blob, 'map.svg');

@@ -84,7 +84,9 @@ class CommandRecorder implements PathRecorder {
 const chunkGroupsCache = new Map<string, { groups: any[][], version: string }>();
 
 function handleBuildPaths(msg: Extract<WorkerRequest, { type: 'BUILD_PATHS' }>): SerializedChunk[] {
-	const { id, projId, width, height, rotate, processing, maxChunkVertices, noChunking } = msg;
+	const { id, projId, width, height, rotate, processing } = msg;
+	const maxChunkVertices = 50_000;
+	const noChunking = false;
 	const topo = topologyStore.get(id);
 	if (!topo) return [];
 	const proj = buildProjection(projId, width, height, rotate);

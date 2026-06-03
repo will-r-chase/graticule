@@ -54,8 +54,6 @@ export function workerBuildPaths(
 	height: number,
 	rotate: [number, number, number],
 	processing: LayerProcessing,
-	maxChunkVertices: number,
-	noChunking: boolean,
 ): Promise<SerializedChunk[]> {
 	return new Promise((resolve) => {
 		const requestId = nextId();
@@ -64,7 +62,7 @@ export function workerBuildPaths(
 		});
 		const msg: WorkerRequest = {
 			type: 'BUILD_PATHS',
-			requestId, id, projId, width, height, rotate, processing, maxChunkVertices, noChunking,
+			requestId, id, projId, width, height, rotate, processing,
 		};
 		getWorker().postMessage(msg);
 	});
