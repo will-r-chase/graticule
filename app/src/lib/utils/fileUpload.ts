@@ -243,7 +243,7 @@ function validateGeoJSON(fc: FeatureCollection): UploadIssue[] {
 			'wrong-projection',
 			'This file\'s coordinates are outside the valid WGS84 range (longitude ±180, latitude ±90). ' +
 			'It is likely in a projected coordinate system (e.g. UTM or State Plane). ' +
-			'Re-export as WGS84 / EPSG:4326 to use it in Mappy.'
+			'Re-export as WGS84 / EPSG:4326 to use it in Graticule.'
 		));
 	}
 

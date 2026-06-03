@@ -92,7 +92,7 @@
 <header class="top-chrome">
 	<div class="brand-group">
 		<MappyMascot />
-		<h2 class="brand">Mappy</h2>
+		<h2 class="brand">Graticule</h2>
 		<span class="beta-tag mono-small">Beta</span>
 	</div>
 
@@ -146,7 +146,7 @@
 		{#snippet children()}
 			<div class="error-message body-regular">
 				<Warning size={16} weight="fill" class="error-icon" />
-				<span>This file doesn't appear to be a valid Mappy project. Please choose a .json file saved from Mappy.</span>
+				<span>This file doesn't appear to be a valid Graticule project. Please choose a .json file saved from Graticule.</span>
 			</div>
 		{/snippet}
 		{#snippet footer()}

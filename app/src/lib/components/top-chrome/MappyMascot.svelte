@@ -112,7 +112,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 <div class="mascot-wrap" onclick={handleClick} title="Click me" role="button" tabindex="0">
-	<svg class="mascot" viewBox="0 0 544 361" overflow="visible" aria-label="Mappy mascot">
+	<svg class="mascot" viewBox="0 0 544 361" overflow="visible" aria-label="Graticule mascot">
 		<g id="mm" bind:this={el}>
 
 			<!-- body — morphs between blob and rigid polygon -->
