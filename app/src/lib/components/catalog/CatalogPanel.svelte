@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { MagnifyingGlass, CaretDown } from 'phosphor-svelte';
+	import { MagnifyingGlass, CaretDown, X } from 'phosphor-svelte';
 	import type { Dataset } from '$lib/types';
 	import { TYPE_FILTERS, REGION_FILTERS, SOURCE_ORDER, SOURCE_CONFIG, PROJECTIONS } from '$lib/config';
 	import DatasetItem from './DatasetItem.svelte';
@@ -62,6 +62,34 @@
 	let collapsedSections = $state(new Set<string>());
 	let detailsOpen = $state(false);
 
+	// Floating filter panel
+	let catalogPanelEl   = $state<HTMLDivElement | null>(null);
+	let floatingFilterEl = $state<HTMLDivElement | null>(null);
+	let filterBtnEl      = $state<HTMLDivElement | null>(null);
+	let filterPos = $state({ left: 0, top: 0 });
+
+	// Position the floating filter panel to the right of the catalog panel,
+	// vertically aligned with the Filter button.
+	$effect(() => {
+		if (!filtersOpen || !catalogPanelEl || !filterBtnEl) return;
+		const panelRect = catalogPanelEl.getBoundingClientRect();
+		const btnRect   = filterBtnEl.getBoundingClientRect();
+		filterPos = { left: panelRect.right + 8, top: btnRect.top };
+	});
+
+	// Close only when clicking outside both the floating panel and the catalog panel.
+	// Clicks within the catalog (e.g. adding a dataset) should not dismiss the filter.
+	$effect(() => {
+		if (!filtersOpen) return;
+		function onPointerDown(e: PointerEvent) {
+			if (floatingFilterEl?.contains(e.target as Node)) return;
+			if (catalogPanelEl?.contains(e.target as Node)) return;
+			filtersOpen = false;
+		}
+		document.addEventListener('pointerdown', onPointerDown);
+		return () => document.removeEventListener('pointerdown', onPointerDown);
+	});
+
 	function toggleSection(source: string) {
 		const next = new Set(collapsedSections);
 		if (next.has(source)) next.delete(source);
@@ -96,60 +124,19 @@
 	}
 </script>
 
-<div class="catalog-panel">
+<div class="catalog-panel" bind:this={catalogPanelEl}>
 	<div class="panel-header">
 		<h3>Data</h3>
 		<div class="header-actions">
-			<Button size="sm" active={filtersOpen} onclick={() => filtersOpen = !filtersOpen}>Filter</Button>
+			<!-- Wrapper stops the document pointerdown listener from firing when the
+			     Filter button is clicked while the panel is already open, which would
+			     cause the document listener to close it and then onclick re-open it. -->
+			<div bind:this={filterBtnEl} onpointerdown={(e) => { if (filtersOpen) e.stopPropagation(); }}>
+				<Button size="sm" active={filtersOpen} onclick={() => filtersOpen = !filtersOpen}>Filter</Button>
+			</div>
 			<Button size="sm" onclick={onOpenUpload}>Upload</Button>
 		</div>
 	</div>
-
-	{#if filtersOpen}
-	<div class="search-bar">
-		<div class="search-input-wrapper">
-			<MagnifyingGlass size={16} color="var(--color-icon-secondary)" />
-			<input
-				class="mono-regular"
-				type="text"
-				placeholder="Search datasets..."
-				bind:value={search}
-			/>
-		</div>
-	</div>
-
-	<div class="filters">
-		<div class="filter-group">
-			<span class="filter-label h4">Type</span>
-			<div class="chips">
-				{#each TYPE_FILTERS as filter}
-					<button
-						class="chip mono-small"
-						class:active={activeType === filter.label}
-						onclick={() => toggleType(filter.label)}
-					>
-						{filter.label}
-					</button>
-				{/each}
-			</div>
-		</div>
-
-		<div class="filter-group">
-			<span class="filter-label h4">Region</span>
-			<div class="chips">
-				{#each REGION_FILTERS as region}
-					<button
-						class="chip mono-small"
-						class:active={activeRegion === region}
-						onclick={() => toggleRegion(region)}
-					>
-						{region}
-					</button>
-				{/each}
-			</div>
-		</div>
-	</div>
-	{/if}
 
 	<div class="dataset-list">
 		{#if uploadedDatasets.length > 0}
@@ -274,6 +261,71 @@
 	</div>
 </div>
 
+<!-- Floating search + filter panel — position: fixed so it escapes the catalog panel -->
+{#if filtersOpen}
+	<div
+		class="floating-filters"
+		bind:this={floatingFilterEl}
+		style="left: {filterPos.left}px; top: {filterPos.top}px"
+	>
+		<div class="filter-header">
+			<span class="body-regular">Search and Filter</span>
+			<button class="close-btn" onclick={() => filtersOpen = false} aria-label="Close filter panel">
+				<X size={14} />
+			</button>
+		</div>
+
+		<div class="filter-search">
+			<div class="search-input-wrapper">
+				<MagnifyingGlass size={16} color="var(--color-icon-secondary)" />
+				<input
+					class="mono-regular"
+					type="text"
+					placeholder="Search datasets..."
+					bind:value={search}
+				/>
+				{#if search}
+					<button class="search-clear" onclick={() => search = ''} aria-label="Clear search">
+						<X size={12} />
+					</button>
+				{/if}
+			</div>
+		</div>
+
+		<div class="filters">
+			<div class="filter-group">
+				<span class="filter-label h4">Type</span>
+				<div class="chips">
+					{#each TYPE_FILTERS as filter}
+						<button
+							class="chip mono-small"
+							class:active={activeType === filter.label}
+							onclick={() => toggleType(filter.label)}
+						>
+							{filter.label}
+						</button>
+					{/each}
+				</div>
+			</div>
+
+			<div class="filter-group">
+				<span class="filter-label h4">Region</span>
+				<div class="chips">
+					{#each REGION_FILTERS as region}
+						<button
+							class="chip mono-small"
+							class:active={activeRegion === region}
+							onclick={() => toggleRegion(region)}
+						>
+							{region}
+						</button>
+					{/each}
+				</div>
+			</div>
+		</div>
+	</div>
+{/if}
+
 <style>
 	.catalog-panel {
 		width: 280px;
@@ -301,10 +353,48 @@
 		gap: var(--space-xs);
 	}
 
-	/* --- Search --- */
+	/* --- Floating filter panel --- */
 
-	.search-bar {
-		padding: var(--space-s) var(--space-l);
+	.floating-filters {
+		position: fixed;
+		z-index: 50;
+		width: 260px;
+		background: var(--color-surface-primary);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius);
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+		display: flex;
+		flex-direction: column;
+	}
+
+	.filter-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: var(--space-m) var(--space-l);
+		border-bottom: 1px solid var(--color-border);
+		flex-shrink: 0;
+	}
+
+	.close-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--color-icon-secondary);
+		padding: 2px;
+		border-radius: var(--radius-sm);
+		transition: color 150ms;
+	}
+
+	.close-btn:hover {
+		color: var(--color-text-primary);
+	}
+
+	.filter-search {
+		padding: var(--space-m) var(--space-l) var(--space-s);
 		flex-shrink: 0;
 	}
 
@@ -334,15 +424,31 @@
 		border-color: var(--color-accent);
 	}
 
+	.search-clear {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--color-icon-secondary);
+		padding: 2px;
+		border-radius: var(--radius-sm);
+		flex-shrink: 0;
+		transition: color 150ms;
+	}
+
+	.search-clear:hover {
+		color: var(--color-text-primary);
+	}
+
 	/* --- Filters --- */
 
 	.filters {
-		padding: var(--space-l) var(--space-l) var(--space-l);
+		padding: var(--space-m) var(--space-l) var(--space-l);
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-l);
-		flex-shrink: 0;
-		border-bottom: 1px solid var(--color-border);
 	}
 
 	.filter-group {
