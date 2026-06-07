@@ -110,6 +110,14 @@ export function buildBezierArcs(
 	const clipDistRad = (clipAngle !== null && clipAngle > 0 && clipAngle <= 91)
 		? clipAngle * Math.PI / 180
 		: Infinity;
+	// True whenever D3 uses a small-circle preclip for this projection — regardless of
+	// the clip angle. Used to classify D3 sub-path splits: if the projection has any
+	// small-circle preclip (clipAngle > 0), splits come from that preclip and should be
+	// treated as hemisphere breaks. If clipAngle is 0 (conic, antimeridian-only) or null
+	// (no clipAngle method), splits are antimeridian or viewport breaks instead.
+	// Note: clipDistRad uses a ≤91° threshold for a different reason (point filtering),
+	// so these two variables serve separate concerns.
+	const hasSmallCircleClip = clipAngle !== null && clipAngle > 0;
 
 	// Diagonal width/height for threshold calculations — uses the larger of the two
 	// projection dimensions so the checks are consistent on non-square canvases.
@@ -194,8 +202,12 @@ export function buildBezierArcs(
 				const entryX = pts[0][0];
 				const entryY = pts[0][1];
 
-				if (clipDistRad < Infinity) {
+				if (hasSmallCircleClip) {
 					// Small-circle (hemisphere) split — D3's preclip fired.
+					// This applies to any projection with clipAngle > 0 (orthographic 90°,
+					// gnomonic ~60°, stereographic 142°, azimuthal ~180°, etc.).
+					// arcRingReconstructHemisphere derives the boundary circle from the actual
+					// exit/entry screen coordinates, so it handles any clip angle correctly.
 					_hemiArcs++;
 					segs.push({ cp1x: exitX, cp1y: exitY, cp2x: exitX, cp2y: exitY,
 						ex: entryX, ey: entryY, isBreak: true, breakType: 'hemisphere', exitX, exitY });
