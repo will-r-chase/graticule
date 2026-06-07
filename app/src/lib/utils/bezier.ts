@@ -200,23 +200,34 @@ export function buildBezierArcs(
 					segs.push({ cp1x: exitX, cp1y: exitY, cp2x: exitX, cp2y: exitY,
 						ex: entryX, ey: entryY, isBreak: true, breakType: 'hemisphere', exitX, exitY });
 				} else {
-					// Antimeridian split — recover crossLat/exitSide from the pair of
-					// geo vertices that straddle the crossing point.
-					_antiArcs++;
+					// Potential antimeridian split — verify by checking that the geographic
+					// vertices before/after the break actually straddle ±180°. If |rl1 - rl2|
+					// ≤ 180 the split was caused by D3's viewport postclip (e.g. Antarctica
+					// extending to y=∞ on Mercator), not a true antimeridian crossing.
 					const beforeIdx = subPathGeoStarts[r] - 1;
 					const afterIdx  = subPathGeoStarts[r];
-					let crossLat = 0, exitSide = 1;
+					let crossLat = 0, exitSide = 1, isAnti = false;
 					if (beforeIdx >= 0 && afterIdx < geo.length) {
 						const rg1 = rotFn(geo[beforeIdx] as [number, number]) as [number, number];
 						const rg2 = rotFn(geo[afterIdx]  as [number, number]) as [number, number];
 						const rl1 = normLon(rg1[0]);
 						const rl2 = normLon(rg2[0]);
-						crossLat = antimeridianCrossLat(rl1, rg1[1], rl2, rg2[1]);
-						exitSide = rl1 > 0 ? 1 : -1;
+						isAnti = Math.abs(rl1 - rl2) > 180;
+						if (isAnti) {
+							crossLat = antimeridianCrossLat(rl1, rg1[1], rl2, rg2[1]);
+							exitSide = rl1 > 0 ? 1 : -1;
+						}
 					}
-					segs.push({ cp1x: exitX, cp1y: exitY, cp2x: exitX, cp2y: exitY,
-						ex: entryX, ey: entryY, isBreak: true, breakType: 'antimeridian',
-						exitX, exitY, crossLat, exitSide });
+					if (isAnti) {
+						_antiArcs++;
+						segs.push({ cp1x: exitX, cp1y: exitY, cp2x: exitX, cp2y: exitY,
+							ex: entryX, ey: entryY, isBreak: true, breakType: 'antimeridian',
+							exitX, exitY, crossLat, exitSide });
+					} else {
+						segs.push({ cp1x: exitX, cp1y: exitY, cp2x: exitX, cp2y: exitY,
+							ex: entryX, ey: entryY, isBreak: true, breakType: 'viewport',
+							exitX, exitY });
+					}
 				}
 			}
 
@@ -329,7 +340,8 @@ export interface PathRecorder {
 
 // Debug flag: set to true to use plain closePath() instead of traceAntimeridianBoundary.
 // Isolates whether artifacts come from the boundary trace or from the walk/pairing logic.
-const DEBUG_CLOSEPATH = true;
+const DEBUG_CLOSEPATH = false;
+
 
 // Parameterises a point on the antimeridian boundary for sorting (D3's compareIntersection).
 // right side (+1): descends from 0 at +90° to π at −90°   (all t ≥ 0)
@@ -346,51 +358,74 @@ function antimeridianT(side: number, latDeg: number): number {
 // break segments). rotFn.invert converts each sample back to geographic coords
 // for proj(), giving a smooth curve that follows the projected meridian.
 // entryX/entryY (exact D3 screen coords) are snapped to at the end.
+//
+// If any sampled point falls outside the canvas, the entire sweep is abandoned
+// and the function falls through to the final lineTo(entryX, entryY). This
+// avoids diagonal line artifacts on conic/azimuthal projections where part of
+// the antimeridian projects off-canvas — a partial sweep followed by a jump to
+// entryX/entryY is worse than a straight chord.
 function traceAntimeridianBoundary(
 	exitSide: number, entrySide: number,
 	fromLat: number, toLat: number,
 	proj: d3.GeoProjection, recorder: PathRecorder,
-	entryX: number, entryY: number
+	entryX: number, entryY: number,
+	viewport?: [number, number]
 ): void {
-	const EPS  = 0.01; // stay just inside ±180 to avoid boundary instability
-	const STEP = 0.5;  // degrees latitude per sample (~1px at typical world scale)
-	const rotFn = d3.geoRotation(proj.rotate());
-	// Discard projected points that are clearly off-canvas — proj() returns
-	// non-null but extreme coordinates for off-visible-area inputs on conic/
-	// azimuthal projections, which would otherwise draw long diagonal artifacts.
+	const EPS    = 0.01; // stay just inside ±180 to avoid boundary instability
+	const STEP   = 0.5;  // degrees latitude per sample (~1px at typical world scale)
+	const MARGIN = 4;    // px — allow fractional overhang at the canvas edge
+	const rotFn  = d3.geoRotation(proj.rotate());
+	// Use the actual canvas dimensions when available; fall back to the projection's
+	// translate as a rough estimate (accurate only for centred projections).
 	const [tx, ty] = proj.translate();
-	const maxDim = Math.max(tx, ty) * 6; // 3× canvas dimension
+	const vpW = viewport ? viewport[0] : tx * 2;
+	const vpH = viewport ? viewport[1] : ty * 2;
 
-	const sample = (lon: number, lat: number) => {
-		const geo = rotFn.invert([lon, lat] as [number, number]);
-		const pt  = proj(geo as [number, number]);
-		if (pt && isFinite(pt[0]) && isFinite(pt[1]) &&
-			Math.abs(pt[0]) < maxDim && Math.abs(pt[1]) < maxDim) {
-			recorder.lineTo(pt[0], pt[1]);
-		}
-	};
-
-	// Sweep latitudes from latA toward latB, stopping STEP/2 before latB so the
-	// caller's final lineTo(entryX, entryY) snaps cleanly to the exact boundary.
-	const sweep = (lon: number, latA: number, latB: number) => {
+	// Pre-collect all projected points for a latitude sweep on one side of the
+	// antimeridian. Returns the array of screen points if every sample is within
+	// the canvas (+margin), or null if any sample is off-canvas.
+	const trySweep = (lon: number, latA: number, latB: number): [number, number][] | null => {
 		const dir = latB > latA ? 1 : -1;
+		const pts: [number, number][] = [];
 		for (let lat = latA + dir * STEP; dir * (latB - lat) > STEP / 2; lat += dir * STEP) {
-			sample(lon, lat);
+			const geo = rotFn.invert([lon, lat] as [number, number]);
+			const pt  = proj(geo as [number, number]);
+			if (!pt || !isFinite(pt[0]) || !isFinite(pt[1]) ||
+				pt[0] < -MARGIN || pt[0] > vpW + MARGIN ||
+				pt[1] < -MARGIN || pt[1] > vpH + MARGIN) {
+				return null;
+			}
+			pts.push([pt[0], pt[1]]);
 		}
+		return pts;
 	};
+
+	console.log(`[traceBoundary] viewport=${vpW.toFixed(0)}x${vpH.toFixed(0)} fromLat=${fromLat.toFixed(2)} toLat=${toLat.toFixed(2)} exitSide=${exitSide} entrySide=${entrySide} entryXY=(${entryX.toFixed(1)},${entryY.toFixed(1)})`);
 
 	if (exitSide === entrySide) {
 		// Same side of the antimeridian: sweep directly from fromLat to toLat.
 		const lon = exitSide > 0 ? 180 - EPS : -180 + EPS;
-		sweep(lon, fromLat, toLat);
+		const pts = trySweep(lon, fromLat, toLat);
+		console.log(`  same-side lon=${lon.toFixed(2)}: trySweep returned ${pts === null ? 'NULL (aborted)' : `${pts.length} pts`}${pts && pts.length > 0 ? ` first=(${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}) last=(${pts[pts.length-1][0].toFixed(1)},${pts[pts.length-1][1].toFixed(1)})` : ''}`);
+		if (pts) for (const [x, y] of pts) recorder.lineTo(x, y);
 	} else {
 		// Opposite sides: route via the nearer pole in the rotated frame.
 		const pole     = ((fromLat + toLat) / 2) >= 0 ? 90 : -90;
 		const exitLon  = exitSide  > 0 ? 180 - EPS : -180 + EPS;
 		const entryLon = entrySide > 0 ? 180 - EPS : -180 + EPS;
-		sweep(exitLon, fromLat, pole);
-		sample(exitLon, pole);
-		sweep(entryLon, pole, toLat);
+		const pts1 = trySweep(exitLon, fromLat, pole);
+		const pts2 = trySweep(entryLon, pole, toLat);
+		console.log(`  opp-side pole=${pole} pts1=${pts1 === null ? 'NULL' : pts1.length} pts2=${pts2 === null ? 'NULL' : pts2.length}`);
+		if (pts1 && pts2) {
+			const polePt = proj(rotFn.invert([exitLon, pole] as [number, number]) as [number, number]);
+			if (polePt && isFinite(polePt[0]) && isFinite(polePt[1]) &&
+				polePt[0] > -MARGIN && polePt[0] < vpW + MARGIN &&
+				polePt[1] > -MARGIN && polePt[1] < vpH + MARGIN) {
+				for (const [x, y] of pts1) recorder.lineTo(x, y);
+				recorder.lineTo(polePt[0], polePt[1]);
+				for (const [x, y] of pts2) recorder.lineTo(x, y);
+			}
+		}
 	}
 
 	recorder.lineTo(entryX, entryY);
@@ -719,7 +754,8 @@ function arcRingReconstructAntimeridian(
 	arcIndices: number[],
 	bezierArcs: BezierArc[],
 	recorder: PathRecorder,
-	proj: d3.GeoProjection
+	proj: d3.GeoProjection,
+	viewport?: [number, number]
 ): void {
 	interface SegCmd { cp1x: number; cp1y: number; cp2x: number; cp2y: number; ex: number; ey: number }
 	interface RingSeg { startX: number; startY: number; cmds: SegCmd[] }
@@ -756,7 +792,9 @@ function arcRingReconstructAntimeridian(
 				if (seg.isBreak && seg.breakType === 'antimeridian') {
 					// Reversed traversal: forward exit ↔ reversed entry, and vice-versa.
 					flushSeg({ exitX: seg.ex, exitY: seg.ey, entryX: seg.exitX!, entryY: seg.exitY!, crossLat: seg.crossLat!, exitSide: -(seg.exitSide!) });
-				} else if (!seg.isBreak) {
+				} else if (seg.isBreak) {
+					console.log(`[reconstruct] skipping non-antimeridian break (reversed): ${seg.breakType}`);
+				} else {
 					curCmds.push({ cp1x: seg.cp2x, cp1y: seg.cp2y, cp2x: seg.cp1x, cp2y: seg.cp1y, ex: toX, ey: toY });
 				}
 			}
@@ -765,7 +803,9 @@ function arcRingReconstructAntimeridian(
 			for (const seg of arc.segs) {
 				if (seg.isBreak && seg.breakType === 'antimeridian') {
 					flushSeg({ exitX: seg.exitX!, exitY: seg.exitY!, entryX: seg.ex, entryY: seg.ey, crossLat: seg.crossLat!, exitSide: seg.exitSide! });
-				} else if (!seg.isBreak) {
+				} else if (seg.isBreak) {
+					console.log(`[reconstruct] skipping non-antimeridian break (forward): ${seg.breakType}`);
+				} else {
 					curCmds.push({ cp1x: seg.cp1x, cp1y: seg.cp1y, cp2x: seg.cp2x, cp2y: seg.cp2y, ex: seg.ex, ey: seg.ey });
 				}
 			}
@@ -824,7 +864,7 @@ function arcRingReconstructAntimeridian(
 		// Snap to exact exit boundary, then trace along the antimeridian back to Y.
 		recorder.lineTo(X.projX, X.projY);
 		if (!DEBUG_CLOSEPATH) {
-			traceAntimeridianBoundary(X.side, Y.side, X.crossLat, Y.crossLat, proj, recorder, Y.projX, Y.projY);
+			traceAntimeridianBoundary(X.side, Y.side, X.crossLat, Y.crossLat, proj, recorder, Y.projX, Y.projY, viewport);
 		}
 		recorder.closePath();
 	}
@@ -847,20 +887,24 @@ export function arcRingToPath(arcIndices: number[], bezierArcs: BezierArc[], rec
 	// a single reconstructable break type and no plain clamp breaks mixed in.
 	if (close) {
 		let hasAnti = false, hasHemi = false, hasVp = false, hasOther = false;
+		let antiBreakCount = 0;
 		outer: for (const idx of arcIndices) {
 			const arc = bezierArcs[idx < 0 ? ~idx : idx];
 			if (!arc) continue;
 			for (const seg of arc.segs) {
 				if (!seg.isBreak) continue;
-				if      (seg.breakType === 'antimeridian') hasAnti = true;
+				if      (seg.breakType === 'antimeridian') { hasAnti = true; antiBreakCount++; }
 				else if (seg.breakType === 'hemisphere')   hasHemi = true;
 				else if (seg.breakType === 'viewport')     hasVp   = true;
 				else                                       hasOther = true;
 				if (hasOther) break outer;
 			}
 		}
-		if (proj && hasAnti && !hasHemi && !hasVp && !hasOther) {
-			arcRingReconstructAntimeridian(arcIndices, bezierArcs, recorder, proj);
+		// Only reconstruct rings with ≤2 antimeridian crossings. Rings with more crossings
+		// have internal boundary re-crossings that the walk algorithm can't handle cleanly —
+		// they fall back to the moveTo-break path instead.
+		if (proj && hasAnti && !hasHemi && !hasOther && antiBreakCount <= 2) {
+			arcRingReconstructAntimeridian(arcIndices, bezierArcs, recorder, proj!, viewport);
 			return;
 		}
 		if (proj && hasHemi && !hasAnti && !hasVp && !hasOther) {
