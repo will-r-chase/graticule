@@ -98,14 +98,15 @@ function handleBuildPaths(msg: Extract<WorkerRequest, { type: 'BUILD_PATHS' }>):
 
 	if (processing.bezierEnabled) {
 		const { bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias } = processing;
-		const bezierArcs = buildBezierArcs(topo as Topology, proj, bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias);
+		const bezierArcs = buildBezierArcs(topo as Topology, proj, bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias, width, height);
 		const recorder = new CommandRecorder();
 		for (const objName of Object.keys(anyTopo.objects)) {
 			for (const geom of anyTopo.objects[objName].geometries) {
+				const vp: [number, number] = [width, height];
 				if (geom.type === 'Polygon') {
-					for (const ring of geom.arcs) arcRingToPath(ring, bezierArcs, recorder);
+					for (const ring of geom.arcs) arcRingToPath(ring, bezierArcs, recorder, true, proj, vp);
 				} else if (geom.type === 'MultiPolygon') {
-					for (const poly of geom.arcs) for (const ring of poly) arcRingToPath(ring, bezierArcs, recorder);
+					for (const poly of geom.arcs) for (const ring of poly) arcRingToPath(ring, bezierArcs, recorder, true, proj, vp);
 				} else if (geom.type === 'LineString') {
 					arcRingToPath(geom.arcs, bezierArcs, recorder, false);
 				} else if (geom.type === 'MultiLineString') {
