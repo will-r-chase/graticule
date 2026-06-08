@@ -6,14 +6,18 @@
 	import { feature } from 'topojson-client';
 	import { workerBuildPaths, workerStoreTopology, workerRemoveTopology } from '$lib/workers/geoWorker';
 	import type { PathCommand } from '$lib/workers/types';
-	import { layers, workingTopologyData, layerDrag } from '$lib/stores/layers.svelte';
+	import { layers, workingTopologyData, layerDrag, deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures } from '$lib/stores/layers.svelte';
+	import { toolState } from '$lib/stores/tool.svelte';
+	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
+	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
 	import { mapState } from '$lib/stores/mapState.svelte';
 	import { mapView } from '$lib/stores/mapView.svelte';
 	import { canvasStyles } from '$lib/stores/canvasStyles.svelte';
 	import { PROJECTIONS } from '$lib/config';
-	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import Toaster from '$lib/components/ui/Toaster.svelte';
+	import MapToolbar from '$lib/components/map/MapToolbar.svelte';
+	import SelectionBar from '$lib/components/map/SelectionBar.svelte';
 	import { MagnifyingGlassPlus, MagnifyingGlassMinus, CornersOut } from 'phosphor-svelte';
 
 	// Merge core and extended projection namespaces so we can look up any
@@ -47,6 +51,8 @@
 	let isDragging = $state(false); // $state so canvas cursor class updates
 	let lastPointerX = 0;
 	let lastPointerY = 0;
+
+	let hoveredFeature = $state<{ layerId: string; featureIndex: number } | null>(null);
 
 	// Rotation drag tracking (rotate-mode projections only).
 	let localRotate: [number, number, number] = [0, 0, 0];
@@ -113,10 +119,10 @@
 			return;
 		}
 
-		// Fast path: union the cached chunk bboxes (already in projection space,
-		// computed for free during path building — no coordinate traversal needed).
-		// Bezier chunks carry [-Infinity, ...] bboxes and are skipped.
-		// Point layers have empty chunk arrays and are skipped.
+		// Fast path: union per-feature bboxes from the path cache (already in projection
+		// space, computed for free during path building — no coordinate traversal needed).
+		// Bezier layers emit a single entry with [-Infinity, ...] bbox and are skipped.
+		// Point layers have empty cache arrays and are skipped.
 		// If no finite bbox is found, fall back to the full bounds computation below.
 		let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
 		let hasCachedBounds = false;
@@ -125,7 +131,7 @@
 			if (!chunks) continue;
 			for (const { bbox } of chunks) {
 				const [cxMin, cyMin, cxMax, cyMax] = bbox;
-				if (!isFinite(cxMin)) continue; // bezier chunk — skip
+				if (!isFinite(cxMin)) continue; // bezier layer — skip
 				if (cxMin < bx0) bx0 = cxMin;
 				if (cyMin < by0) by0 = cyMin;
 				if (cxMax > bx1) bx1 = cxMax;
@@ -180,18 +186,167 @@
 		mapState.mapScale = mapScale;
 	}
 
-	function handlePointerDown(e: PointerEvent) {
-		isDragging = true;
-		lastPointerX = e.clientX;
-		lastPointerY = e.clientY;
-		if (interactionMode === 'rotate') {
-			localRotate = [...projectionStore.rotate];
-			lastBuiltRotate = [...projectionStore.rotate]; // reset so delta is measured from drag start
+	// Draw a highlight overlay for a single feature — handles path-cached
+	// (non-point) and direct-projected (point) geometry.
+	// fillOpacity applies to polygon fills only; points always render at full opacity.
+	// useLayerStyle: when true, stroke/point colors come from the layer's own style
+	// (used for hover — preserves original colors, only weight/size change).
+	function drawFeatureHighlight(
+		ctx: CanvasRenderingContext2D,
+		layerId: string,
+		featureIndex: number,
+		fillHex: string,
+		strokeHex: string,
+		fillOpacity: number,
+		lineWidth: number,
+		extraRadius = 0,
+		useLayerStyle = false,
+	) {
+		const chunks = pathCache.get(layerId);
+		if (chunks === undefined) return;
+
+		const layer = layers.find((l) => l.id === layerId);
+
+		const chunk = chunks[featureIndex];
+		if (chunk) {
+			const hasPolygons = layer?.geometryTypes.some(
+				(t) => t === 'Polygon' || t === 'MultiPolygon'
+			) ?? false;
+			const strokeColor = useLayerStyle ? (layer?.style.stroke ?? strokeHex) : strokeHex;
+			ctx.strokeStyle = strokeColor;
+			ctx.lineWidth   = lineWidth;
+			if (hasPolygons) {
+				ctx.globalAlpha = fillOpacity;
+				ctx.fillStyle   = fillHex;
+				ctx.fill(chunk.path2d, 'evenodd');
+				ctx.globalAlpha = 1;
+			}
+			ctx.stroke(chunk.path2d);
+			return;
 		}
-		(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+
+		// Point feature — project directly from topology.
+		if (!projection || !layer) return;
+		const topo = workingTopologyData.get(layerId);
+		if (!topo) return;
+		const objectName = Object.keys(topo.objects)[0];
+		const data = feature(topo, topo.objects[objectName]) as {
+			features?: { geometry?: { type?: string; coordinates?: unknown } }[]
+		};
+		const geom = data?.features?.[featureIndex]?.geometry;
+		if (!geom) return;
+
+		const coordsList: [number, number][] =
+			geom.type === 'Point'        ? [geom.coordinates as [number, number]]
+			: geom.type === 'MultiPoint' ? (geom.coordinates as [number, number][])
+			: [];
+
+		const projCenter: [number, number] | null = interactionMode === 'rotate'
+			? [-projectionStore.rotate[0], -projectionStore.rotate[1]]
+			: null;
+
+		const pointFill   = useLayerStyle ? layer.style.fill   : fillHex;
+		const pointStroke = useLayerStyle ? layer.style.stroke : strokeHex;
+
+		const r = layer.style.pointRadius + extraRadius;
+		const sym = shapeMap[layer.style.pointShape] ?? d3shape.symbolCircle;
+		const symPath2D = new Path2D(d3shape.symbol(sym, Math.PI * r * r)() ?? '');
+
+		for (const coord of coordsList) {
+			if (projCenter && d3.geoDistance(coord, projCenter) >= Math.PI / 2) continue;
+			const pt = projection(coord);
+			if (!pt) continue;
+			ctx.save();
+			ctx.translate(pt[0], pt[1]);
+			ctx.scale(1 / mapScale, 1 / mapScale);
+			ctx.globalAlpha = 1;
+			ctx.fillStyle   = pointFill;
+			ctx.strokeStyle = pointStroke;
+			ctx.lineWidth   = lineWidth * mapScale;
+			ctx.fill(symPath2D);
+			ctx.stroke(symPath2D);
+			ctx.restore();
+		}
+	}
+
+	function handleClick(e: MouseEvent) {
+		if (toolState.active !== 'select') return;
+		if (!hitCanvas || !canvasEl) return;
+
+		const rect = canvasEl.getBoundingClientRect();
+		const cx = Math.round(e.clientX - rect.left);
+		const cy = Math.round(e.clientY - rect.top);
+
+		const hctx = hitCanvas.getContext('2d');
+		if (!hctx) return;
+
+		// Sample a 5×5 area centered on the click to handle sub-pixel misses on thin
+		// lines and small points, then pick the most common non-background color.
+		const radius = 2;
+		const size = radius * 2 + 1;
+		const imageData = hctx.getImageData(cx - radius, cy - radius, size, size);
+
+		const counts = new Map<number, number>();
+		for (let i = 0; i < imageData.data.length; i += 4) {
+			const key = (imageData.data[i] << 16) | (imageData.data[i + 1] << 8) | imageData.data[i + 2];
+			if (key === 0) continue; // background
+			counts.set(key, (counts.get(key) ?? 0) + 1);
+		}
+
+		if (counts.size === 0) {
+			clearSelection();
+			return;
+		}
+
+		let bestKey = 0, bestCount = 0;
+		for (const [key, count] of counts) {
+			if (count > bestCount) { bestCount = count; bestKey = key; }
+		}
+
+		const hit = hitDecodeMap.get(bestKey);
+		if (!hit) return;
+		selectFeature(hit.layerId, hit.featureIndex, e.shiftKey);
+	}
+
+	function handlePointerDown(e: PointerEvent) {
+		if (toolState.active === 'pan') {
+			isDragging = true;
+			lastPointerX = e.clientX;
+			lastPointerY = e.clientY;
+			if (interactionMode === 'rotate') {
+				localRotate = [...projectionStore.rotate];
+				lastBuiltRotate = [...projectionStore.rotate]; // reset so delta is measured from drag start
+			}
+			(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+		}
 	}
 
 	function handlePointerMove(e: PointerEvent) {
+		if (toolState.active === 'select' && !isDragging && hitCanvas && canvasEl) {
+			const rect = canvasEl.getBoundingClientRect();
+			const cx = Math.round(e.clientX - rect.left);
+			const cy = Math.round(e.clientY - rect.top);
+			const hctx = hitCanvas.getContext('2d');
+			if (hctx) {
+				// 5×5 sample with most-common-color, same as click — reduces
+				// flickering on small features when zoomed out.
+				const radius = 2;
+				const size = radius * 2 + 1;
+				const data = hctx.getImageData(cx - radius, cy - radius, size, size).data;
+				const counts = new Map<number, number>();
+				for (let i = 0; i < data.length; i += 4) {
+					const key = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2];
+					if (key === 0) continue;
+					counts.set(key, (counts.get(key) ?? 0) + 1);
+				}
+				let bestKey = 0, bestCount = 0;
+				for (const [key, count] of counts) {
+					if (count > bestCount) { bestCount = count; bestKey = key; }
+				}
+				hoveredFeature = bestKey !== 0 ? (hitDecodeMap.get(bestKey) ?? null) : null;
+			}
+		}
+
 		if (!isDragging) return;
 
 		if (interactionMode === 'rotate' && projection) {
@@ -295,12 +450,18 @@
 	// as a side-effect of the paint loop reading from it.
 	const pathCache = new Map<string, CachedChunk[]>();
 
+	// Offscreen canvas for hit detection. Never mounted to the DOM.
+	// Drawn in CSS pixels (no DPR scaling) so click coordinates map 1:1.
+	let hitCanvas: HTMLCanvasElement | null = null;
+	// Maps a packed RGB integer back to the layer/feature that owns that color.
+	const hitDecodeMap = new Map<number, { layerId: string; featureIndex: number }>();
+
 	// Bumped whenever the cache gains new entries. The paint effect reads
 	// this so it knows to repaint after a path is computed.
 	let cacheVersion = $state(0);
 
-	// The projection object and max-chunk-vertices setting the cache was built for.
-	// When either changes we invalidate all entries and recompute from scratch.
+	// The projection object the cache was built for.
+	// When it changes we invalidate all entries and recompute from scratch.
 	let cachedProjection: d3.GeoProjection | null = null;
 
 	// Per-layer bezierCacheKey values at the time the path cache entry was built.
@@ -371,8 +532,8 @@
 			const rotationOnly = projection !== cachedProjection && currentProjId === cachedProjectionId;
 			if (!rotationOnly) {
 				inFlightBuilds.clear();
-				// Only invalidate in-flight builds when the projection type (or chunk
-				// settings) changes — a result built for a slightly different rotation is
+				// Only invalidate in-flight builds when the projection type changes —
+				// a result built for a slightly different rotation is
 				// still a valid render and should display. Incrementing the epoch on every
 				// throttle tick during drag means every ~950ms build completes stale and is
 				// discarded, so the user never sees intermediate frames.
@@ -502,6 +663,98 @@
 		});
 	});
 
+	// Rebuild the hit-detection canvas whenever anything that affects the
+	// rendered scene changes: new paths, pan/zoom, layer visibility, resize.
+	// Drawn without DPR scaling so click pixel coords map directly to canvas pixels.
+	$effect(() => {
+		void cacheVersion;
+		if (!width || !height) return;
+
+		if (!hitCanvas) hitCanvas = document.createElement('canvas');
+		hitCanvas.width = width;
+		hitCanvas.height = height;
+
+		const hctx = hitCanvas.getContext('2d');
+		if (!hctx) return;
+
+		// Reset to identity, clear, then set the same projection-space transform
+		// as the main canvas (but without DPR — hit canvas lives in CSS pixels).
+		hctx.setTransform(1, 0, 0, 1, 0, 0);
+		hctx.clearRect(0, 0, width, height);
+		hctx.setTransform(mapScale, 0, 0, mapScale, tx, ty);
+
+		hitDecodeMap.clear();
+		let colorIdx = 1;
+
+		for (const layer of [...layers].reverse()) {
+			if (!layer.visible) continue;
+			const chunks = pathCache.get(layer.id);
+			if (chunks === undefined) continue;
+
+			const hasNonPoint = layer.geometryTypes.some((t) => t !== 'Point' && t !== 'MultiPoint');
+			const hasPoints   = layer.geometryTypes.some((t) => t === 'Point' || t === 'MultiPoint');
+
+			if (hasNonPoint) {
+				for (let fi = 0; fi < chunks.length; fi++) {
+					const r = (colorIdx >> 16) & 0xff;
+					const g = (colorIdx >> 8)  & 0xff;
+					const b =  colorIdx        & 0xff;
+					const color = `rgb(${r},${g},${b})`;
+					hctx.fillStyle   = color;
+					hctx.strokeStyle = color;
+					// Minimum 4px stroke so thin lines stay clickable.
+					hctx.lineWidth = Math.max(layer.style.strokeWidth, 4) / mapScale;
+					hctx.fill(chunks[fi].path2d, 'evenodd');
+					hctx.stroke(chunks[fi].path2d);
+					hitDecodeMap.set(colorIdx, { layerId: layer.id, featureIndex: fi });
+					colorIdx++;
+				}
+			}
+
+			if (hasPoints) {
+				const proj = untrack(() => projection);
+				if (!proj) continue;
+
+				const topo = workingTopologyData.get(layer.id);
+				const objectName = topo ? Object.keys(topo.objects)[0] : null;
+				const data = topo && objectName
+					? feature(topo, topo.objects[objectName]) as { features?: { geometry?: { type?: string; coordinates?: unknown } }[] }
+					: undefined;
+				if (!data?.features) continue;
+
+				const projCenter: [number, number] | null = interactionMode === 'rotate'
+					? [-projectionStore.rotate[0], -projectionStore.rotate[1]]
+					: null;
+
+				for (let fi = 0; fi < data.features.length; fi++) {
+					const geom = data.features[fi]?.geometry;
+					if (!geom) continue;
+					const coordsList: [number, number][] =
+						geom.type === 'Point'      ? [geom.coordinates as [number, number]]
+						: geom.type === 'MultiPoint' ? (geom.coordinates as [number, number][])
+						: [];
+
+					const r = (colorIdx >> 16) & 0xff;
+					const g = (colorIdx >> 8)  & 0xff;
+					const b =  colorIdx        & 0xff;
+					hctx.fillStyle = `rgb(${r},${g},${b})`;
+
+					for (const coord of coordsList) {
+						if (projCenter && d3.geoDistance(coord, projCenter) >= Math.PI / 2) continue;
+						const pt = proj(coord);
+						if (!pt) continue;
+						// Draw a square hit target; 6 CSS px radius looks up by mapScale.
+						const hitR = 6 / mapScale;
+						hctx.fillRect(pt[0] - hitR, pt[1] - hitR, hitR * 2, hitR * 2);
+					}
+
+					hitDecodeMap.set(colorIdx, { layerId: layer.id, featureIndex: fi });
+					colorIdx++;
+				}
+			}
+		}
+	});
+
 	// Wheel zoom — must be non-passive to call preventDefault().
 	$effect(() => {
 		if (!canvasEl) return;
@@ -520,6 +773,47 @@
 		}
 		canvasEl.addEventListener('wheel', handleWheel, { passive: false });
 		return () => canvasEl!.removeEventListener('wheel', handleWheel);
+	});
+
+	// Global keyboard shortcuts.
+	$effect(() => {
+		function handleKeyDown(e: KeyboardEvent) {
+			// Don't intercept when focus is in a text field.
+			const tag = (e.target as Element | null)?.tagName;
+			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+			if (e.key === 'v' || e.key === 'V') {
+				toolState.active = 'pan';
+			} else if (e.key === 's' || e.key === 'S') {
+				toolState.active = 'select';
+			} else if (e.key === 'Escape') {
+				clearSelection();
+				toolState.active = 'pan';
+			} else if ((e.key === 'Delete' || e.key === 'Backspace') && selection.features.size > 0) {
+				e.preventDefault();
+				const snapshot = new Map([...selection.features.entries()].map(([k, v]) => [k, new Set(v)]));
+				clearSelection();
+				let remaining = snapshot.size;
+				for (const [layerId, indices] of snapshot) {
+					deleteSelectedFeatures(layerId, indices, () => {
+						remaining--;
+						if (remaining === 0) pushSnapshot();
+					});
+				}
+			} else if ((e.key === 'e' || e.key === 'E') && selection.features.size > 0) {
+				e.preventDefault();
+				const snapshot = new Map([...selection.features.entries()].map(([k, v]) => [k, new Set(v)]));
+				clearSelection();
+				if (snapshot.size > 1) {
+					mergeSelectedFeatures(snapshot, () => pushSnapshot());
+				} else {
+					const [layerId, indices] = [...snapshot.entries()][0];
+					extractSelectedFeatures(layerId, indices, () => pushSnapshot());
+				}
+			}
+		}
+		window.addEventListener('keydown', handleKeyDown);
+		return () => window.removeEventListener('keydown', handleKeyDown);
 	});
 
 	// Observe container size and update width/height.
@@ -893,33 +1187,85 @@
 			ctx.globalAlpha = 1;
 		}
 
+		ctx.globalAlpha = 1;
+		ctx.setLineDash([]);
+
+		// Read CSS tokens once per paint frame so highlight colors stay in sync
+		// with the design system without hardcoding values.
+		const highlightCss    = getComputedStyle(canvasEl!);
+		const accentColor     = highlightCss.getPropertyValue('--color-accent').trim();
+		const surfaceSecColor = highlightCss.getPropertyValue('--color-surface-secondary').trim();
+		const borderColor     = highlightCss.getPropertyValue('--color-border').trim();
+
+		// Hover pass — weight/size change only, original colors preserved.
+		if (toolState.active === 'select' && hoveredFeature) {
+			const isSelected = selection.features.get(hoveredFeature.layerId)?.has(hoveredFeature.featureIndex) ?? false;
+			if (!isSelected) {
+				drawFeatureHighlight(
+					ctx,
+					hoveredFeature.layerId,
+					hoveredFeature.featureIndex,
+					surfaceSecColor,  // polygon fill overlay (grey tint)
+					'',               // ignored — useLayerStyle reads layer.style.stroke
+					0.5,              // polygon fill opacity
+					3 / mapScale,     // thicker stroke for lines/outlines
+					2,                // point extraRadius
+					true,             // useLayerStyle — keep original stroke/point colors
+				);
+			}
+		}
+
+		// Selection pass — accent green, thicker strokes, bigger points.
+		for (const [layerId, featureIndices] of selection.features) {
+			for (const fi of featureIndices) {
+				drawFeatureHighlight(
+					ctx,
+					layerId,
+					fi,
+					accentColor,
+					accentColor,
+					0.25,         // polygon fill opacity
+					4 / mapScale, // noticeably thick for lines
+					5,            // point extraRadius — dot itself gets bigger
+				);
+			}
+		}
+
 	});
 </script>
 
 <div class="map-canvas" bind:this={containerEl}>
-	<div class="zoom-controls">
-		<button class="zoom-btn" aria-label="Zoom in" onclick={zoomIn}>
-			<MagnifyingGlassPlus size={16} />
-		</button>
-		<button class="zoom-btn" aria-label="Zoom out" onclick={zoomOut}>
-			<MagnifyingGlassMinus size={16} />
-		</button>
-		<div class="zoom-divider"></div>
-		<button class="zoom-btn" aria-label="Fit to extent" onclick={fitToExtent}>
-			<CornersOut size={16} />
-		</button>
+	<div class="bottom-center">
+		<SelectionBar />
+		<MapToolbar />
 	</div>
 
 	<div class="bottom-right-stack">
+		<div class="zoom-controls">
+			<button class="zoom-btn" aria-label="Zoom in" onclick={zoomIn}>
+				<MagnifyingGlassPlus size={16} />
+			</button>
+			<button class="zoom-btn" aria-label="Zoom out" onclick={zoomOut}>
+				<MagnifyingGlassMinus size={16} />
+			</button>
+			<div class="zoom-divider"></div>
+			<button class="zoom-btn" aria-label="Fit to extent" onclick={fitToExtent}>
+				<CornersOut size={16} />
+			</button>
+		</div>
 		<Toaster />
 	</div>
 
 	<canvas
 		bind:this={canvasEl}
 		class:dragging={isDragging}
+		class:select-mode={toolState.active === 'select'}
+		class:feature-hover={toolState.active === 'select' && hoveredFeature !== null}
+		onclick={handleClick}
 		onpointerdown={handlePointerDown}
 		onpointermove={handlePointerMove}
 		onpointerup={handlePointerUp}
+		onpointerleave={() => { hoveredFeature = null; }}
 	></canvas>
 
 </div>
@@ -942,11 +1288,27 @@
 		cursor: grabbing;
 	}
 
-	.zoom-controls {
+	canvas.select-mode {
+		cursor: default;
+	}
+
+	canvas.feature-hover {
+		cursor: pointer;
+	}
+
+	.bottom-center {
 		position: absolute;
-		top: var(--space-m);
-		right: var(--space-m);
+		bottom: var(--space-m);
+		left: 50%;
+		transform: translateX(-50%);
 		z-index: 10;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.zoom-controls {
 		display: flex;
 		flex-direction: column;
 		border: 1px solid var(--color-border);

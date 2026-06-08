@@ -298,7 +298,7 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 	}
 }
 
-export function addUploadedLayer(name: string, topology: Topology, uploadId: string, applyDefaults = true): void {
+export function addUploadedLayer(name: string, topology: Topology, uploadId: string, applyDefaults = true, onComplete?: () => void): void {
 	const id = generateId();
 	// Strip any Svelte reactive Proxy wrapper before the topology enters the pipeline.
 	// Proxies can't be structured-cloned, which causes postMessage to the geo worker to fail.
@@ -317,7 +317,7 @@ export function addUploadedLayer(name: string, topology: Topology, uploadId: str
 		bezierCacheKey: 0,
 	});
 	rawTopologyData.set(id, plainTopology);
-	runLayerPipeline(id, applyDefaults); // resolves as a microtask — layer will be ready almost immediately
+	runLayerPipeline(id, applyDefaults).then(() => onComplete?.());
 }
 
 export function duplicateLayer(id: string): void {
@@ -392,6 +392,108 @@ export function clearLayers(): void {
 	simplifiedTopologyData.clear();
 	workingTopologyData.clear();
 	layers.splice(0, layers.length);
+}
+
+// ---------------------------------------------------------------------------
+// Feature-level operations (delete, extract)
+// ---------------------------------------------------------------------------
+
+// featureIndices contains indices into topology.objects[name].geometries.
+// For homogeneous layers (all non-point or all point) this matches the
+// chunk / hit-decode index directly. Mixed-geometry layers need a proper
+// chunk→feature mapping — tracked as a TODO for the multiselect work.
+
+export function deleteSelectedFeatures(
+	layerId: string,
+	featureIndices: Set<number>,
+	onComplete?: () => void,
+): void {
+	const layer = layers.find((l) => l.id === layerId);
+	const rawTopo = rawTopologyData.get(layerId);
+	if (!layer || !rawTopo) return;
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const newTopo = JSON.parse(JSON.stringify(rawTopo)) as typeof rawTopo;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const anyTopo = newTopo as any;
+	const objectName = Object.keys(anyTopo.objects)[0];
+	anyTopo.objects[objectName].geometries = anyTopo.objects[objectName].geometries
+		.filter((_: unknown, i: number) => !featureIndices.has(i));
+
+	rawTopologyData.set(layerId, newTopo);
+	simplifiedTopologyData.delete(layerId);
+	layer.hasTopology = false;
+	layer.loading = true;
+	runLayerPipeline(layerId, false).then(() => onComplete?.());
+}
+
+export function extractSelectedFeatures(
+	layerId: string,
+	featureIndices: Set<number>,
+	onComplete?: () => void,
+): void {
+	const layer = layers.find((l) => l.id === layerId);
+	const rawTopo = rawTopologyData.get(layerId);
+	if (!layer || !rawTopo) return;
+
+	// Clone and keep only the selected geometries for the new layer.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const extractedTopo = JSON.parse(JSON.stringify(rawTopo)) as typeof rawTopo;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const extractedAny = extractedTopo as any;
+	const objectName = Object.keys(extractedAny.objects)[0];
+	extractedAny.objects[objectName].geometries = extractedAny.objects[objectName].geometries
+		.filter((_: unknown, i: number) => featureIndices.has(i));
+
+	// Copy only — features remain in the source layer.
+	addUploadedLayer(`${layer.name} (copy)`, extractedTopo, layer.datasetId, false, onComplete);
+}
+
+export function mergeSelectedFeatures(
+	featuresMap: Map<string, Set<number>>,
+	onComplete?: () => void,
+): void {
+	const inputFiles: Record<string, string> = {};
+	const inputNames: string[] = [];
+	const layerNames: string[] = [];
+
+	for (const [layerId, featureIndices] of featuresMap) {
+		const layer = layers.find((l) => l.id === layerId);
+		const rawTopo = rawTopologyData.get(layerId);
+		if (!layer || !rawTopo) continue;
+
+		layerNames.push(layer.name);
+
+		const clonedTopo = JSON.parse(JSON.stringify(rawTopo)) as typeof rawTopo;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const anyTopo = clonedTopo as any;
+		const objectName = Object.keys(anyTopo.objects)[0];
+		anyTopo.objects[objectName].geometries = anyTopo.objects[objectName].geometries
+			.filter((_: unknown, i: number) => featureIndices.has(i));
+
+		const fileName = `layer${inputNames.length}.topojson`;
+		inputFiles[fileName] = JSON.stringify(clonedTopo);
+		inputNames.push(fileName);
+	}
+
+	if (inputNames.length === 0) return;
+
+	const name =
+		layerNames.length === 2
+			? `${layerNames[0]} + ${layerNames[1]}`
+			: `${layerNames[0]} + ${layerNames.length - 1} more`;
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const ms = (window as any).mapshaper;
+	const cmd = `-i ${inputNames.join(' ')} combine-files -merge-layers force -o output.topojson format=topojson`;
+	ms.applyCommands(cmd, inputFiles).then((output: Record<string, string>) => {
+		const topology = JSON.parse(output['output.topojson']) as Topology;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const arcs = (topology as any).arcs as any[][];
+		console.log('[merge] arcs:', arcs?.length, 'vertices:', arcs?.reduce((s: number, a: any[]) => s + a.length, 0));
+		const uploadId = 'merge_' + Math.random().toString(36).slice(2, 9);
+		addUploadedLayer(name, topology, uploadId, false, onComplete);
+	});
 }
 
 // Signals that a drag-to-reorder gesture is in progress.
