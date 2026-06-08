@@ -228,6 +228,18 @@ export function buildBezierArcs(
 						if (isAnti) {
 							crossLat = antimeridianCrossLat(rl1, rg1[1], rl2, rg2[1]);
 							exitSide = rl1 > 0 ? 1 : -1;
+							// Verify this is a true antimeridian split and not a viewport postclip.
+							// We project a point 0.1° inside the antimeridian (179.9° not 180°,
+							// because proj() clips points exactly on the boundary and returns null).
+							// For a real crossing the theoretical point is very close to the actual
+							// D3 exit; for a viewport clip (e.g. Antarctica near the south pole,
+							// where vertices straddle ±180° but the arc goes over the pole) the
+							// theoretical point is off-screen (proj returns null) or far away.
+							const theoreticalGeo = rotFn.invert([exitSide * 179.9, crossLat] as [number, number]);
+							const theoreticalPx = theoreticalGeo ? proj(theoreticalGeo as [number, number]) : null;
+							if (!theoreticalPx || Math.hypot(theoreticalPx[0] - exitX, theoreticalPx[1] - exitY) >= 10) {
+								isAnti = false;
+							}
 						}
 					}
 					if (isAnti) {
@@ -384,7 +396,7 @@ function traceAntimeridianBoundary(
 	viewport?: [number, number]
 ): void {
 	const EPS    = 0.01; // stay just inside ±180 to avoid boundary instability
-	const STEP   = 0.5;  // degrees latitude per sample (~1px at typical world scale)
+	const STEP   = 0.1;  // degrees latitude per sample
 	const MARGIN = 4;    // px — allow fractional overhang at the canvas edge
 	const rotFn  = d3.geoRotation(proj.rotate());
 	// Use the actual canvas dimensions when available; fall back to the projection's
@@ -428,7 +440,7 @@ function traceAntimeridianBoundary(
 		const pts1 = trySweep(exitLon, fromLat, pole);
 		const pts2 = trySweep(entryLon, pole, toLat);
 		console.log(`  opp-side pole=${pole} pts1=${pts1 === null ? 'NULL' : pts1.length} pts2=${pts2 === null ? 'NULL' : pts2.length}`);
-		if (pts1 && pts2) {
+		if (pts1?.length && pts2?.length) {
 			const polePt = proj(rotFn.invert([exitLon, pole] as [number, number]) as [number, number]);
 			if (polePt && isFinite(polePt[0]) && isFinite(polePt[1]) &&
 				polePt[0] > -MARGIN && polePt[0] < vpW + MARGIN &&
