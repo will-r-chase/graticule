@@ -2,7 +2,8 @@
 	import ConfirmModal from '$lib/components/ui/ConfirmModal.svelte';
 	import Modal from '$lib/components/ui/Modal.svelte';
 	import ExportModal from './ExportModal.svelte';
-	import MappyMascot from './MappyMascot.svelte';
+	// import MappyMascot from './MappyMascot.svelte'; // kept for potential easter egg reuse
+	import GraticuleLogo from './GraticuleLogo.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
 	import { Warning, GithubLogo } from 'phosphor-svelte';
 	import { prepareProject, downloadProject, loadProject, validateProject, formatBytes } from '$lib/utils/project';
@@ -91,7 +92,8 @@
 
 <header class="top-chrome">
 	<div class="brand-group">
-		<MappyMascot />
+		<!-- <MappyMascot /> -->
+		<GraticuleLogo size={60} />
 		<h2 class="brand">Graticule</h2>
 		<span class="beta-tag mono-small">Beta</span>
 	</div>
