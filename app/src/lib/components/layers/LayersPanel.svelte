@@ -7,12 +7,16 @@
 	import LayerItem from './LayerItem.svelte';
 	import FeaturesPanel from './FeaturesPanel.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
-	import { openFeaturesTable } from '$lib/stores/featuresTable.svelte';
+	import { featuresTable, openFeaturesTable, closeFeaturesTable } from '$lib/stores/featuresTable.svelte';
 	import { Table } from 'phosphor-svelte';
 
-	function openTableDefault(): void {
-		const first = layers.find(l => l.hasTopology);
-		if (first) openFeaturesTable(first.id);
+	function toggleTable(): void {
+		if (featuresTable.open) {
+			closeFeaturesTable();
+		} else {
+			const first = layers.find(l => l.hasTopology);
+			if (first) openFeaturesTable(first.id);
+		}
 	}
 
 	// Track which layer's style panel is open. Stored here (not inside the
@@ -112,8 +116,14 @@
 		<div class="features-section">
 			<div class="panel-header features-header">
 				<h3>Features</h3>
-				<button class="open-table-btn" onclick={openTableDefault} aria-label="Open features table">
-					<Table size={14} />
+				<button
+					class="icon-btn"
+					class:active={featuresTable.open}
+					title="Features table"
+					aria-label="Toggle features table"
+					onclick={toggleTable}
+				>
+					<Table size={16} />
 				</button>
 			</div>
 			<FeaturesPanel />
@@ -160,23 +170,27 @@
 		justify-content: space-between;
 	}
 
-	.open-table-btn {
+	.icon-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 24px;
-		height: 24px;
-		background: none;
+		width: 28px;
+		height: 28px;
 		border: none;
+		background: transparent;
 		border-radius: var(--radius);
 		cursor: pointer;
-		color: var(--color-text-tertiary);
+		padding: 0;
+		color: var(--color-icon-primary);
 		flex-shrink: 0;
 	}
 
-	.open-table-btn:hover {
-		background: var(--color-surface-secondary);
-		color: var(--color-text-primary);
+	.icon-btn:hover {
+		background-color: var(--color-surface-tertiary);
+	}
+
+	.icon-btn.active {
+		background-color: var(--color-accent-subtle);
 	}
 
 	.empty-state {
