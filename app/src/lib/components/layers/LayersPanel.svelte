@@ -186,7 +186,7 @@
 	}
 
 	.icon-btn:hover {
-		background-color: var(--color-surface-tertiary);
+		background-color: var(--color-surface-secondary);
 	}
 
 	.icon-btn.active {
