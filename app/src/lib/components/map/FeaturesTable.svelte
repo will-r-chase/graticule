@@ -2,8 +2,10 @@
 	import { featuresTable, closeFeaturesTable } from '$lib/stores/featuresTable.svelte';
 	import { layers, workingTopologyData } from '$lib/stores/layers.svelte';
 	import { selection, selectFeature } from '$lib/stores/selection.svelte';
-	import { X, HashStraight, TextT, CircleHalf, Empty, Question } from 'phosphor-svelte';
+	import { X, HashStraight, TextT, CircleHalf, Empty, Question, Plus } from 'phosphor-svelte';
+	import { tick } from 'svelte';
 	import Checkbox from '$lib/components/ui/Checkbox.svelte';
+	import DropdownMenu from '$lib/components/ui/DropdownMenu.svelte';
 
 	// Scroll shadow state — tracks whether there's more content to scroll to.
 	let tableScrollEl = $state<HTMLDivElement | null>(null);
@@ -105,6 +107,31 @@
 	let columns = $state<Column[]>([]);
 	let rows = $state<Row[]>([]);
 
+	// Which insert zone is currently hovered (index = insert before that column index;
+	// columns.length = insert at end).
+	let hoveredInsert = $state<number | null>(null);
+
+	// Which cell / column header is currently in edit mode (double-click to enter).
+	let editingCell = $state<{ rowIndex: number; key: string } | null>(null);
+	let editingColIdx = $state<number | null>(null);
+
+	// Column selection, hover, + context menu.
+	let selectedColKey = $state<string | null>(null);
+	let hoveredColKey = $state<string | null>(null);
+	let contextMenu = $state<{ x: number; y: number; colKey: string } | null>(null);
+
+	// Close context menu on any document click while it's open.
+	$effect(() => {
+		if (!contextMenu) return;
+		function close() { contextMenu = null; }
+		document.addEventListener('click', close);
+		document.addEventListener('contextmenu', close);
+		return () => {
+			document.removeEventListener('click', close);
+			document.removeEventListener('contextmenu', close);
+		};
+	});
+
 	$effect(() => {
 		columns = tableData.columns.map(c => ({ ...c }));
 		rows = tableData.rows.map(r => ({ index: r.index, properties: { ...r.properties } }));
@@ -113,14 +140,21 @@
 	// ── Cell editing ───────────────────────────────────────────────────────────
 
 	function saveCell(featureIndex: number, key: string, rawValue: string): void {
-		const col = columns.find(c => c.key === key);
-		let parsed: unknown = rawValue;
-		if (col?.type === 'number') {
-			const n = Number(rawValue);
-			parsed = isNaN(n) ? rawValue : n;
-		} else if (col?.type === 'boolean') {
-			if (rawValue.toLowerCase() === 'true') parsed = true;
-			else if (rawValue.toLowerCase() === 'false') parsed = false;
+		// Parse liberally — try number, boolean, then fall back to string / null.
+		let parsed: unknown;
+		if (rawValue === '') {
+			parsed = null;
+		} else {
+			const asNum = Number(rawValue);
+			if (!isNaN(asNum)) {
+				parsed = asNum;
+			} else if (rawValue.toLowerCase() === 'true') {
+				parsed = true;
+			} else if (rawValue.toLowerCase() === 'false') {
+				parsed = false;
+			} else {
+				parsed = rawValue;
+			}
 		}
 
 		const row = rows.find(r => r.index === featureIndex);
@@ -133,7 +167,143 @@
 		if (!topo) return;
 		const objectName = Object.keys(topo.objects)[0];
 		const geom = topo.objects[objectName]?.geometries?.[featureIndex];
-		if (geom?.properties) geom.properties[key] = parsed;
+		if (geom) {
+			if (!geom.properties) geom.properties = {};
+			geom.properties[key] = parsed;
+		}
+
+		// Re-infer column type from all row values now that one cell changed.
+		const colIdx = columns.findIndex(c => c.key === key);
+		if (colIdx >= 0) {
+			const values = rows.map(r => r.properties[key] ?? null);
+			columns[colIdx] = { ...columns[colIdx], type: inferType(values) };
+		}
+	}
+
+	// ── Column paste (TSV from spreadsheet) ───────────────────────────────────
+
+	function handleCellPaste(e: ClipboardEvent, startFeatureIndex: number, key: string): void {
+		const text = e.clipboardData?.getData('text');
+		if (!text) return;
+		const lines = text.split(/\r?\n/).filter(l => l !== '');
+		if (lines.length <= 1) return; // single value — let browser handle it
+		e.preventDefault();
+		const startIdx = rows.findIndex(r => r.index === startFeatureIndex);
+		if (startIdx === -1) return;
+		for (let i = 0; i < lines.length; i++) {
+			const rowIdx = startIdx + i;
+			if (rowIdx >= rows.length) break;
+			// For TSV rows take only the first tab-separated column.
+			const cellValue = lines[i].split('\t')[0];
+			saveCell(rows[rowIdx].index, key, cellValue);
+		}
+	}
+
+	// ── Insert column ──────────────────────────────────────────────────────────
+
+	async function insertColumn(beforeIndex: number): Promise<void> {
+		// Find a unique default name.
+		let n = 1;
+		while (columns.some(c => c.key === `property_${n}`)) n++;
+		const newKey = `property_${n}`;
+
+		// Insert into local columns array.
+		const newCol: Column = { key: newKey, type: 'null' };
+		columns = [...columns.slice(0, beforeIndex), newCol, ...columns.slice(beforeIndex)];
+
+		// Add null value to every local row.
+		for (const row of rows) {
+			row.properties[newKey] = null;
+		}
+
+		// Write through to the working topology.
+		const layerId = featuresTable.activeLayerId;
+		if (layerId) {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const topo = workingTopologyData.get(layerId) as any;
+			if (topo) {
+				const objectName = Object.keys(topo.objects)[0];
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				for (const geom of topo.objects[objectName]?.geometries ?? [] as any[]) {
+					if (!geom.properties) geom.properties = {};
+					geom.properties[newKey] = null;
+				}
+			}
+		}
+
+		// Set edit mode before tick so the input renders without readonly, then focus.
+		editingColIdx = beforeIndex;
+		await tick();
+		const input = document.querySelector<HTMLInputElement>(`input[data-col-key="${newKey}"]`);
+		if (input) { input.focus(); input.select(); }
+	}
+
+	// ── Column operations (context menu) ─────────────────────────────────────
+
+	function deleteColumn(key: string): void {
+		columns = columns.filter(c => c.key !== key);
+		for (const row of rows) delete row.properties[key];
+
+		const layerId = featuresTable.activeLayerId;
+		if (layerId) {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const topo = workingTopologyData.get(layerId) as any;
+			if (topo) {
+				const objectName = Object.keys(topo.objects)[0];
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				for (const geom of topo.objects[objectName]?.geometries ?? [] as any[]) {
+					if (geom.properties) delete geom.properties[key];
+				}
+			}
+		}
+		if (selectedColKey === key) selectedColKey = null;
+		contextMenu = null;
+	}
+
+	function duplicateColumn(key: string): void {
+		const sourceCol = columns.find(c => c.key === key);
+		if (!sourceCol) return;
+		let newKey = `${key}_copy`;
+		let n = 2;
+		while (columns.some(c => c.key === newKey)) newKey = `${key}_copy_${n++}`;
+
+		const sourceIdx = columns.findIndex(c => c.key === key);
+		columns = [
+			...columns.slice(0, sourceIdx + 1),
+			{ key: newKey, type: sourceCol.type },
+			...columns.slice(sourceIdx + 1),
+		];
+		for (const row of rows) row.properties[newKey] = row.properties[key] ?? null;
+
+		const layerId = featuresTable.activeLayerId;
+		if (layerId) {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const topo = workingTopologyData.get(layerId) as any;
+			if (topo) {
+				const objectName = Object.keys(topo.objects)[0];
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				for (const geom of topo.objects[objectName]?.geometries ?? [] as any[]) {
+					if (geom.properties) geom.properties[newKey] = geom.properties[key] ?? null;
+				}
+			}
+		}
+		contextMenu = null;
+	}
+
+	function copyColumnData(key: string): void {
+		const values = rows.map(r => String(r.properties[key] ?? ''));
+		navigator.clipboard.writeText(values.join('\n'));
+		contextMenu = null;
+	}
+
+	async function renameColumn(key: string): Promise<void> {
+		contextMenu = null;
+		const idx = columns.findIndex(c => c.key === key);
+		if (idx === -1) return;
+		editingColIdx = idx;
+		await tick();
+		const input = document.querySelector<HTMLInputElement>(`input[data-col-key="${key}"]`);
+		if (input) { input.focus(); input.select(); }
 	}
 
 	// ── Column name editing ────────────────────────────────────────────────────
@@ -206,7 +376,7 @@
 	}
 </script>
 
-<div class="features-table">
+<div class="features-table" onclick={() => { selectedColKey = null; contextMenu = null; }}>
 	<!-- Header: layer tabs + dismiss button -->
 	<div class="table-header">
 		<div class="tabs">
@@ -236,6 +406,17 @@
 		<div class="scroll-fade-bottom" aria-hidden="true"></div>
 	{/if}
 
+	<!-- Column context menu -->
+	{#if contextMenu}
+		<DropdownMenu top={contextMenu.y} left={contextMenu.x}>
+			<button class="dropdown-item body-small" onclick={() => renameColumn(contextMenu!.colKey)}>Rename</button>
+			<button class="dropdown-item body-small" onclick={() => duplicateColumn(contextMenu!.colKey)}>Duplicate</button>
+			<button class="dropdown-item body-small" onclick={() => copyColumnData(contextMenu!.colKey)}>Copy column data</button>
+			<div class="dropdown-divider"></div>
+			<button class="dropdown-item body-small danger" onclick={() => deleteColumn(contextMenu!.colKey)}>Delete column</button>
+		</DropdownMenu>
+	{/if}
+
 	<!-- Table body -->
 	<div class="table-scroll" bind:this={tableScrollEl}>
 		{#if columns.length === 0}
@@ -253,7 +434,38 @@
 							/>
 						</th>
 						{#each columns as col, i (col.key)}
-							<th>
+							<!-- Thin insert zone — hover reveals the + button -->
+							<th
+								class="col-insert-zone"
+								class:hovered={hoveredInsert === i}
+								onmouseenter={() => { hoveredInsert = i; }}
+								onmouseleave={() => { hoveredInsert = null; }}
+							>
+								<button
+									class="insert-col-btn"
+									onclick={() => insertColumn(i)}
+									tabindex="-1"
+									aria-label="Insert column"
+								>
+									<Plus size={12} />
+								</button>
+							</th>
+							<th
+								class:col-selected={selectedColKey === col.key}
+								onclick={(e) => {
+									e.stopPropagation();
+									selectedColKey = selectedColKey === col.key ? null : col.key;
+									contextMenu = null;
+								}}
+								oncontextmenu={(e) => {
+									e.preventDefault();
+									e.stopPropagation();
+									selectedColKey = col.key;
+									contextMenu = { x: e.clientX, y: e.clientY, colKey: col.key };
+								}}
+								onmouseenter={() => { hoveredColKey = col.key; }}
+								onmouseleave={() => { hoveredColKey = null; }}
+							>
 								<div class="col-header">
 									<span class="col-icon">
 										{#if col.type === 'number'}
@@ -271,12 +483,22 @@
 									<input
 										class="col-name-input"
 										type="text"
+										data-col-key={col.key}
 										value={col.key}
-										onblur={(e) => saveColumnName(i, (e.target as HTMLInputElement).value)}
+										readonly={editingColIdx !== i}
+										ondblclick={(e) => {
+											editingColIdx = i;
+											(e.target as HTMLInputElement).select();
+										}}
+										onblur={(e) => {
+											saveColumnName(i, (e.target as HTMLInputElement).value);
+											editingColIdx = null;
+										}}
 										onkeydown={(e) => {
 											if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
 											if (e.key === 'Escape') {
 												(e.target as HTMLInputElement).value = col.key;
+												editingColIdx = null;
 												(e.target as HTMLInputElement).blur();
 											}
 										}}
@@ -285,6 +507,17 @@
 								</div>
 							</th>
 						{/each}
+						<!-- Persistent add-column button at the end -->
+						<th class="col-add-end">
+							<button
+								class="add-col-btn"
+								onclick={() => insertColumn(columns.length)}
+								aria-label="Add column"
+								title="Add column"
+							>
+								<Plus size={11} weight="bold" />
+							</button>
+						</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -297,16 +530,30 @@
 								/>
 							</td>
 							{#each columns as col (col.key)}
-								<td>
+								<td class="col-insert-zone"></td>
+								<td
+									class:col-hovered={hoveredColKey === col.key}
+									class:col-selected={selectedColKey === col.key}
+								>
 									<input
 										type="text"
 										class="cell-input body-small"
 										value={String(row.properties[col.key] ?? '')}
-										onblur={(e) => saveCell(row.index, col.key, (e.target as HTMLInputElement).value)}
+										readonly={!(editingCell?.rowIndex === row.index && editingCell?.key === col.key)}
+										ondblclick={(e) => {
+											editingCell = { rowIndex: row.index, key: col.key };
+											(e.target as HTMLInputElement).select();
+										}}
+										onblur={(e) => {
+											saveCell(row.index, col.key, (e.target as HTMLInputElement).value);
+											editingCell = null;
+										}}
 										onkeydown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+										onpaste={(e) => handleCellPaste(e, row.index, col.key)}
 									/>
 								</td>
 							{/each}
+							<td class="col-add-end"></td>
 						</tr>
 					{/each}
 				</tbody>
@@ -448,6 +695,23 @@
 		background: var(--color-surface-primary);
 	}
 
+	/* Column header hover + selected states */
+	thead th:not(.col-checkbox):not(.col-insert-zone):not(.col-add-end) {
+		cursor: pointer;
+	}
+
+	thead th:not(.col-checkbox):not(.col-insert-zone):not(.col-add-end):not(.col-selected):hover {
+		background: var(--color-surface-secondary);
+	}
+
+	thead th.col-selected {
+		background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface-primary));
+	}
+
+	thead th.col-selected:hover {
+		background: color-mix(in srgb, var(--color-accent) 14%, var(--color-surface-primary));
+	}
+
 	.col-header {
 		display: flex;
 		align-items: center;
@@ -495,7 +759,7 @@
 		outline: none;
 		padding: 2px 0;
 		margin: 0;
-		cursor: default;
+		cursor: pointer;
 		width: 100%;
 		min-width: 0;
 		font-family: var(--font-mono);
@@ -506,7 +770,11 @@
 		line-height: 18px;
 	}
 
-	.col-name-input:focus {
+	.col-name-input:not([readonly]) {
+		cursor: text;
+	}
+
+	.col-name-input:not([readonly]):focus {
 		cursor: text;
 		background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface-primary));
 		outline: 1px solid var(--color-accent);
@@ -570,10 +838,113 @@
 		cursor: default;
 	}
 
-	.cell-input:focus {
+	.cell-input:not([readonly]):focus {
 		cursor: text;
 		background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface-primary));
 		outline: 1px solid var(--color-accent);
 		outline-offset: -1px;
+	}
+
+	/* ── Column insert zones ──────────────────────────────────────────── */
+
+	th.col-insert-zone,
+	td.col-insert-zone {
+		width: 20px;
+		min-width: 20px;
+		padding: 0;
+		position: relative;
+	}
+
+	th.col-insert-zone {
+		overflow: visible;
+		z-index: 2;
+	}
+
+	/* Vertical line: starts just below the + icon, extends down into the table body.
+	   Anchored to the sticky th so it always covers the visible rows below the header. */
+	th.col-insert-zone.hovered::before {
+		content: '';
+		position: absolute;
+		left: 50%;
+		top: calc(50% + 9px); /* bottom edge of the 18px + button */
+		height: 300px;
+		width: 1px;
+		background: var(--color-text-tertiary);
+		transform: translateX(-50%);
+		pointer-events: none;
+	}
+
+	/* The hoverable + icon that sits centred in the header zone — no circle */
+	.insert-col-btn {
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		width: 18px;
+		height: 18px;
+		border: none;
+		background: none;
+		color: var(--color-text-tertiary);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		padding: 0;
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 100ms ease;
+		z-index: 20;
+	}
+
+	th.col-insert-zone.hovered .insert-col-btn {
+		opacity: 1;
+		pointer-events: auto;
+	}
+
+	/* ── Add-column button at the end of the header ───────────────────── */
+
+	th.col-add-end,
+	td.col-add-end {
+		width: 40px;
+		min-width: 40px;
+		padding: 0;
+		text-align: center;
+		vertical-align: middle;
+	}
+
+	.add-col-btn {
+		width: 24px;
+		height: 24px;
+		border-radius: var(--radius);
+		border: none;
+		background: none;
+		color: var(--color-text-tertiary);
+		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		transition: background 80ms ease, color 80ms ease;
+	}
+
+	.add-col-btn:hover {
+		background: var(--color-surface-secondary);
+		color: var(--color-text-primary);
+	}
+
+	/* ── Column body cell: hover + selected states ────────────────────── */
+	/* These come after the row rules intentionally — same specificity,
+	   source order ensures column state wins when both apply. */
+
+	tbody td.col-hovered {
+		background: var(--color-surface-secondary);
+	}
+
+	tbody td.col-selected {
+		background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface-primary));
+	}
+
+	tbody td.col-selected.col-hovered {
+		background: color-mix(in srgb, var(--color-accent) 14%, var(--color-surface-primary));
 	}
 </style>
