@@ -19,8 +19,10 @@
 	import Toaster from '$lib/components/ui/Toaster.svelte';
 	import MapToolbar from '$lib/components/map/MapToolbar.svelte';
 	import SelectionBar from '$lib/components/map/SelectionBar.svelte';
+	import FeaturesTable from '$lib/components/map/FeaturesTable.svelte';
 	import { MagnifyingGlassPlus, MagnifyingGlassMinus, CornersOut } from 'phosphor-svelte';
 	import { computeFeatureBboxes } from '$lib/utils/featureBbox';
+	import { featuresTable } from '$lib/stores/featuresTable.svelte';
 
 	// Merge core and extended projection namespaces so we can look up any
 	// projection by its function name regardless of which package it comes from.
@@ -1344,57 +1346,70 @@
 	});
 </script>
 
-<div class="map-canvas" bind:this={containerEl}>
-	<div class="bottom-center">
-		<SelectionBar />
-		<MapToolbar />
-	</div>
-
-	<div class="bottom-right-stack">
-		<div class="zoom-controls">
-			<button class="zoom-btn" aria-label="Zoom in" onclick={zoomIn}>
-				<MagnifyingGlassPlus size={16} />
-			</button>
-			<button class="zoom-btn" aria-label="Zoom out" onclick={zoomOut}>
-				<MagnifyingGlassMinus size={16} />
-			</button>
-			<div class="zoom-divider"></div>
-			<button class="zoom-btn" aria-label="Fit to extent" onclick={fitToExtent}>
-				<CornersOut size={16} />
-			</button>
+<div class="map-canvas">
+	<div class="canvas-area" class:table-open={featuresTable.open} bind:this={containerEl}>
+		<div class="bottom-center">
+			<SelectionBar />
+			<MapToolbar />
 		</div>
-		<Toaster />
+
+		<div class="bottom-right-stack">
+			<div class="zoom-controls">
+				<button class="zoom-btn" aria-label="Zoom in" onclick={zoomIn}>
+					<MagnifyingGlassPlus size={16} />
+				</button>
+				<button class="zoom-btn" aria-label="Zoom out" onclick={zoomOut}>
+					<MagnifyingGlassMinus size={16} />
+				</button>
+				<div class="zoom-divider"></div>
+				<button class="zoom-btn" aria-label="Fit to extent" onclick={fitToExtent}>
+					<CornersOut size={16} />
+				</button>
+			</div>
+			<Toaster />
+		</div>
+
+		{#if isMarqueeDragging && marqueeStart && marqueeCurrent}
+		<div
+			class="marquee"
+			style:left="{Math.min(marqueeStart.x, marqueeCurrent.x)}px"
+			style:top="{Math.min(marqueeStart.y, marqueeCurrent.y)}px"
+			style:width="{Math.abs(marqueeCurrent.x - marqueeStart.x)}px"
+			style:height="{Math.abs(marqueeCurrent.y - marqueeStart.y)}px"
+		></div>
+		{/if}
+
+		<canvas
+			bind:this={canvasEl}
+			class:dragging={isDragging}
+			class:select-mode={toolState.active === 'select'}
+			class:feature-hover={toolState.active === 'select' && hoveredFeature.value !== null}
+			onclick={handleClick}
+			onpointerdown={handlePointerDown}
+			onpointermove={handlePointerMove}
+			onpointerup={handlePointerUp}
+			onpointerleave={() => { hoveredFeature.value = null; }}
+		></canvas>
+
+		{#if featuresTable.open}
+			<FeaturesTable />
+		{/if}
 	</div>
-
-	{#if isMarqueeDragging && marqueeStart && marqueeCurrent}
-	<div
-		class="marquee"
-		style:left="{Math.min(marqueeStart.x, marqueeCurrent.x)}px"
-		style:top="{Math.min(marqueeStart.y, marqueeCurrent.y)}px"
-		style:width="{Math.abs(marqueeCurrent.x - marqueeStart.x)}px"
-		style:height="{Math.abs(marqueeCurrent.y - marqueeStart.y)}px"
-	></div>
-	{/if}
-
-	<canvas
-		bind:this={canvasEl}
-		class:dragging={isDragging}
-		class:select-mode={toolState.active === 'select'}
-		class:feature-hover={toolState.active === 'select' && hoveredFeature.value !== null}
-		onclick={handleClick}
-		onpointerdown={handlePointerDown}
-		onpointermove={handlePointerMove}
-		onpointerup={handlePointerUp}
-		onpointerleave={() => { hoveredFeature.value = null; }}
-	></canvas>
-
 </div>
 
 <style>
 	.map-canvas {
-		position: relative;
 		flex: 1;
 		height: 100%;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	.canvas-area {
+		position: relative;
+		flex: 1;
+		min-height: 0;
 		background-color: var(--grey-50);
 		overflow: hidden;
 	}
@@ -1434,6 +1449,11 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 6px;
+		transition: bottom 150ms ease;
+	}
+
+	.canvas-area.table-open .bottom-center {
+		bottom: calc(260px + var(--space-m));
 	}
 
 	.zoom-controls {
@@ -1476,6 +1496,11 @@
 		flex-direction: column;
 		align-items: flex-end;
 		gap: var(--space-s);
+		transition: bottom 150ms ease;
+	}
+
+	.canvas-area.table-open .bottom-right-stack {
+		bottom: calc(260px + var(--space-m));
 	}
 
 </style>

@@ -3,6 +3,13 @@
 	import { tooltip } from '$lib/actions/tooltip';
 	import { selection } from '$lib/stores/selection.svelte';
 	import { layers, workingTopologyData } from '$lib/stores/layers.svelte';
+	import { X } from 'phosphor-svelte';
+
+	function clearLayerSelection(layerId: string): void {
+		const next = new Map(selection.features);
+		next.delete(layerId);
+		selection.features = next;
+	}
 
 	const MAX_HOVERED_PROPS = 3;
 
@@ -76,6 +83,7 @@
 	}
 
 	interface LayerGroup {
+		layerId: string;
 		layerName: string;
 		featureNames: string[];
 	}
@@ -94,7 +102,7 @@
 			const featureNames = topo
 				? [...indices].map((i) => getDisplayName(topo, i))
 				: [...indices].map((i) => `Feature ${i + 1}`);
-			groups.push({ layerName: layer.name, featureNames });
+			groups.push({ layerId, layerName: layer.name, featureNames });
 		}
 		return groups;
 	});
@@ -118,9 +126,18 @@
 		{:else}
 			<div class="feature-list">
 				{#each layerGroups as group}
-					<div class="feature-card" use:tooltip={{ text: group.featureNames.join(', '), placement: 'left' }}>
-						<span class="feature-layer">{group.layerName}</span>
-						<span class="feature-name">{group.featureNames.join(', ')}</span>
+					<div class="feature-card">
+						<div class="card-info" use:tooltip={{ text: group.featureNames.join(', '), placement: 'left' }}>
+							<span class="feature-layer">{group.layerName}</span>
+							<span class="feature-name">{group.featureNames.join(', ')}</span>
+						</div>
+						<button
+							class="clear-btn"
+							onclick={() => clearLayerSelection(group.layerId)}
+							aria-label="Clear selection for {group.layerName}"
+						>
+							<X size={11} weight="bold" />
+						</button>
 					</div>
 				{/each}
 			</div>
@@ -130,7 +147,7 @@
 	{#if hoveredInfo}
 		<div class="section">
 			<h4 class="section-heading">Hovered</h4>
-			<div class="feature-card">
+			<div class="feature-card hovered">
 				<span class="feature-layer">{hoveredInfo.layerName}</span>
 				<span class="feature-name">{hoveredInfo.displayName}</span>
 				{#if hoveredInfo.shownProps.length > 0}
@@ -184,11 +201,45 @@
 
 	.feature-card {
 		display: flex;
-		flex-direction: column;
+		flex-direction: row;
+		align-items: center;
 		gap: 0;
-		padding: var(--space-s) var(--space-m);
 		background: var(--color-surface-secondary);
 		border-radius: var(--radius);
+		overflow: hidden;
+	}
+
+	.feature-card.hovered {
+		flex-direction: column;
+		align-items: stretch;
+		padding: var(--space-s) var(--space-m);
+	}
+
+	.card-info {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		padding: var(--space-s) var(--space-m);
+	}
+
+	.clear-btn {
+		flex-shrink: 0;
+		align-self: stretch;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		background: none;
+		border: none;
+		border-left: 1px solid var(--color-border);
+		cursor: pointer;
+		color: var(--color-text-tertiary);
+	}
+
+	.clear-btn:hover {
+		background: var(--color-surface-tertiary);
+		color: var(--color-text-primary);
 	}
 
 	.feature-layer {

@@ -147,7 +147,7 @@
 
 	.bar-divider {
 		width: 1px;
-		height: 20px;
+		align-self: stretch;
 		background: var(--color-border);
 		flex-shrink: 0;
 	}

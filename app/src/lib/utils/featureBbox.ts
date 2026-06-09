@@ -47,17 +47,30 @@ export function computeFeatureBboxes(topo: any): Array<[number, number, number, 
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const geometries: any[] = topo.objects[objectName].geometries ?? [];
 
+	// When a transform is present the topology is quantized: coordinates are stored
+	// as integers that must be scaled and translated to get real geographic values.
+	// Arcs delta-decode via decodedVertices, but Point/MultiPoint coordinates are
+	// stored as absolute quantized values and need the same scale+translate step.
+	const scale  = topo.transform?.scale     as [number, number] | undefined;
+	const translate = topo.transform?.translate as [number, number] | undefined;
+
+	function dequantize(x: number, y: number): [number, number] {
+		if (!scale || !translate) return [x, y];
+		return [x * scale[0] + translate[0], y * scale[1] + translate[1]];
+	}
+
 	return geometries.map((geom) => {
 		if (!geom) return null;
 
-		// Point geometries carry coordinates directly — no arc references.
+		// Point geometries carry coordinates directly — apply transform if quantized.
 		if (geom.type === 'Point') {
-			const [x, y] = geom.coordinates;
-			return [x, y, x, y] as [number, number, number, number];
+			const [gx, gy] = dequantize(geom.coordinates[0], geom.coordinates[1]);
+			return [gx, gy, gx, gy] as [number, number, number, number];
 		}
 		if (geom.type === 'MultiPoint') {
 			let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-			for (const [x, y] of geom.coordinates) {
+			for (const [rx, ry] of geom.coordinates) {
+				const [x, y] = dequantize(rx, ry);
 				if (x < minX) minX = x; if (x > maxX) maxX = x;
 				if (y < minY) minY = y; if (y > maxY) maxY = y;
 			}

@@ -7,6 +7,13 @@
 	import LayerItem from './LayerItem.svelte';
 	import FeaturesPanel from './FeaturesPanel.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
+	import { openFeaturesTable } from '$lib/stores/featuresTable.svelte';
+	import { Table } from 'phosphor-svelte';
+
+	function openTableDefault(): void {
+		const first = layers.find(l => l.hasTopology);
+		if (first) openFeaturesTable(first.id);
+	}
 
 	// Track which layer's style panel is open. Stored here (not inside the
 	// dndzone subtree) so the ColorPicker is never a descendant of the drag
@@ -103,8 +110,11 @@
 
 	{#if toolState.active === 'select'}
 		<div class="features-section">
-			<div class="panel-header">
+			<div class="panel-header features-header">
 				<h3>Features</h3>
+				<button class="open-table-btn" onclick={openTableDefault} aria-label="Open features table">
+					<Table size={14} />
+				</button>
 			</div>
 			<FeaturesPanel />
 		</div>
@@ -142,6 +152,31 @@
 	.panel-header {
 		padding: var(--space-l) var(--space-l) var(--space-s);
 		flex-shrink: 0;
+	}
+
+	.features-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	.open-table-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		background: none;
+		border: none;
+		border-radius: var(--radius);
+		cursor: pointer;
+		color: var(--color-text-tertiary);
+		flex-shrink: 0;
+	}
+
+	.open-table-btn:hover {
+		background: var(--color-surface-secondary);
+		color: var(--color-text-primary);
 	}
 
 	.empty-state {
