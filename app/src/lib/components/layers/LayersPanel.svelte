@@ -5,6 +5,8 @@
 	import { layers, reorderLayers, layerDrag } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import LayerItem from './LayerItem.svelte';
+	import FeaturesPanel from './FeaturesPanel.svelte';
+	import { toolState } from '$lib/stores/tool.svelte';
 
 	// Track which layer's style panel is open. Stored here (not inside the
 	// dndzone subtree) so the ColorPicker is never a descendant of the drag
@@ -75,29 +77,38 @@
 </script>
 
 <div class="layers-panel">
-	<div class="panel-header">
-		<h3>Layers</h3>
+	<div class="layers-section">
+		<div class="panel-header">
+			<h3>Layers</h3>
+		</div>
+
+		{#if layers.length === 0}
+			<div class="empty-state">
+				<p>No layers yet.</p>
+				<p>Add a dataset from the Data panel.</p>
+			</div>
+		{:else}
+			<div
+				class="layer-list"
+				use:dragHandleZone={{ items: layers, flipDurationMs: 150, dropTargetStyle: {}, dragDisabled: pickerOpen, transformDraggedElement: collapseGhostAccordion }}
+				onconsider={handleConsider}
+				onfinalize={handleFinalize}
+			>
+				{#each layers as layer (layer.id)}
+					<LayerItem {layer} />
+				{/each}
+			</div>
+		{/if}
 	</div>
 
-	{#if layers.length === 0}
-		<div class="empty-state">
-			<p>No layers yet.</p>
-			<p>Add a dataset from the Data panel.</p>
-		</div>
-	{:else}
-		<div
-			class="layer-list"
-			use:dragHandleZone={{ items: layers, flipDurationMs: 150, dropTargetStyle: {}, dragDisabled: pickerOpen, transformDraggedElement: collapseGhostAccordion }}
-			onconsider={handleConsider}
-			onfinalize={handleFinalize}
-		>
-			{#each layers as layer (layer.id)}
-				<LayerItem {layer} />
-			{/each}
+	{#if toolState.active === 'select'}
+		<div class="features-section">
+			<div class="panel-header">
+				<h3>Features</h3>
+			</div>
+			<FeaturesPanel />
 		</div>
 	{/if}
-
-
 </div>
 
 <style>
@@ -108,6 +119,23 @@
 		border-left: 1px solid var(--color-border);
 		display: flex;
 		flex-direction: column;
+		overflow: hidden;
+	}
+
+	.layers-section {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	.features-section {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		border-top: 1px solid var(--color-border);
 		overflow: hidden;
 	}
 

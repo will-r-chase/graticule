@@ -427,6 +427,30 @@ export function deleteSelectedFeatures(
 	runLayerPipeline(layerId, false).then(() => onComplete?.());
 }
 
+function geometryFamily(type: string): string {
+	if (type === 'Polygon' || type === 'MultiPolygon') return 'polygon';
+	if (type === 'LineString' || type === 'MultiLineString') return 'line';
+	if (type === 'Point' || type === 'MultiPoint') return 'point';
+	return 'unknown';
+}
+
+export function isMergeCompatible(featuresMap: Map<string, Set<number>>): boolean {
+	const families = new Set<string>();
+	for (const [layerId, featureIndices] of featuresMap) {
+		const rawTopo = rawTopologyData.get(layerId);
+		if (!rawTopo) continue;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const anyTopo = rawTopo as any;
+		const objectName = Object.keys(anyTopo.objects)[0];
+		const geometries = anyTopo.objects[objectName].geometries;
+		for (const idx of featureIndices) {
+			const type = geometries[idx]?.type;
+			if (type) families.add(geometryFamily(type));
+		}
+	}
+	return families.size <= 1;
+}
+
 export function extractSelectedFeatures(
 	layerId: string,
 	featureIndices: Set<number>,

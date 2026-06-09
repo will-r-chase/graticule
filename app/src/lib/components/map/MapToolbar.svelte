@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Hand, Cursor } from 'phosphor-svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
+	import { tooltip } from '$lib/actions/tooltip';
 </script>
 
 <div class="toolbar">
@@ -9,6 +10,7 @@
 		class:active={toolState.active === 'pan'}
 		aria-label="Pan tool"
 		onclick={() => toolState.active = 'pan'}
+		use:tooltip={{ text: 'Pan', shortcut: 'V', placement: 'up' }}
 	>
 		<Hand size={24} />
 	</button>
@@ -17,6 +19,7 @@
 		class:active={toolState.active === 'select'}
 		aria-label="Select tool"
 		onclick={() => toolState.active = 'select'}
+		use:tooltip={{ text: 'Select', shortcut: 'S', placement: 'up' }}
 	>
 		<Cursor size={24} />
 	</button>

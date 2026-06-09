@@ -2,51 +2,22 @@
 	import type { Dataset } from '$lib/types';
 	import { addLayer, layers } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
-	import { tooltipState } from '$lib/utils/tooltipState';
+	import { tooltip } from '$lib/actions/tooltip';
 	import DatasetTooltip from './DatasetTooltip.svelte';
 
 	let { dataset }: { dataset: Dataset } = $props();
 
-	// True if this dataset is already in the layers list.
 	let added = $derived(layers.some((l) => l.datasetId === dataset.id));
-
-	let hovering = $state(false);
-	let tooltipX = $state(0);
-	let tooltipY = $state(0);
-	let showTimer: ReturnType<typeof setTimeout> | null = null;
-
-	function handleMouseEnter(e: MouseEvent) {
-		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		tooltipX = rect.right + 8;
-		tooltipY = rect.top;
-		tooltipState.onEnter();
-		const delay = tooltipState.delay;
-		showTimer = setTimeout(() => {
-			tooltipState.onShow();
-			hovering = true;
-		}, delay);
-	}
-
-	function handleMouseLeave() {
-		if (showTimer) { clearTimeout(showTimer); showTimer = null; }
-		hovering = false;
-		tooltipState.onHide();
-	}
 </script>
 
 <li
 	class="dataset-item"
-	onmouseenter={handleMouseEnter}
-	onmouseleave={handleMouseLeave}
+	use:tooltip={{ component: DatasetTooltip, props: { dataset }, placement: 'right' }}
 	onclick={() => addLayer(dataset, pushSnapshot, pushSnapshot)}
 >
 	<span class="name">{dataset.name}</span>
 	{#if added}
 		<span class="dot" aria-label="Added to map"></span>
-	{/if}
-
-	{#if hovering}
-		<DatasetTooltip {dataset} x={tooltipX} y={tooltipY} />
 	{/if}
 </li>
 

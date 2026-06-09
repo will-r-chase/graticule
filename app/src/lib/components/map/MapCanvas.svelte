@@ -9,6 +9,7 @@
 	import { layers, workingTopologyData, layerDrag, deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures } from '$lib/stores/layers.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
 	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
+	import { hoveredFeature } from '$lib/stores/hoveredFeature.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
 	import { mapState } from '$lib/stores/mapState.svelte';
@@ -19,6 +20,7 @@
 	import MapToolbar from '$lib/components/map/MapToolbar.svelte';
 	import SelectionBar from '$lib/components/map/SelectionBar.svelte';
 	import { MagnifyingGlassPlus, MagnifyingGlassMinus, CornersOut } from 'phosphor-svelte';
+	import { computeFeatureBboxes } from '$lib/utils/featureBbox';
 
 	// Merge core and extended projection namespaces so we can look up any
 	// projection by its function name regardless of which package it comes from.
@@ -52,7 +54,17 @@
 	let lastPointerX = 0;
 	let lastPointerY = 0;
 
-	let hoveredFeature = $state<{ layerId: string; featureIndex: number } | null>(null);
+	// Marquee selection state.
+	const MARQUEE_THRESHOLD = 4; // px before a pointerdown becomes a marquee rather than a click
+	let isMarqueeDragging = $state(false);
+	let marqueeStart = $state<{ x: number; y: number } | null>(null);
+	let marqueeCurrent = $state<{ x: number; y: number } | null>(null);
+	let marqueePtrStartX = 0; // raw clientX at pointerdown, for threshold check
+	let marqueePtrStartY = 0;
+	let suppressNextClick = false;
+	let preDragSelection = new Map<string, Set<number>>();
+	let cachedBboxes = new Map<string, Array<[number, number, number, number] | null>>();
+
 
 	// Rotation drag tracking (rotate-mode projections only).
 	let localRotate: [number, number, number] = [0, 0, 0];
@@ -270,6 +282,7 @@
 	}
 
 	function handleClick(e: MouseEvent) {
+		if (suppressNextClick) { suppressNextClick = false; return; }
 		if (toolState.active !== 'select') return;
 		if (!hitCanvas || !canvasEl) return;
 
@@ -308,6 +321,59 @@
 		selectFeature(hit.layerId, hit.featureIndex, e.shiftKey);
 	}
 
+	function updateMarqueeSelection(addToExisting: boolean) {
+		if (!marqueeStart || !marqueeCurrent || !projection) return;
+
+		// Marquee bounds in canvas pixel coords.
+		const x1 = Math.min(marqueeStart.x, marqueeCurrent.x);
+		const y1 = Math.min(marqueeStart.y, marqueeCurrent.y);
+		const x2 = Math.max(marqueeStart.x, marqueeCurrent.x);
+		const y2 = Math.max(marqueeStart.y, marqueeCurrent.y);
+
+		// Convert corners to geographic coordinates via the projection inverse.
+		// Null is returned for points outside the projection domain (e.g. back of globe).
+		const corners = (
+			[[x1, y1], [x2, y1], [x1, y2], [x2, y2]] as [number, number][]
+		).map((p) => projection!.invert!(p)).filter((c): c is [number, number] => c !== null);
+
+		if (corners.length === 0) return;
+
+		const geoX1 = Math.min(...corners.map((c) => c[0]));
+		const geoX2 = Math.max(...corners.map((c) => c[0]));
+		const geoY1 = Math.min(...corners.map((c) => c[1]));
+		const geoY2 = Math.max(...corners.map((c) => c[1]));
+
+		const newSelection = new Map<string, Set<number>>();
+
+		for (const layer of layers) {
+			if (!layer.visible || !layer.hasTopology) continue;
+			const bboxes = cachedBboxes.get(layer.id);
+			if (!bboxes) continue;
+
+			const hits = new Set<number>();
+			for (let i = 0; i < bboxes.length; i++) {
+				const bbox = bboxes[i];
+				if (!bbox) continue;
+				const [minLon, minLat, maxLon, maxLat] = bbox;
+				// Overlap: not separated on either axis.
+				if (maxLon >= geoX1 && minLon <= geoX2 && maxLat >= geoY1 && minLat <= geoY2) {
+					hits.add(i);
+				}
+			}
+			if (hits.size > 0) newSelection.set(layer.id, hits);
+		}
+
+		if (addToExisting) {
+			for (const [layerId, indices] of preDragSelection) {
+				const existing = newSelection.get(layerId) ?? new Set<number>();
+				for (const idx of indices) existing.add(idx);
+				newSelection.set(layerId, existing);
+			}
+		}
+
+		selection.features = newSelection;
+	}
+
 	function handlePointerDown(e: PointerEvent) {
 		if (toolState.active === 'pan') {
 			isDragging = true;
@@ -318,11 +384,45 @@
 				lastBuiltRotate = [...projectionStore.rotate]; // reset so delta is measured from drag start
 			}
 			(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+		} else if (toolState.active === 'select' && containerEl) {
+			const containerRect = containerEl.getBoundingClientRect();
+			marqueePtrStartX = e.clientX;
+			marqueePtrStartY = e.clientY;
+			marqueeStart = { x: e.clientX - containerRect.left, y: e.clientY - containerRect.top };
+			marqueeCurrent = { ...marqueeStart };
+			preDragSelection = new Map([...selection.features.entries()].map(([k, v]) => [k, new Set(v)]));
+			// Cache bboxes for all visible layers up front.
+			cachedBboxes = new Map();
+			for (const layer of layers) {
+				if (!layer.visible || !layer.hasTopology) continue;
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				const topo = workingTopologyData.get(layer.id) as any;
+				if (topo) cachedBboxes.set(layer.id, computeFeatureBboxes(topo));
+			}
+			(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 		}
 	}
 
 	function handlePointerMove(e: PointerEvent) {
-		if (toolState.active === 'select' && !isDragging && hitCanvas && canvasEl) {
+		// Promote pointerdown to marquee once the threshold is exceeded.
+		if (marqueeStart && !isMarqueeDragging && !isDragging) {
+			const dx = e.clientX - marqueePtrStartX;
+			const dy = e.clientY - marqueePtrStartY;
+			if (dx * dx + dy * dy > MARQUEE_THRESHOLD * MARQUEE_THRESHOLD) {
+				isMarqueeDragging = true;
+				hoveredFeature.value = null;
+			}
+		}
+
+		// Update marquee rect and live selection.
+		if (isMarqueeDragging && containerEl) {
+			const containerRect = containerEl.getBoundingClientRect();
+			marqueeCurrent = { x: e.clientX - containerRect.left, y: e.clientY - containerRect.top };
+			updateMarqueeSelection(e.shiftKey);
+			return;
+		}
+
+		if (toolState.active === 'select' && !isDragging && !isMarqueeDragging && hitCanvas && canvasEl) {
 			const rect = canvasEl.getBoundingClientRect();
 			const cx = Math.round(e.clientX - rect.left);
 			const cy = Math.round(e.clientY - rect.top);
@@ -343,7 +443,7 @@
 				for (const [key, count] of counts) {
 					if (count > bestCount) { bestCount = count; bestKey = key; }
 				}
-				hoveredFeature = bestKey !== 0 ? (hitDecodeMap.get(bestKey) ?? null) : null;
+				hoveredFeature.value = bestKey !== 0 ? (hitDecodeMap.get(bestKey) ?? null) : null;
 			}
 		}
 
@@ -375,6 +475,16 @@
 	}
 
 	function handlePointerUp() {
+		if (isMarqueeDragging) {
+			isMarqueeDragging = false;
+			suppressNextClick = true;
+		}
+		// Always reset marquee start, whether the drag exceeded the threshold or not.
+		marqueeStart = null;
+		marqueeCurrent = null;
+		cachedBboxes = new Map();
+		preDragSelection = new Map();
+
 		isDragging = false;
 		if (interactionMode === 'rotate') {
 			rotateThrottleActive = false;
@@ -1198,13 +1308,13 @@
 		const borderColor     = highlightCss.getPropertyValue('--color-border').trim();
 
 		// Hover pass — weight/size change only, original colors preserved.
-		if (toolState.active === 'select' && hoveredFeature) {
-			const isSelected = selection.features.get(hoveredFeature.layerId)?.has(hoveredFeature.featureIndex) ?? false;
+		if (toolState.active === 'select' && hoveredFeature.value) {
+			const isSelected = selection.features.get(hoveredFeature.value.layerId)?.has(hoveredFeature.value.featureIndex) ?? false;
 			if (!isSelected) {
 				drawFeatureHighlight(
 					ctx,
-					hoveredFeature.layerId,
-					hoveredFeature.featureIndex,
+					hoveredFeature.value.layerId,
+					hoveredFeature.value.featureIndex,
 					surfaceSecColor,  // polygon fill overlay (grey tint)
 					'',               // ignored — useLayerStyle reads layer.style.stroke
 					0.5,              // polygon fill opacity
@@ -1256,16 +1366,26 @@
 		<Toaster />
 	</div>
 
+	{#if isMarqueeDragging && marqueeStart && marqueeCurrent}
+	<div
+		class="marquee"
+		style:left="{Math.min(marqueeStart.x, marqueeCurrent.x)}px"
+		style:top="{Math.min(marqueeStart.y, marqueeCurrent.y)}px"
+		style:width="{Math.abs(marqueeCurrent.x - marqueeStart.x)}px"
+		style:height="{Math.abs(marqueeCurrent.y - marqueeStart.y)}px"
+	></div>
+	{/if}
+
 	<canvas
 		bind:this={canvasEl}
 		class:dragging={isDragging}
 		class:select-mode={toolState.active === 'select'}
-		class:feature-hover={toolState.active === 'select' && hoveredFeature !== null}
+		class:feature-hover={toolState.active === 'select' && hoveredFeature.value !== null}
 		onclick={handleClick}
 		onpointerdown={handlePointerDown}
 		onpointermove={handlePointerMove}
 		onpointerup={handlePointerUp}
-		onpointerleave={() => { hoveredFeature = null; }}
+		onpointerleave={() => { hoveredFeature.value = null; }}
 	></canvas>
 
 </div>
@@ -1294,6 +1414,14 @@
 
 	canvas.feature-hover {
 		cursor: pointer;
+	}
+
+	.marquee {
+		position: absolute;
+		border: 1.5px solid var(--color-accent);
+		background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+		pointer-events: none;
+		z-index: 5;
 	}
 
 	.bottom-center {

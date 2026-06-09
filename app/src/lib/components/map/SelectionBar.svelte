@@ -1,16 +1,25 @@
 <script lang="ts">
 	import { Trash, StackPlus, X } from 'phosphor-svelte';
 	import { selection, clearSelection } from '$lib/stores/selection.svelte';
-	import { deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures } from '$lib/stores/layers.svelte';
+	import { deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures, isMergeCompatible } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
+	import { tooltip } from '$lib/actions/tooltip';
 
 	const count = $derived(
 		[...selection.features.values()].reduce((sum, s) => sum + s.size, 0)
 	);
 	const isMultiLayer = $derived(selection.features.size > 1);
+	const canMerge = $derived(!isMultiLayer || isMergeCompatible(selection.features));
+
+	const copyTooltipText = $derived(
+		canMerge
+			? (isMultiLayer ? 'Merge to new layer' : 'Copy to new layer')
+			: 'Cannot merge features of different geometry types'
+	);
+	const copyTooltipShortcut = $derived(canMerge ? 'E' : undefined);
 
 	function handleCopyToLayer() {
-		if (count === 0) return;
+		if (!canMerge || count === 0) return;
 		const snapshot = new Map(
 			[...selection.features.entries()].map(([k, v]) => [k, new Set(v)])
 		);
@@ -41,17 +50,33 @@
 
 {#if count > 0}
 <div class="selection-bar">
-	<button class="bar-btn" onclick={handleCopyToLayer} aria-label="Copy to new layer">
+	<button
+		class="bar-btn"
+		onclick={handleCopyToLayer}
+		aria-disabled={!canMerge}
+		aria-label="Copy to new layer"
+		use:tooltip={{ text: copyTooltipText, shortcut: copyTooltipShortcut, placement: 'up' }}
+	>
 		<StackPlus size={16} weight="regular" />
 		<span>{isMultiLayer ? 'Merge to new layer' : 'Copy to layer'}</span>
 	</button>
-	<button class="bar-btn bar-btn--danger" onclick={handleDelete} aria-label="Delete selected features">
+	<button
+		class="bar-btn bar-btn--danger"
+		onclick={handleDelete}
+		aria-label="Delete selected features"
+		use:tooltip={{ text: 'Delete selected', shortcut: 'Del', placement: 'up' }}
+	>
 		<Trash size={16} weight="regular" />
 		<span>Delete</span>
 	</button>
 	<div class="bar-divider"></div>
 	<span class="count">{count} selected</span>
-	<button class="bar-btn bar-btn--icon" onclick={clearSelection} aria-label="Clear selection">
+	<button
+		class="bar-btn bar-btn--icon"
+		onclick={clearSelection}
+		aria-label="Clear selection"
+		use:tooltip={{ text: 'Clear selection', shortcut: 'Esc', placement: 'up' }}
+	>
 		<X size={14} />
 	</button>
 </div>
@@ -91,8 +116,17 @@
 		flex-shrink: 0;
 	}
 
+	.bar-btn[aria-disabled='true'] {
+		opacity: 0.35;
+		cursor: not-allowed;
+	}
+
 	.bar-btn:hover {
 		background: var(--color-surface-secondary);
+	}
+
+	.bar-btn[aria-disabled='true']:hover {
+		background: transparent;
 	}
 
 	.bar-btn--danger:hover {
