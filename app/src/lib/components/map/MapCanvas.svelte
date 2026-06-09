@@ -332,11 +332,25 @@
 		const x2 = Math.max(marqueeStart.x, marqueeCurrent.x);
 		const y2 = Math.max(marqueeStart.y, marqueeCurrent.y);
 
-		// Convert corners to geographic coordinates via the projection inverse.
-		// Null is returned for points outside the projection domain (e.g. back of globe).
-		const corners = (
-			[[x1, y1], [x2, y1], [x1, y2], [x2, y2]] as [number, number][]
-		).map((p) => projection!.invert!(p)).filter((c): c is [number, number] => c !== null);
+		// Sample points along all four edges of the marquee and invert to geographic
+		// coordinates. Sampling densely (rather than just 4 corners) gives a much
+		// better geographic envelope for curved projections — conics, azimuthals,
+		// and the globe — where a screen rectangle's geographic extent bulges well
+		// outside its corner-only bbox.
+		const EDGE_SAMPLES = 20;
+		const screenSamples: [number, number][] = [];
+		for (let i = 0; i <= EDGE_SAMPLES; i++) {
+			const t = i / EDGE_SAMPLES;
+			const mx = x1 + (x2 - x1) * t;
+			const my = y1 + (y2 - y1) * t;
+			screenSamples.push([mx, y1]); // top edge
+			screenSamples.push([mx, y2]); // bottom edge
+			screenSamples.push([x1, my]); // left edge
+			screenSamples.push([x2, my]); // right edge
+		}
+		const corners = screenSamples
+			.map((p) => projection!.invert!(p))
+			.filter((c): c is [number, number] => c !== null);
 
 		if (corners.length === 0) return;
 
