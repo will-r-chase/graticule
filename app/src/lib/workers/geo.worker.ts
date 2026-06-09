@@ -4,7 +4,6 @@ import { feature } from 'topojson-client';
 import type { Topology } from 'topojson-specification';
 import type { WorkerRequest, WorkerResponse, PathCommand, SerializedChunk } from './types';
 import { applyChaikinToTopology } from '../utils/chaikin';
-import { buildAdjacencyGraph, buildChunksBFS, buildChunksHilbert } from '../utils/spatial';
 import { buildBezierArcs, arcRingToPath } from '../utils/bezier';
 import type { PathRecorder } from '../utils/bezier';
 
@@ -75,18 +74,8 @@ class CommandRecorder implements PathRecorder {
 	}
 }
 
-// Chunk groups cache: maps layerId → pre-computed feature groups + the
-// chunking settings they were built with. Adjacency and grouping depend only
-// on topology structure, not on projection or rotation, so they can be built
-// once and reused across all rotation-only rebuilds. The version string
-// captures the settings that affect grouping; a mismatch triggers a rebuild.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const chunkGroupsCache = new Map<string, { groups: any[][], version: string }>();
-
 function handleBuildPaths(msg: Extract<WorkerRequest, { type: 'BUILD_PATHS' }>): SerializedChunk[] {
 	const { id, projId, width, height, rotate, processing } = msg;
-	const maxChunkVertices = 50_000;
-	const noChunking = false;
 	const topo = topologyStore.get(id);
 	if (!topo) return [];
 	const proj = buildProjection(projId, width, height, rotate);
@@ -117,55 +106,24 @@ function handleBuildPaths(msg: Extract<WorkerRequest, { type: 'BUILD_PATHS' }>):
 		return [{ commands: recorder.commands, bbox: [-Infinity, -Infinity, Infinity, Infinity] }];
 	}
 
-	// Standard (non-bezier) path: convert to GeoJSON, chunk, project.
+	// Build one path entry per feature (non-point geometry only).
 	const data = feature(topo as Topology, anyTopo.objects[objectName]) as {
 		type?: string;
 		features?: { geometry?: { type?: string } }[];
 	};
 
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const topoGeoms: { arcs?: unknown }[] = (anyTopo.objects[objectName] as any).geometries ?? [];
 	type GeoFeature = NonNullable<typeof data.features>[number];
-	const nonPointGeo: GeoFeature[] = [];
-	const nonPointTopo: typeof topoGeoms = [];
-	for (let i = 0; i < (data.features?.length ?? 0); i++) {
-		const t = data.features![i]?.geometry?.type;
-		if (t !== 'Point' && t !== 'MultiPoint') {
-			nonPointGeo.push(data.features![i]);
-			nonPointTopo.push(topoGeoms[i] ?? {});
-		}
-	}
+	const nonPointFeatures: GeoFeature[] = (data.features ?? []).filter(f => {
+		const t = f?.geometry?.type;
+		return t !== 'Point' && t !== 'MultiPoint';
+	});
 
-	if (nonPointGeo.length === 0) return [];
-
-	// Check whether we have pre-computed chunk groups for this layer.
-	// Groups only depend on topology structure and chunking settings, not on
-	// projection or rotation, so they can be reused across rotation rebuilds.
-	const chunkVersion = `${maxChunkVertices}:${noChunking ? 1 : 0}`;
-	const cached = chunkGroupsCache.get(id);
-	let featureGroups: GeoFeature[][];
-
-	if (cached && cached.version === chunkVersion) {
-		featureGroups = cached.groups;
-	} else {
-		const isPolygonLayer = nonPointGeo.every(f => {
-			const t = f?.geometry?.type;
-			return t === 'Polygon' || t === 'MultiPolygon';
-		});
-		const adjacency = isPolygonLayer ? buildAdjacencyGraph(nonPointTopo) : [];
-		const hasAdjacency = isPolygonLayer && adjacency.some(s => s.size > 0);
-		featureGroups = noChunking
-			? nonPointGeo.map(f => [f])
-			: hasAdjacency
-				? buildChunksBFS(nonPointGeo, adjacency, maxChunkVertices)
-				: buildChunksHilbert(nonPointGeo, maxChunkVertices);
-		chunkGroupsCache.set(id, { groups: featureGroups, version: chunkVersion });
-	}
+	if (nonPointFeatures.length === 0) return [];
 
 	const clampedProj = makeClampedProjection(proj) as unknown as d3.GeoProjection;
-	const chunks: SerializedChunk[] = [];
+	const result: SerializedChunk[] = [];
 
-	for (const chunkFeatures of featureGroups) {
+	for (const feat of nonPointFeatures) {
 		const recorder = new CommandRecorder();
 		const pathCtx = {
 			beginPath: () => {},
@@ -174,17 +132,15 @@ function handleBuildPaths(msg: Extract<WorkerRequest, { type: 'BUILD_PATHS' }>):
 			closePath: () => recorder.closePath(),
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			arc: (x: number, y: number, r: number, a1: number, a2: number) => {
-				// Points are filtered out before chunking — this branch is unreachable
-				// for polygon/line layers, but d3.geoPath requires an arc method.
 				void x; void y; void r; void a1; void a2;
 			},
 		};
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		d3.geoPath(clampedProj, pathCtx as any)({ ...data, features: chunkFeatures } as d3.GeoPermissibleObjects);
-		chunks.push({ commands: recorder.commands, bbox: recorder.bbox() });
+		d3.geoPath(clampedProj, pathCtx as any)({ ...data, features: [feat] } as d3.GeoPermissibleObjects);
+		result.push({ commands: recorder.commands, bbox: recorder.bbox() });
 	}
 
-	return chunks;
+	return result;
 }
 
 self.onmessage = (e: MessageEvent<WorkerRequest>) => {
@@ -192,13 +148,11 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
 
 	if (msg.type === 'STORE_TOPOLOGY') {
 		topologyStore.set(msg.id, msg.topo);
-		chunkGroupsCache.delete(msg.id); // new topology → old chunk groups are invalid
 		return;
 	}
 
 	if (msg.type === 'REMOVE_TOPOLOGY') {
 		topologyStore.delete(msg.id);
-		chunkGroupsCache.delete(msg.id);
 		return;
 	}
 

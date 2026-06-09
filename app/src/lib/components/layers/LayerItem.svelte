@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
-	import { Eye, EyeSlash, DotsThree, SlidersHorizontal, CircleNotch, CopySimple, PencilSimple, Trash } from 'phosphor-svelte';
+	import { Eye, EyeSlash, DotsThree, SlidersHorizontal, CircleNotch, CopySimple, PencilSimple, Trash, Table } from 'phosphor-svelte';
 	import { dragHandle } from 'svelte-dnd-action';
 	import DropdownMenu from '$lib/components/ui/DropdownMenu.svelte';
 	import type { Layer } from '$lib/types';
 	import { removeLayer, toggleVisibility, renameLayer, duplicateLayer } from '$lib/stores/layers.svelte';
 	import { pushSnapshot, historyVersion } from '$lib/stores/history.svelte';
+	import { openFeaturesTable } from '$lib/stores/featuresTable.svelte';
 	import LayerStylePanel from './LayerStylePanel.svelte';
 	import LayerProcessingPanel from './LayerProcessingPanel.svelte';
 
@@ -168,6 +169,11 @@
 
 	{#if menuOpen}
 		<DropdownMenu top={menuPos.top} left={menuPos.left} alignRight bind:el={menuEl}>
+			<button class="dropdown-item body-small" onclick={() => { openFeaturesTable(layer.id); closeMenu(); }}>
+				<Table size={14} />
+				<span>View table</span>
+			</button>
+			<div class="dropdown-divider"></div>
 			<button class="dropdown-item body-small" onclick={() => { duplicateLayer(layer.id); pushSnapshot(); closeMenu(); }}>
 				<CopySimple size={14} />
 				<span>Duplicate</span>

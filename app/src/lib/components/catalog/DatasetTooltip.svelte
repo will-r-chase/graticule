@@ -2,35 +2,14 @@
 	import type { Dataset } from '$lib/types';
 	import { SOURCE_CONFIG, ADMIN_LEVEL_LABELS } from '$lib/config';
 
-	let { dataset, x, y }: { dataset: Dataset; x: number; y: number } = $props();
+	let { dataset }: { dataset: Dataset } = $props();
 
 	const source = SOURCE_CONFIG[dataset.source] ?? SOURCE_CONFIG['custom'];
 	const adminLabel = ADMIN_LEVEL_LABELS[dataset.adminLevel] ?? `Level ${dataset.adminLevel}`;
 	const bbox = dataset.bbox.map((n) => n.toFixed(1)).join(', ');
-
-	const OFFSET = 12;
-	const WIDTH = 240;
-
-	let tooltipEl = $state<HTMLDivElement | null>(null);
-	let posStyle = $state(`left: ${x + OFFSET}px; top: ${y + OFFSET}px`);
-
-	$effect(() => {
-		if (!tooltipEl) return;
-		const vh = window.innerHeight;
-		const vw = window.innerWidth;
-		const h = tooltipEl.offsetHeight;
-
-		const flipY = y + h + OFFSET > vh;
-		const flipX = x + WIDTH + OFFSET > vw;
-
-		const top  = flipY ? y - h + 12 : y + OFFSET;
-		const left = flipX ? x - WIDTH - OFFSET : x + OFFSET;
-
-		posStyle = `left: ${left}px; top: ${top}px`;
-	});
 </script>
 
-<div class="tooltip" bind:this={tooltipEl} style={posStyle}>
+<div class="dataset-tooltip">
 	<p class="description body-small">{dataset.description}</p>
 
 	{#if dataset.coverage}
@@ -70,14 +49,8 @@
 </div>
 
 <style>
-	.tooltip {
-		position: fixed;
-		z-index: 50;
+	.dataset-tooltip {
 		width: 240px;
-		background-color: var(--color-surface-invert);
-		border-radius: var(--radius);
-		padding: var(--space-m);
-		pointer-events: none;
 	}
 
 	.description {

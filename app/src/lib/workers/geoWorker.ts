@@ -41,7 +41,7 @@ export function workerStoreTopology(id: string, topo: Topology): void {
 	getWorker().postMessage(msg);
 }
 
-// Tell the worker to discard a layer's stored topology and chunk cache.
+// Tell the worker to discard a layer's stored topology.
 export function workerRemoveTopology(id: string): void {
 	const msg: WorkerRequest = { type: 'REMOVE_TOPOLOGY', id };
 	getWorker().postMessage(msg);

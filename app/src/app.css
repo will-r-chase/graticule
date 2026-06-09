@@ -347,6 +347,11 @@ h4,
 	color: var(--color-text-invert);
 }
 
+.tooltip-shortcut {
+	margin-left: var(--space-m);
+	color: var(--grey-300);
+}
+
 /* Number input — compact numeric control used in style panels */
 .number-input {
 	height: 24px;
