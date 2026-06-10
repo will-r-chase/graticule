@@ -3,7 +3,7 @@
 	import { dragHandleZone, DRAGGED_ELEMENT_ID } from 'svelte-dnd-action';
 	import type { Layer } from '$lib/types';
 	import { layers, reorderLayers, layerDrag } from '$lib/stores/layers.svelte';
-	import { clearLayerSelection } from '$lib/stores/layerSelection.svelte';
+	import { layerSelection, clearLayerSelection } from '$lib/stores/layerSelection.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import LayerItem from './LayerItem.svelte';
 	import FeaturesPanel from './FeaturesPanel.svelte';
@@ -15,8 +15,11 @@
 		if (featuresTable.open) {
 			closeFeaturesTable();
 		} else {
-			const first = layers.find(l => l.hasTopology);
-			if (first) openFeaturesTable(first.id);
+			const activeId = layerSelection.ids[0];
+			const target = activeId
+				? layers.find(l => l.id === activeId && l.hasTopology)
+				: layers.find(l => l.hasTopology);
+			if (target) openFeaturesTable(target.id);
 		}
 	}
 
