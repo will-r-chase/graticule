@@ -20,6 +20,7 @@
 	import Toaster from '$lib/components/ui/Toaster.svelte';
 	import MapToolbar from '$lib/components/map/MapToolbar.svelte';
 	import SelectionBar from '$lib/components/map/SelectionBar.svelte';
+	import LayerActionBar from '$lib/components/map/LayerActionBar.svelte';
 	import FeaturesTable from '$lib/components/map/FeaturesTable.svelte';
 	import { MagnifyingGlassPlus, MagnifyingGlassMinus, CornersOut } from 'phosphor-svelte';
 	import { computeFeatureBboxes } from '$lib/utils/featureBbox';
@@ -1544,6 +1545,7 @@
 <div class="map-canvas">
 	<div class="canvas-area" class:table-open={featuresTable.open} bind:this={containerEl}>
 		<div class="bottom-center">
+			<LayerActionBar />
 			<SelectionBar />
 			<MapToolbar />
 		</div>
