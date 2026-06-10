@@ -1,4 +1,9 @@
-const layerSelection = $state({ ids: [] as string[], pivotId: null as string | null });
+const layerSelection = $state({
+	ids: [] as string[],
+	pivotId: null as string | null,
+	enteredId: null as string | null,
+	hoveredLayerId: null as string | null,
+});
 
 export function selectLayer(id: string): void {
 	layerSelection.ids = [id];
@@ -26,9 +31,23 @@ export function rangeSelectLayers(id: string, orderedIds: string[]): void {
 	layerSelection.ids = orderedIds.slice(start, end + 1);
 }
 
+export function enterLayer(id: string): void {
+	selectLayer(id);
+	layerSelection.enteredId = id;
+}
+
+export function exitLayer(): void {
+	layerSelection.enteredId = null;
+}
+
+export function setHoveredLayer(id: string | null): void {
+	layerSelection.hoveredLayerId = id;
+}
+
 export function clearLayerSelection(): void {
 	layerSelection.ids = [];
 	layerSelection.pivotId = null;
+	layerSelection.enteredId = null;
 }
 
 export { layerSelection };

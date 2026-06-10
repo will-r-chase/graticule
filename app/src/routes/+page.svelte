@@ -8,7 +8,7 @@
 	import { addUploadedDataset } from '$lib/stores/uploadedDatasets.svelte';
 	import { undo, redo, canUndo, canRedo, pushSnapshot } from '$lib/stores/history.svelte';
 	import { selection, clearSelection } from '$lib/stores/selection.svelte';
-	import { layerSelection, clearLayerSelection } from '$lib/stores/layerSelection.svelte';
+	import { layerSelection, clearLayerSelection, exitLayer } from '$lib/stores/layerSelection.svelte';
 	import { layers, toggleVisibility, duplicateLayer, removeLayer, reorderLayers } from '$lib/stores/layers.svelte';
 	import { openFeaturesTable } from '$lib/stores/featuresTable.svelte';
 
@@ -48,6 +48,8 @@
 		if (e.key === 'Escape') {
 			if (selection.features.size > 0) {
 				clearSelection();
+			} else if (layerSelection.enteredId !== null) {
+				exitLayer();
 			} else if (layerSelection.ids.length > 0) {
 				clearLayerSelection();
 			}

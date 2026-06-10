@@ -5,7 +5,7 @@
 	import DropdownMenu from '$lib/components/ui/DropdownMenu.svelte';
 	import type { Layer } from '$lib/types';
 	import { removeLayer, toggleVisibility, renameLayer, duplicateLayer } from '$lib/stores/layers.svelte';
-	import { layerSelection, selectLayer, toggleLayerSelection, rangeSelectLayers } from '$lib/stores/layerSelection.svelte';
+	import { layerSelection, selectLayer, toggleLayerSelection, rangeSelectLayers, setHoveredLayer } from '$lib/stores/layerSelection.svelte';
 	import { layers } from '$lib/stores/layers.svelte';
 	import { pushSnapshot, historyVersion } from '$lib/stores/history.svelte';
 	import { openFeaturesTable } from '$lib/stores/featuresTable.svelte';
@@ -22,6 +22,7 @@
 	let styleOpen = $derived(styleCtx.openId === layer.id);
 
 	let isSelected = $derived(layerSelection.ids.includes(layer.id));
+	let isCanvasHovered = $derived(layerSelection.hoveredLayerId === layer.id);
 
 	function handleRowClick(e: MouseEvent) {
 		if (e.shiftKey) {
@@ -108,7 +109,7 @@
 </script>
 
 <div class="layer-item-wrapper" class:open={styleOpen} onclick={(e) => e.stopPropagation()}>
-	<div class="layer-item" class:selected={styleOpen || isSelected} class:menu-open={menuOpen} use:dragHandle onclick={handleRowClick} onpointerdown={(e) => { if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopImmediatePropagation(); }}>
+	<div class="layer-item" class:selected={styleOpen || isSelected} class:menu-open={menuOpen} class:canvas-hovered={isCanvasHovered && !isSelected && !styleOpen} use:dragHandle onclick={handleRowClick} onmouseenter={() => setHoveredLayer(layer.id)} onmouseleave={() => setHoveredLayer(null)} onpointerdown={(e) => { if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopImmediatePropagation(); }}>
 		{#if showSpinner}
 			<div class="style-spinner" aria-label="Loading">
 				<CircleNotch size={14} color="var(--color-text-tertiary)" />
@@ -283,7 +284,8 @@
 		cursor: grabbing;
 	}
 
-	.layer-item:hover {
+	.layer-item:hover,
+	.layer-item.canvas-hovered {
 		background-color: var(--color-surface-secondary);
 	}
 
@@ -368,6 +370,7 @@
 	}
 
 	.layer-item:hover .actions,
+	.layer-item.canvas-hovered .actions,
 	.layer-item.selected .actions,
 	.layer-item.menu-open .actions {
 		display: flex;

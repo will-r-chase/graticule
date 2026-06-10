@@ -9,7 +9,7 @@
 	import { layers, workingTopologyData, layerDrag, deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures } from '$lib/stores/layers.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
 	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
-	import { clearLayerSelection } from '$lib/stores/layerSelection.svelte';
+	import { layerSelection, clearLayerSelection, selectLayer, toggleLayerSelection, enterLayer, exitLayer, setHoveredLayer } from '$lib/stores/layerSelection.svelte';
 	import { hoveredFeature } from '$lib/stores/hoveredFeature.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
@@ -67,6 +67,8 @@
 	let suppressNextClick = false;
 	let panMoved = false;
 	let preDragSelection = new Map<string, Set<number>>();
+	let preDragLayerIds: string[] = [];
+	let marqueeLayerMode = false;
 	let cachedBboxes = new Map<string, Array<[number, number, number, number] | null>>();
 
 
@@ -285,45 +287,78 @@
 		}
 	}
 
-	function handleClick(e: MouseEvent) {
-		if (suppressNextClick) { suppressNextClick = false; return; }
-		clearLayerSelection();
-		if (toolState.active !== 'select') return;
-		if (!hitCanvas || !canvasEl) return;
-
+	function getHitAtPoint(clientX: number, clientY: number): { layerId: string; featureIndex: number } | null {
+		if (!hitCanvas || !canvasEl) return null;
 		const rect = canvasEl.getBoundingClientRect();
-		const cx = Math.round(e.clientX - rect.left);
-		const cy = Math.round(e.clientY - rect.top);
-
+		const cx = Math.round(clientX - rect.left);
+		const cy = Math.round(clientY - rect.top);
 		const hctx = hitCanvas.getContext('2d');
-		if (!hctx) return;
+		if (!hctx) return null;
 
 		// Sample a 5×5 area centered on the click to handle sub-pixel misses on thin
 		// lines and small points, then pick the most common non-background color.
 		const radius = 2;
 		const size = radius * 2 + 1;
 		const imageData = hctx.getImageData(cx - radius, cy - radius, size, size);
-
 		const counts = new Map<number, number>();
 		for (let i = 0; i < imageData.data.length; i += 4) {
 			const key = (imageData.data[i] << 16) | (imageData.data[i + 1] << 8) | imageData.data[i + 2];
-			if (key === 0) continue; // background
+			if (key === 0) continue;
 			counts.set(key, (counts.get(key) ?? 0) + 1);
 		}
-
-		if (counts.size === 0) {
-			clearSelection();
-			return;
-		}
-
+		if (counts.size === 0) return null;
 		let bestKey = 0, bestCount = 0;
 		for (const [key, count] of counts) {
 			if (count > bestCount) { bestCount = count; bestKey = key; }
 		}
+		return hitDecodeMap.get(bestKey) ?? null;
+	}
 
-		const hit = hitDecodeMap.get(bestKey);
+	function handleClick(e: MouseEvent) {
+		if (suppressNextClick) { suppressNextClick = false; return; }
+		if (toolState.active !== 'select') return;
+
+		const hit = getHitAtPoint(e.clientX, e.clientY);
+		const cmd = e.metaKey || e.ctrlKey;
+
+		if (layerSelection.enteredId !== null) {
+			if (!hit) {
+				exitLayer();
+				clearLayerSelection();
+				clearSelection();
+			} else if (hit.layerId === layerSelection.enteredId || cmd) {
+				const alreadySelected = selection.features.get(hit.layerId)?.has(hit.featureIndex) ?? false;
+				if (alreadySelected && !e.shiftKey) {
+					selectFeature(hit.layerId, hit.featureIndex, true);
+				} else {
+					selectFeature(hit.layerId, hit.featureIndex, e.shiftKey);
+				}
+			} else {
+				clearSelection();
+				exitLayer();
+				selectLayer(hit.layerId);
+			}
+		} else {
+			if (!hit) {
+				clearLayerSelection();
+				clearSelection();
+			} else if (cmd) {
+				selectFeature(hit.layerId, hit.featureIndex, e.shiftKey);
+			} else if (e.shiftKey) {
+				toggleLayerSelection(hit.layerId);
+			} else {
+				clearSelection();
+				selectLayer(hit.layerId);
+			}
+		}
+	}
+
+	function handleDblClick(e: MouseEvent) {
+		if (toolState.active !== 'select') return;
+		const hit = getHitAtPoint(e.clientX, e.clientY);
 		if (!hit) return;
-		selectFeature(hit.layerId, hit.featureIndex, e.shiftKey);
+		enterLayer(hit.layerId);
+		selectFeature(hit.layerId, hit.featureIndex, false);
 	}
 
 	function updateMarqueeSelection(addToExisting: boolean) {
@@ -361,6 +396,29 @@
 		const geoX2 = Math.max(...corners.map((c) => c[0]));
 		const geoY1 = Math.min(...corners.map((c) => c[1]));
 		const geoY2 = Math.max(...corners.map((c) => c[1]));
+
+		if (marqueeLayerMode) {
+			const hitLayerIds: string[] = [];
+			for (const layer of layers) {
+				if (!layer.visible || !layer.hasTopology) continue;
+				const bboxes = cachedBboxes.get(layer.id);
+				if (!bboxes) continue;
+				for (let i = 0; i < bboxes.length; i++) {
+					const bbox = bboxes[i];
+					if (!bbox) continue;
+					const [minLon, minLat, maxLon, maxLat] = bbox;
+					if (maxLon >= geoX1 && minLon <= geoX2 && maxLat >= geoY1 && minLat <= geoY2) {
+						hitLayerIds.push(layer.id);
+						break;
+					}
+				}
+			}
+			const merged = addToExisting
+				? [...new Set([...preDragLayerIds, ...hitLayerIds])]
+				: hitLayerIds;
+			layerSelection.ids = merged;
+			return;
+		}
 
 		const newSelection = new Map<string, Set<number>>();
 
@@ -405,16 +463,22 @@
 			}
 			(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
 		} else if (toolState.active === 'select' && containerEl) {
+			const cmd = e.metaKey || e.ctrlKey;
+			const enteredId = layerSelection.enteredId;
+			marqueeLayerMode = !enteredId && !cmd;
+
 			const containerRect = containerEl.getBoundingClientRect();
 			marqueePtrStartX = e.clientX;
 			marqueePtrStartY = e.clientY;
 			marqueeStart = { x: e.clientX - containerRect.left, y: e.clientY - containerRect.top };
 			marqueeCurrent = { ...marqueeStart };
 			preDragSelection = new Map([...selection.features.entries()].map(([k, v]) => [k, new Set(v)]));
-			// Cache bboxes for all visible layers up front.
+			preDragLayerIds = [...layerSelection.ids];
+			// Cache bboxes: entered layer only for feature mode without cmd, all layers otherwise.
 			cachedBboxes = new Map();
 			for (const layer of layers) {
 				if (!layer.visible || !layer.hasTopology) continue;
+				if (!cmd && enteredId && layer.id !== enteredId) continue;
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
 				const topo = workingTopologyData.get(layer.id) as any;
 				if (topo) cachedBboxes.set(layer.id, computeFeatureBboxes(topo));
@@ -443,6 +507,13 @@
 		}
 
 		if (toolState.active === 'select' && !isDragging && !isMarqueeDragging && hitCanvas && canvasEl) {
+			const featureHoverActive = layerSelection.enteredId !== null || e.metaKey || e.ctrlKey;
+			if (!featureHoverActive) {
+				const hit = getHitAtPoint(e.clientX, e.clientY);
+				setHoveredLayer(hit?.layerId ?? null);
+				hoveredFeature.value = null;
+			} else {
+				setHoveredLayer(null);
 			const rect = canvasEl.getBoundingClientRect();
 			const cx = Math.round(e.clientX - rect.left);
 			const cy = Math.round(e.clientY - rect.top);
@@ -465,6 +536,7 @@
 				}
 				hoveredFeature.value = bestKey !== 0 ? (hitDecodeMap.get(bestKey) ?? null) : null;
 			}
+			} // end featureHoverActive
 		}
 
 		if (!isDragging) return;
@@ -917,12 +989,11 @@
 			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
 			if (e.key === 'v' || e.key === 'V') {
+				exitLayer();
 				toolState.active = 'pan';
 			} else if (e.key === 's' || e.key === 'S') {
+				exitLayer();
 				toolState.active = 'select';
-			} else if (e.key === 'Escape') {
-				clearSelection();
-				toolState.active = 'pan';
 			} else if ((e.key === 'Delete' || e.key === 'Backspace') && selection.features.size > 0) {
 				e.preventDefault();
 				const snapshot = new Map([...selection.features.entries()].map(([k, v]) => [k, new Set(v)]));
@@ -1228,6 +1299,8 @@
 			const hasNonPoint = layer.geometryTypes.some((t) => t !== 'Point' && t !== 'MultiPoint');
 			const hasPoints   = layer.geometryTypes.some((t) => t === 'Point' || t === 'MultiPoint');
 
+				const dim = layerSelection.enteredId !== null && layer.id !== layerSelection.enteredId ? 0.35 : 1.0;
+
 			if (hasNonPoint) {
 				const vxMin = -tx / mapScale;
 				const vxMax = (width - tx) / mapScale;
@@ -1246,11 +1319,11 @@
 					if (xMax < vxMin || xMin > vxMax || yMax < vyMin || yMin > vyMax) continue;
 
 					if (layer.style.fill !== 'none') {
-						ctx.globalAlpha = layer.style.fillOpacity;
+						ctx.globalAlpha = layer.style.fillOpacity * dim;
 						ctx.fillStyle = layer.style.fill;
 						ctx.fill(path2d, 'evenodd');
 					}
-					ctx.globalAlpha = layer.style.strokeOpacity;
+					ctx.globalAlpha = layer.style.strokeOpacity * dim;
 					ctx.stroke(path2d);
 				}
 				ctx.setLineDash([]);
@@ -1299,13 +1372,13 @@
 								ctx.scale(1 / mapScale, 1 / mapScale);
 
 								if (layer.style.fill !== 'none') {
-									ctx.globalAlpha = layer.style.fillOpacity;
+									ctx.globalAlpha = layer.style.fillOpacity * dim;
 									ctx.fillStyle = layer.style.fill;
 									ctx.fill(symPath2D);
 								}
 
 								if (layer.style.stroke !== 'none') {
-									ctx.globalAlpha = layer.style.strokeOpacity;
+									ctx.globalAlpha = layer.style.strokeOpacity * dim;
 									ctx.strokeStyle = layer.style.stroke;
 									ctx.lineWidth = layer.style.strokeWidth;
 									ctx.stroke(symPath2D);
@@ -1330,6 +1403,106 @@
 		const accentColor     = highlightCss.getPropertyValue('--color-accent').trim();
 		const surfaceSecColor = highlightCss.getPropertyValue('--color-surface-secondary').trim();
 		const borderColor     = highlightCss.getPropertyValue('--color-border').trim();
+
+		// Layer tint pass — grey for hovered, green for selected/entered.
+		if (toolState.active === 'select') {
+			const hovId = layerSelection.hoveredLayerId;
+			const selIds = layerSelection.ids;
+			const hasTint = selIds.length > 0 || hovId !== null;
+
+			if (hasTint) {
+				const vxMin = -tx / mapScale;
+				const vxMax = (width - tx) / mapScale;
+				const vyMin = -ty / mapScale;
+				const vyMax = (height - ty) / mapScale;
+				const textColor = highlightCss.getPropertyValue('--color-text-primary').trim();
+
+				ctx.save();
+				for (const layer of [...layers].reverse()) {
+					if (!layer.visible) continue;
+					const isSelected = selIds.includes(layer.id);
+					const isHovered = layer.id === hovId;
+					if (!isSelected && !isHovered) continue;
+
+					const tintColor = isSelected ? accentColor : textColor;
+					const chunks = pathCache.get(layer.id);
+					if (!chunks) continue;
+
+					const isPolygon  = layer.geometryTypes.some(t => t === 'Polygon' || t === 'MultiPolygon');
+					const isLine     = layer.geometryTypes.some(t => t === 'LineString' || t === 'MultiLineString');
+					const hasNonPt   = layer.geometryTypes.some(t => t !== 'Point' && t !== 'MultiPoint');
+					const hasPoints  = layer.geometryTypes.some(t => t === 'Point' || t === 'MultiPoint');
+
+					// Polygon fill tint
+					if (isPolygon) {
+						ctx.fillStyle = tintColor;
+						ctx.globalAlpha = isSelected ? 0.12 : 0.05;
+						for (const { path2d, bbox } of chunks) {
+							const [xMin, yMin, xMax, yMax] = bbox;
+							if (xMax < vxMin || xMin > vxMax || yMax < vyMin || yMin > vyMax) continue;
+							ctx.fill(path2d, 'evenodd');
+						}
+					}
+
+					// Line / stroke tint — wider solid stroke overlay
+					if (hasNonPt && (isLine || !isPolygon)) {
+						ctx.strokeStyle = tintColor;
+						ctx.lineWidth = (layer.style.strokeWidth + 5) / mapScale;
+						ctx.globalAlpha = isSelected ? 0.30 : 0.18;
+						ctx.setLineDash([]);
+						for (const { path2d, bbox } of chunks) {
+							const [xMin, yMin, xMax, yMax] = bbox;
+							if (xMax < vxMin || xMin > vxMax || yMax < vyMin || yMin > vyMax) continue;
+							ctx.stroke(path2d);
+						}
+						ctx.setLineDash([]);
+					}
+
+					// Point symbol tint — larger halo symbol drawn on top
+					if (hasPoints && projection) {
+						const topo = workingTopologyData.get(layer.id);
+						if (topo) {
+							const objectName = Object.keys(topo.objects)[0];
+							const ptData = feature(topo, topo.objects[objectName]) as {
+								features?: { geometry?: { type?: string; coordinates?: unknown } }[]
+							};
+							if (ptData?.features) {
+								const sym = shapeMap[layer.style.pointShape] ?? d3shape.symbolCircle;
+								const r = layer.style.pointRadius;
+								const haloArea = Math.PI * r * r * 4.0;
+								const haloPath = new Path2D(d3shape.symbol(sym, haloArea)() ?? '');
+								const projCenter: [number, number] | null = interactionMode === 'rotate'
+									? [-projectionStore.rotate[0], -projectionStore.rotate[1]]
+									: null;
+
+								ctx.fillStyle = tintColor;
+								ctx.globalAlpha = isSelected ? 0.45 : 0.30;
+
+								for (const f of ptData.features) {
+									const geom = f?.geometry;
+									if (!geom) continue;
+									const coordsList: [number, number][] =
+										geom.type === 'Point'      ? [geom.coordinates as [number, number]]
+										: geom.type === 'MultiPoint' ? (geom.coordinates as [number, number][])
+										: [];
+									for (const coord of coordsList) {
+										if (projCenter && d3.geoDistance(coord, projCenter) >= Math.PI / 2) continue;
+										const pt = projection(coord);
+										if (!pt) continue;
+										ctx.save();
+										ctx.translate(pt[0], pt[1]);
+										ctx.scale(1 / mapScale, 1 / mapScale);
+										ctx.fill(haloPath);
+										ctx.restore();
+									}
+								}
+							}
+						}
+					}
+				}
+				ctx.restore();
+			}
+		}
 
 		// Hover pass — weight/size change only, original colors preserved.
 		if (toolState.active === 'select' && hoveredFeature.value) {
@@ -1406,11 +1579,14 @@
 			class:dragging={isDragging}
 			class:select-mode={toolState.active === 'select'}
 			class:feature-hover={toolState.active === 'select' && hoveredFeature.value !== null}
+			class:layer-hover={toolState.active === 'select' && layerSelection.hoveredLayerId !== null && hoveredFeature.value === null}
+	
 			onclick={handleClick}
+			ondblclick={handleDblClick}
 			onpointerdown={handlePointerDown}
 			onpointermove={handlePointerMove}
 			onpointerup={handlePointerUp}
-			onpointerleave={() => { hoveredFeature.value = null; }}
+			onpointerleave={() => { hoveredFeature.value = null; setHoveredLayer(null); }}
 		></canvas>
 
 		{#if featuresTable.open}
@@ -1449,7 +1625,8 @@
 		cursor: default;
 	}
 
-	canvas.feature-hover {
+	canvas.feature-hover,
+	canvas.layer-hover {
 		cursor: pointer;
 	}
 
