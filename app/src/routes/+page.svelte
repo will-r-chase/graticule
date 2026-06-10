@@ -9,8 +9,38 @@
 	import { undo, redo, canUndo, canRedo, pushSnapshot } from '$lib/stores/history.svelte';
 	import { selection, clearSelection } from '$lib/stores/selection.svelte';
 	import { layerSelection, clearLayerSelection } from '$lib/stores/layerSelection.svelte';
+	import { layers, toggleVisibility, duplicateLayer, removeLayer, reorderLayers } from '$lib/stores/layers.svelte';
+	import { openFeaturesTable } from '$lib/stores/featuresTable.svelte';
 
 	let { data } = $props();
+
+	function moveSelectedLayersUp() {
+		const newLayers = [...layers];
+		const selectedIndices = layerSelection.ids
+			.map(id => newLayers.findIndex(l => l.id === id))
+			.filter(i => i !== -1)
+			.sort((a, b) => a - b);
+		if (selectedIndices.length === 0 || selectedIndices[0] === 0) return;
+		for (const idx of selectedIndices) {
+			[newLayers[idx], newLayers[idx - 1]] = [newLayers[idx - 1], newLayers[idx]];
+		}
+		reorderLayers(newLayers);
+		pushSnapshot();
+	}
+
+	function moveSelectedLayersDown() {
+		const newLayers = [...layers];
+		const selectedIndices = layerSelection.ids
+			.map(id => newLayers.findIndex(l => l.id === id))
+			.filter(i => i !== -1)
+			.sort((a, b) => b - a);
+		if (selectedIndices.length === 0 || selectedIndices[0] === newLayers.length - 1) return;
+		for (const idx of selectedIndices) {
+			[newLayers[idx], newLayers[idx + 1]] = [newLayers[idx + 1], newLayers[idx]];
+		}
+		reorderLayers(newLayers);
+		pushSnapshot();
+	}
 
 	function handleKeydown(e: KeyboardEvent) {
 		const _t = e.target as HTMLInputElement;
@@ -22,6 +52,40 @@
 				clearLayerSelection();
 			}
 			return;
+		}
+		if (layerSelection.ids.length > 0) {
+			if (e.key === 't') {
+				const firstId = layerSelection.ids[0];
+				const layer = layers.find(l => l.id === firstId && l.hasTopology);
+				if (layer) openFeaturesTable(layer.id);
+				return;
+			}
+			if (e.key === 'h') {
+				for (const id of layerSelection.ids) toggleVisibility(id);
+				pushSnapshot();
+				return;
+			}
+			if (e.key === '[') {
+				moveSelectedLayersUp();
+				return;
+			}
+			if (e.key === ']') {
+				moveSelectedLayersDown();
+				return;
+			}
+			if (e.key === 'd' && (e.metaKey || e.ctrlKey)) {
+				e.preventDefault();
+				for (const id of layerSelection.ids) duplicateLayer(id);
+				pushSnapshot();
+				return;
+			}
+			if (e.key === 'Backspace' && (e.metaKey || e.ctrlKey)) {
+				e.preventDefault();
+				for (const id of [...layerSelection.ids]) removeLayer(id);
+				clearLayerSelection();
+				pushSnapshot();
+				return;
+			}
 		}
 		if (e.key === 'z' && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
