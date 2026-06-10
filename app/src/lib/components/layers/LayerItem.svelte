@@ -5,6 +5,8 @@
 	import DropdownMenu from '$lib/components/ui/DropdownMenu.svelte';
 	import type { Layer } from '$lib/types';
 	import { removeLayer, toggleVisibility, renameLayer, duplicateLayer } from '$lib/stores/layers.svelte';
+	import { layerSelection, selectLayer, toggleLayerSelection, rangeSelectLayers } from '$lib/stores/layerSelection.svelte';
+	import { layers } from '$lib/stores/layers.svelte';
 	import { pushSnapshot, historyVersion } from '$lib/stores/history.svelte';
 	import { openFeaturesTable } from '$lib/stores/featuresTable.svelte';
 	import LayerStylePanel from './LayerStylePanel.svelte';
@@ -18,6 +20,18 @@
 	}
 	const styleCtx = getContext<StylePanelCtx>('stylePanel');
 	let styleOpen = $derived(styleCtx.openId === layer.id);
+
+	let isSelected = $derived(layerSelection.ids.includes(layer.id));
+
+	function handleRowClick(e: MouseEvent) {
+		if (e.shiftKey) {
+			rangeSelectLayers(layer.id, layers.map((l) => l.id));
+		} else if (e.metaKey || e.ctrlKey) {
+			toggleLayerSelection(layer.id);
+		} else {
+			selectLayer(layer.id);
+		}
+	}
 
 	let activeTab = $state<'style' | 'simplification'>('style');
 	let editing = $state(false);
@@ -93,8 +107,8 @@
 	});
 </script>
 
-<div class="layer-item-wrapper" class:open={styleOpen}>
-	<div class="layer-item" class:selected={styleOpen} class:menu-open={menuOpen} use:dragHandle>
+<div class="layer-item-wrapper" class:open={styleOpen} onclick={(e) => e.stopPropagation()}>
+	<div class="layer-item" class:selected={styleOpen || isSelected} class:menu-open={menuOpen} use:dragHandle onclick={handleRowClick} onpointerdown={(e) => { if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopImmediatePropagation(); }}>
 		{#if showSpinner}
 			<div class="style-spinner" aria-label="Loading">
 				<CircleNotch size={14} color="var(--color-text-tertiary)" />
@@ -145,7 +159,7 @@
 				class="icon-btn"
 				aria-label={layer.visible ? 'Hide layer' : 'Show layer'}
 				title={layer.visible ? 'Hide layer' : 'Show layer'}
-				onclick={() => { toggleVisibility(layer.id); pushSnapshot(); }}
+				onclick={(e) => { e.stopPropagation(); toggleVisibility(layer.id); pushSnapshot(); }}
 			>
 				{#if layer.visible}
 					<Eye size={16} />
@@ -405,4 +419,5 @@
 	:global([data-is-dnd-shadow-item-internal] .style-accordion) {
 		display: none;
 	}
+
 </style>

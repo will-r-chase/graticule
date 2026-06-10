@@ -9,6 +9,7 @@
 	import { layers, workingTopologyData, layerDrag, deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures } from '$lib/stores/layers.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
 	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
+	import { clearLayerSelection } from '$lib/stores/layerSelection.svelte';
 	import { hoveredFeature } from '$lib/stores/hoveredFeature.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
@@ -64,6 +65,7 @@
 	let marqueePtrStartX = 0; // raw clientX at pointerdown, for threshold check
 	let marqueePtrStartY = 0;
 	let suppressNextClick = false;
+	let panMoved = false;
 	let preDragSelection = new Map<string, Set<number>>();
 	let cachedBboxes = new Map<string, Array<[number, number, number, number] | null>>();
 
@@ -285,6 +287,7 @@
 
 	function handleClick(e: MouseEvent) {
 		if (suppressNextClick) { suppressNextClick = false; return; }
+		clearLayerSelection();
 		if (toolState.active !== 'select') return;
 		if (!hitCanvas || !canvasEl) return;
 
@@ -393,6 +396,7 @@
 	function handlePointerDown(e: PointerEvent) {
 		if (toolState.active === 'pan') {
 			isDragging = true;
+			panMoved = false;
 			lastPointerX = e.clientX;
 			lastPointerY = e.clientY;
 			if (interactionMode === 'rotate') {
@@ -464,6 +468,7 @@
 		}
 
 		if (!isDragging) return;
+		panMoved = true;
 
 		if (interactionMode === 'rotate' && projection) {
 			const scale = projection.scale();
@@ -493,6 +498,9 @@
 	function handlePointerUp() {
 		if (isMarqueeDragging) {
 			isMarqueeDragging = false;
+			suppressNextClick = true;
+		}
+		if (isDragging && panMoved) {
 			suppressNextClick = true;
 		}
 		// Always reset marquee start, whether the drag exceeded the threshold or not.

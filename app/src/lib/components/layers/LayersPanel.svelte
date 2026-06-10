@@ -3,6 +3,7 @@
 	import { dragHandleZone, DRAGGED_ELEMENT_ID } from 'svelte-dnd-action';
 	import type { Layer } from '$lib/types';
 	import { layers, reorderLayers, layerDrag } from '$lib/stores/layers.svelte';
+	import { clearLayerSelection } from '$lib/stores/layerSelection.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import LayerItem from './LayerItem.svelte';
 	import FeaturesPanel from './FeaturesPanel.svelte';
@@ -88,7 +89,7 @@
 </script>
 
 <div class="layers-panel">
-	<div class="layers-section">
+	<div class="layers-section" onclick={clearLayerSelection}>
 		<div class="panel-header">
 			<h3>Layers</h3>
 		</div>
@@ -217,6 +218,10 @@
 		flex: 1;
 		overflow-y: auto;
 		padding: var(--space-m) 0;
+	}
+
+	.layer-list:focus-visible {
+		outline: none;
 	}
 
 

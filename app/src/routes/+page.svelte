@@ -7,12 +7,22 @@
 	import { parseFile, applyFixes, type UploadResult } from '$lib/utils/fileUpload';
 	import { addUploadedDataset } from '$lib/stores/uploadedDatasets.svelte';
 	import { undo, redo, canUndo, canRedo, pushSnapshot } from '$lib/stores/history.svelte';
+	import { selection, clearSelection } from '$lib/stores/selection.svelte';
+	import { layerSelection, clearLayerSelection } from '$lib/stores/layerSelection.svelte';
 
 	let { data } = $props();
 
 	function handleKeydown(e: KeyboardEvent) {
 		const _t = e.target as HTMLInputElement;
 		if (_t.closest('textarea') || (_t.closest('input') && _t.type !== 'range')) return;
+		if (e.key === 'Escape') {
+			if (selection.features.size > 0) {
+				clearSelection();
+			} else if (layerSelection.ids.length > 0) {
+				clearLayerSelection();
+			}
+			return;
+		}
 		if (e.key === 'z' && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
 			if (e.shiftKey) { if (canRedo()) redo(); }
