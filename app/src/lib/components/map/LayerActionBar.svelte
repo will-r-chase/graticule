@@ -3,6 +3,7 @@
 	import { layerSelection, clearLayerSelection } from '$lib/stores/layerSelection.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { tooltip } from '$lib/actions/tooltip';
+	import { UniteSquare, DiamondsFour, Crop, SubtractSquare, Unite, GitMerge, X } from 'phosphor-svelte';
 
 	const count = $derived(layerSelection.ids.length);
 	const visible = $derived(count > 0 && layerSelection.enteredId === null);
@@ -37,6 +38,15 @@
 		if (!a || !b) return null; // transient: layer removed but selection ids not yet cleared
 		return { maskId: a.id, maskName: a.name, targetId: b.id, targetName: b.name };
 	});
+
+	function isPolygon(layer: { geometryTypes: string[] }): boolean {
+		return layer.geometryTypes.some(t => t === 'Polygon' || t === 'MultiPolygon');
+	}
+
+	// Clip and Subtract require the mask (top layer) to be a polygon.
+	const maskIsPolygon = $derived(selectedLayers.length >= 1 && isPolygon(selectedLayers[0]));
+	// Mosaic requires all selected layers to be polygon.
+	const allPolygon = $derived(selectedLayers.every(isPolygon));
 
 	// Dissolve popover state.
 	let dissolveOpen = $state(false);
@@ -112,6 +122,7 @@
 				onclick={openDissolve}
 				use:tooltip={{ text: 'Merge features into one', placement: 'up' }}
 			>
+				<UniteSquare size={14} />
 				Dissolve
 			</button>
 
@@ -134,12 +145,12 @@
 
 		<!-- Explode — only relevant when Multi- geometry types are present -->
 		{#if hasMultiTypes}
-		<div class="bar-divider"></div>
 		<button
 			class="bar-btn"
 			onclick={handleExplode}
 			use:tooltip={{ text: 'Split multi-part features into individual features', placement: 'up' }}
 		>
+			<DiamondsFour size={14} />
 			Explode
 		</button>
 		{/if}
@@ -147,56 +158,94 @@
 	{:else if count === 2}
 		<button
 			class="bar-btn"
+			class:bar-btn--disabled={!maskIsPolygon}
+			disabled={!maskIsPolygon}
 			onclick={handleClip}
-			use:tooltip={{ text: `Clip ${twoLayerOps?.targetName} to shape of ${twoLayerOps?.maskName}`, placement: 'up' }}
+			use:tooltip={{
+				text: maskIsPolygon
+					? `Clip ${twoLayerOps?.targetName} to shape of ${twoLayerOps?.maskName}`
+					: `Clip requires the mask layer (${twoLayerOps?.maskName}) to be a polygon layer`,
+				placement: 'up'
+			}}
 		>
+			<Crop size={14} />
 			Clip
 		</button>
-		<div class="bar-divider"></div>
 		<button
 			class="bar-btn"
+			class:bar-btn--disabled={!maskIsPolygon}
+			disabled={!maskIsPolygon}
 			onclick={handleDifference}
-			use:tooltip={{ text: `Subtract ${twoLayerOps?.maskName} from ${twoLayerOps?.targetName}`, placement: 'up' }}
+			use:tooltip={{
+				text: maskIsPolygon
+					? `Subtract ${twoLayerOps?.maskName} from ${twoLayerOps?.targetName}`
+					: `Subtract requires the mask layer (${twoLayerOps?.maskName}) to be a polygon layer`,
+				placement: 'up'
+			}}
 		>
-			Difference
+			<SubtractSquare size={14} />
+			Subtract
 		</button>
-		<div class="bar-divider"></div>
 		<button
 			class="bar-btn"
+			class:bar-btn--disabled={!allPolygon}
+			disabled={!allPolygon}
 			onclick={handleUnion}
-			use:tooltip={{ text: 'Create polygon mosaic from all selected layers', placement: 'up' }}
+			use:tooltip={{
+				text: allPolygon
+					? 'Create a polygon mosaic from all selected layers'
+					: 'Mosaic requires all selected layers to be polygon layers',
+				placement: 'up'
+			}}
 		>
-			Union
+			<Unite size={14} />
+			Mosaic
 		</button>
-		<div class="bar-divider"></div>
 		<button
 			class="bar-btn"
 			onclick={handleMerge}
-			use:tooltip={{ text: 'Combine features from all selected layers', placement: 'up' }}
+			use:tooltip={{ text: 'Combine features from all selected layers into one layer', placement: 'up' }}
 		>
+			<GitMerge size={14} />
 			Merge
 		</button>
 
 	{:else}
 		<button
 			class="bar-btn"
+			class:bar-btn--disabled={!allPolygon}
+			disabled={!allPolygon}
 			onclick={handleUnion}
-			use:tooltip={{ text: 'Create polygon mosaic from all selected layers', placement: 'up' }}
+			use:tooltip={{
+				text: allPolygon
+					? 'Create a polygon mosaic from all selected layers'
+					: 'Mosaic requires all selected layers to be polygon layers',
+				placement: 'up'
+			}}
 		>
-			Union
+			<Unite size={14} />
+			Mosaic
 		</button>
-		<div class="bar-divider"></div>
 		<button
 			class="bar-btn"
 			onclick={handleMerge}
-			use:tooltip={{ text: 'Combine features from all selected layers', placement: 'up' }}
+			use:tooltip={{ text: 'Combine features from all selected layers into one layer', placement: 'up' }}
 		>
+			<GitMerge size={14} />
 			Merge
 		</button>
 	{/if}
 
 	<div class="bar-divider"></div>
 	<span class="count">{count} {count === 1 ? 'layer' : 'layers'}</span>
+	<button
+		class="bar-btn bar-btn--icon"
+		onclick={clearLayerSelection}
+		aria-label="Clear selection"
+		use:tooltip={{ text: 'Clear selection', shortcut: 'Esc', placement: 'up' }}
+	>
+		<X size={14} />
+	</button>
 </div>
 {/if}
 
@@ -231,6 +280,21 @@
 
 	.bar-btn:hover {
 		background: var(--color-surface-secondary);
+	}
+
+	.bar-btn--icon {
+		padding: 0 10px;
+	}
+
+	.bar-btn--disabled,
+	.bar-btn:disabled {
+		opacity: 0.35;
+		cursor: not-allowed;
+	}
+
+	.bar-btn--disabled:hover,
+	.bar-btn:disabled:hover {
+		background: transparent;
 	}
 
 	.bar-divider {

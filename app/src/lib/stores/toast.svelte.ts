@@ -1,13 +1,14 @@
 interface Toast {
 	id: string;
 	message: string;
+	variant: 'default' | 'error';
 }
 
 let toasts = $state<Toast[]>([]);
 
-export function showToast(message: string, duration = 6000): void {
+export function showToast(message: string, duration = 6000, variant: Toast['variant'] = 'default'): void {
 	const id = Math.random().toString(36).slice(2, 9);
-	toasts.push({ id, message });
+	toasts.push({ id, message, variant });
 	setTimeout(() => {
 		const i = toasts.findIndex((t) => t.id === id);
 		if (i !== -1) toasts.splice(i, 1);

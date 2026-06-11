@@ -398,6 +398,29 @@ export function clearLayers(): void {
 // Layer-level operations (dissolve, explode, clip, difference, union, merge)
 // ---------------------------------------------------------------------------
 
+// Runs a mapshaper command and returns the output record, or null on failure.
+// Shows an error toast if mapshaper throws or the expected output file is missing.
+async function runMapshaper(
+	cmd: string,
+	inputFiles: Record<string, string>,
+	outputFile = 'output.topojson',
+): Promise<Record<string, string> | null> {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const ms = (window as any).mapshaper;
+	try {
+		const output = await ms.applyCommands(cmd, inputFiles) as Record<string, string>;
+		if (!output[outputFile]) {
+			showToast('Operation produced no output — the layers may not overlap.', 6000, 'error');
+			return null;
+		}
+		return output;
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		showToast(`Operation failed: ${message}`, 8000, 'error');
+		return null;
+	}
+}
+
 // Clones a topology and renames its single object to `newName`.
 // Mapshaper identifies layers by the object name inside the TopoJSON file,
 // not by the filename — so we must normalize before using target=/source= flags.
@@ -447,12 +470,11 @@ export function dissolveLayer(layerId: string, field: string | null, onComplete?
 	if (!layer || !topo) return;
 
 	const index = layers.findIndex(l => l.id === layerId);
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const ms = (window as any).mapshaper;
 	const inputFiles = { 'input.topojson': JSON.stringify(topo) };
 	const cmd = `-i input.topojson -dissolve${field ? ` ${field}` : ''} -o output.topojson format=topojson`;
 
-	ms.applyCommands(cmd, inputFiles).then((output: Record<string, string>) => {
+	runMapshaper(cmd, inputFiles).then(output => {
+		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
 		removeLayer(layerId);
 		insertLayerAt(layer.name, result, index, layer.datasetId, layer.style, onComplete);
@@ -465,12 +487,11 @@ export function explodeLayer(layerId: string, onComplete?: () => void): void {
 	if (!layer || !topo) return;
 
 	const index = layers.findIndex(l => l.id === layerId);
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const ms = (window as any).mapshaper;
 	const inputFiles = { 'input.topojson': JSON.stringify(topo) };
 	const cmd = `-i input.topojson -explode -o output.topojson format=topojson`;
 
-	ms.applyCommands(cmd, inputFiles).then((output: Record<string, string>) => {
+	runMapshaper(cmd, inputFiles).then(output => {
+		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
 		removeLayer(layerId);
 		insertLayerAt(layer.name, result, index, layer.datasetId, layer.style, onComplete);
@@ -484,15 +505,14 @@ export function clipLayers(targetId: string, maskId: string, onComplete?: () => 
 	if (!targetLayer || !targetTopo || !maskTopo) return;
 
 	const index = layers.findIndex(l => l.id === targetId);
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const ms = (window as any).mapshaper;
 	const inputFiles = {
 		'layer0.topojson': JSON.stringify(withRenamedObject(targetTopo, 'layer0')),
 		'layer1.topojson': JSON.stringify(withRenamedObject(maskTopo, 'layer1')),
 	};
 	const cmd = `-i layer0.topojson layer1.topojson combine-files -clip source=layer1 target=layer0 -o output.topojson format=topojson`;
 
-	ms.applyCommands(cmd, inputFiles).then((output: Record<string, string>) => {
+	runMapshaper(cmd, inputFiles).then(output => {
+		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
 		removeLayer(targetId);
 		insertLayerAt(`${targetLayer.name} (clipped)`, result, index, targetLayer.datasetId, targetLayer.style, onComplete);
@@ -506,18 +526,17 @@ export function differenceLayers(targetId: string, maskId: string, onComplete?: 
 	if (!targetLayer || !targetTopo || !maskTopo) return;
 
 	const index = layers.findIndex(l => l.id === targetId);
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const ms = (window as any).mapshaper;
 	const inputFiles = {
 		'layer0.topojson': JSON.stringify(withRenamedObject(targetTopo, 'layer0')),
 		'layer1.topojson': JSON.stringify(withRenamedObject(maskTopo, 'layer1')),
 	};
 	const cmd = `-i layer0.topojson layer1.topojson combine-files -erase source=layer1 target=layer0 -o output.topojson format=topojson`;
 
-	ms.applyCommands(cmd, inputFiles).then((output: Record<string, string>) => {
+	runMapshaper(cmd, inputFiles).then(output => {
+		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
 		removeLayer(targetId);
-		insertLayerAt(`${targetLayer.name} (diff)`, result, index, targetLayer.datasetId, targetLayer.style, onComplete);
+		insertLayerAt(`${targetLayer.name} (subtracted)`, result, index, targetLayer.datasetId, targetLayer.style, onComplete);
 	});
 }
 
@@ -538,14 +557,13 @@ export function unionLayers(layerIds: string[], onComplete?: () => void): void {
 	if (inputNames.length < 2) return;
 
 	const resultName = selected.length === 2
-		? `${selected[0].name} ∪ ${selected[1].name}`
-		: `${selected[0].name} + ${selected.length - 1} more (union)`;
+		? `${selected[0].name} + ${selected[1].name} (mosaic)`
+		: `${selected[0].name} + ${selected.length - 1} more (mosaic)`;
 
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const ms = (window as any).mapshaper;
 	const cmd = `-i ${inputNames.join(' ')} combine-files -union -o output.topojson format=topojson`;
 
-	ms.applyCommands(cmd, inputFiles).then((output: Record<string, string>) => {
+	runMapshaper(cmd, inputFiles).then(output => {
+		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
 		// Remove in descending stack order so lower indices stay stable until we reach them.
 		const byDescIndex = [...layerIds].sort((a, b) =>
@@ -576,11 +594,10 @@ export function mergeLayers(layerIds: string[], onComplete?: () => void): void {
 		? `${selected[0].name} + ${selected[1].name}`
 		: `${selected[0].name} + ${selected.length - 1} more`;
 
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const ms = (window as any).mapshaper;
 	const cmd = `-i ${inputNames.join(' ')} combine-files -merge-layers force -o output.topojson format=topojson`;
 
-	ms.applyCommands(cmd, inputFiles).then((output: Record<string, string>) => {
+	runMapshaper(cmd, inputFiles).then(output => {
+		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
 		const byDescIndex = [...layerIds].sort((a, b) =>
 			layers.findIndex(l => l.id === b) - layers.findIndex(l => l.id === a)
@@ -703,14 +720,10 @@ export function mergeSelectedFeatures(
 			? `${layerNames[0]} + ${layerNames[1]}`
 			: `${layerNames[0]} + ${layerNames.length - 1} more`;
 
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const ms = (window as any).mapshaper;
 	const cmd = `-i ${inputNames.join(' ')} combine-files -merge-layers force -o output.topojson format=topojson`;
-	ms.applyCommands(cmd, inputFiles).then((output: Record<string, string>) => {
+	runMapshaper(cmd, inputFiles).then(output => {
+		if (!output) return;
 		const topology = JSON.parse(output['output.topojson']) as Topology;
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const arcs = (topology as any).arcs as any[][];
-		console.log('[merge] arcs:', arcs?.length, 'vertices:', arcs?.reduce((s: number, a: any[]) => s + a.length, 0));
 		const uploadId = 'merge_' + Math.random().toString(36).slice(2, 9);
 		addUploadedLayer(name, topology, uploadId, false, onComplete);
 	});
