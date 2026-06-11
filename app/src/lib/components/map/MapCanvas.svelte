@@ -352,7 +352,7 @@
 			screenSamples.push([x2, my]); // right edge
 		}
 		const corners = screenSamples
-			.map((p) => projection!.invert!(p))
+			.map((p) => projection!.invert!([(p[0] - tx) / mapScale, (p[1] - ty) / mapScale]))
 			.filter((c): c is [number, number] => c !== null);
 
 		if (corners.length === 0) return;
