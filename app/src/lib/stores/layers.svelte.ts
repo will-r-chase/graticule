@@ -298,7 +298,7 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 	}
 }
 
-export function addUploadedLayer(name: string, topology: Topology, uploadId: string, applyDefaults = true, onComplete?: () => void): void {
+export function addUploadedLayer(name: string, topology: Topology, uploadId: string, applyDefaults = true, onComplete?: () => void, style?: LayerStyle): void {
 	const id = generateId();
 	// Strip any Svelte reactive Proxy wrapper before the topology enters the pipeline.
 	// Proxies can't be structured-cloned, which causes postMessage to the geo worker to fail.
@@ -311,7 +311,7 @@ export function addUploadedLayer(name: string, topology: Topology, uploadId: str
 		loading: true,
 		error: null,
 		hasTopology: false,
-		style: defaultStyle(),
+		style: style ? JSON.parse(JSON.stringify(style)) : defaultStyle(),
 		processing: defaultProcessing(),
 		geometryTypes: [],
 		bezierCacheKey: 0,
@@ -437,7 +437,7 @@ function geometryFamily(type: string): string {
 export function isMergeCompatible(featuresMap: Map<string, Set<number>>): boolean {
 	const families = new Set<string>();
 	for (const [layerId, featureIndices] of featuresMap) {
-		const rawTopo = rawTopologyData.get(layerId);
+		const rawTopo = workingTopologyData.get(layerId);
 		if (!rawTopo) continue;
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const anyTopo = rawTopo as any;
@@ -457,7 +457,7 @@ export function extractSelectedFeatures(
 	onComplete?: () => void,
 ): void {
 	const layer = layers.find((l) => l.id === layerId);
-	const rawTopo = rawTopologyData.get(layerId);
+	const rawTopo = workingTopologyData.get(layerId);
 	if (!layer || !rawTopo) return;
 
 	// Clone and keep only the selected geometries for the new layer.
@@ -470,7 +470,7 @@ export function extractSelectedFeatures(
 		.filter((_: unknown, i: number) => featureIndices.has(i));
 
 	// Copy only — features remain in the source layer.
-	addUploadedLayer(`${layer.name} (copy)`, extractedTopo, layer.datasetId, false, onComplete);
+	addUploadedLayer(`${layer.name} (copy)`, extractedTopo, layer.datasetId, false, onComplete, layer.style);
 }
 
 export function mergeSelectedFeatures(
@@ -483,7 +483,7 @@ export function mergeSelectedFeatures(
 
 	for (const [layerId, featureIndices] of featuresMap) {
 		const layer = layers.find((l) => l.id === layerId);
-		const rawTopo = rawTopologyData.get(layerId);
+		const rawTopo = workingTopologyData.get(layerId);
 		if (!layer || !rawTopo) continue;
 
 		layerNames.push(layer.name);
