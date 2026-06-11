@@ -23,6 +23,8 @@
 
 	let isSelected = $derived(layerSelection.ids.includes(layer.id));
 	let isCanvasHovered = $derived(layerSelection.hoveredLayerId === layer.id);
+	let isEntered = $derived(layerSelection.enteredId === layer.id);
+	let anyEntered = $derived(layerSelection.enteredId !== null);
 
 	function handleRowClick(e: MouseEvent) {
 		if (e.shiftKey) {
@@ -109,7 +111,7 @@
 </script>
 
 <div class="layer-item-wrapper" class:open={styleOpen} onclick={(e) => e.stopPropagation()}>
-	<div class="layer-item" class:selected={styleOpen || isSelected} class:menu-open={menuOpen} class:canvas-hovered={isCanvasHovered && !isSelected && !styleOpen} use:dragHandle onclick={handleRowClick} onmouseenter={() => setHoveredLayer(layer.id)} onmouseleave={() => setHoveredLayer(null)} onpointerdown={(e) => { if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopImmediatePropagation(); }}>
+	<div class="layer-item" class:selected={!anyEntered && (styleOpen || isSelected)} class:menu-open={menuOpen} class:canvas-hovered={isCanvasHovered && !isSelected && !styleOpen} class:dimmed={anyEntered && !isEntered} use:dragHandle onclick={handleRowClick} onmouseenter={() => setHoveredLayer(layer.id)} onmouseleave={() => setHoveredLayer(null)} onpointerdown={(e) => { if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopImmediatePropagation(); }}>
 		{#if showSpinner}
 			<div class="style-spinner" aria-label="Loading">
 				<CircleNotch size={14} color="var(--color-text-tertiary)" />
@@ -294,6 +296,10 @@
 		position: relative;
 		z-index: 1;
 		box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+	}
+
+	.layer-item.dimmed {
+		opacity: 0.4;
 	}
 
 	.style-swatch {

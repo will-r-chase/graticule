@@ -16,6 +16,7 @@
 	import { mapState } from '$lib/stores/mapState.svelte';
 	import { mapView } from '$lib/stores/mapView.svelte';
 	import { canvasStyles } from '$lib/stores/canvasStyles.svelte';
+	import { stylePanel } from '$lib/stores/stylePanel.svelte';
 	import { PROJECTIONS } from '$lib/config';
 	import Toaster from '$lib/components/ui/Toaster.svelte';
 	import MapToolbar from '$lib/components/map/MapToolbar.svelte';
@@ -317,6 +318,10 @@
 
 	function handleClick(e: MouseEvent) {
 		if (suppressNextClick) { suppressNextClick = false; return; }
+		if (toolState.active === 'pan') {
+			if (!getHitAtPoint(e.clientX, e.clientY)) clearLayerSelection();
+			return;
+		}
 		if (toolState.active !== 'select') return;
 
 		const hit = getHitAtPoint(e.clientX, e.clientY);
@@ -1404,40 +1409,94 @@
 		const accentColor     = highlightCss.getPropertyValue('--color-accent').trim();
 		const surfaceSecColor = highlightCss.getPropertyValue('--color-surface-secondary').trim();
 		const borderColor     = highlightCss.getPropertyValue('--color-border').trim();
+		const textColor       = highlightCss.getPropertyValue('--color-text-primary').trim();
 
-		// Layer tint pass — grey for hovered, green for selected/entered.
+		// Layer state pass — bbox stroke (zoom-independent) + geometry tints.
+		// Entered layers are excluded: they rely solely on the opacity knockback above.
 		if (toolState.active === 'select') {
-			const hovId = layerSelection.hoveredLayerId;
-			const selIds = layerSelection.ids;
-			const hasTint = selIds.length > 0 || hovId !== null;
+			const hovId    = layerSelection.hoveredLayerId;
+			const selIds   = layerSelection.ids;
+			const enteredId = layerSelection.enteredId;
+			const hasTint  = selIds.length > 0 || hovId !== null;
 
 			if (hasTint) {
 				const vxMin = -tx / mapScale;
 				const vxMax = (width - tx) / mapScale;
 				const vyMin = -ty / mapScale;
 				const vyMax = (height - ty) / mapScale;
-				const textColor = highlightCss.getPropertyValue('--color-text-primary').trim();
 
 				ctx.save();
 				for (const layer of [...layers].reverse()) {
 					if (!layer.visible) continue;
+					if (layer.id === enteredId) continue; // entered = opacity knockback only
 					const isSelected = selIds.includes(layer.id);
-					const isHovered = layer.id === hovId;
+					const isHovered  = layer.id === hovId;
 					if (!isSelected && !isHovered) continue;
+					const stylePanelOpen = stylePanel.openId === layer.id;
 
-					const tintColor = isSelected ? accentColor : textColor;
 					const chunks = pathCache.get(layer.id);
 					if (!chunks) continue;
 
-					const isPolygon  = layer.geometryTypes.some(t => t === 'Polygon' || t === 'MultiPolygon');
+					const bboxColor  = isSelected ? accentColor : textColor;
+					const isPolygon  = layer.geometryTypes.some(t => t === 'Polygon'    || t === 'MultiPolygon');
 					const isLine     = layer.geometryTypes.some(t => t === 'LineString' || t === 'MultiLineString');
-					const hasNonPt   = layer.geometryTypes.some(t => t !== 'Point' && t !== 'MultiPoint');
-					const hasPoints  = layer.geometryTypes.some(t => t === 'Point' || t === 'MultiPoint');
+					const hasNonPt   = layer.geometryTypes.some(t => t !== 'Point'      && t !== 'MultiPoint');
+					const hasPoints  = layer.geometryTypes.some(t => t === 'Point'      || t === 'MultiPoint');
 
-					// Polygon fill tint
-					if (isPolygon) {
-						ctx.fillStyle = tintColor;
-						ctx.globalAlpha = isSelected ? 0.12 : 0.05;
+					// Bbox stroke — union all chunk bboxes, draw at zoom-independent thickness.
+					// Point layers have empty path cache arrays, so we fall back to projecting
+					// coordinates directly from the topology.
+					let bx1 = Infinity, by1 = Infinity, bx2 = -Infinity, by2 = -Infinity;
+					for (const { bbox } of chunks) {
+						const [xMin, yMin, xMax, yMax] = bbox;
+						if (!isFinite(xMin)) continue;
+						if (xMin < bx1) bx1 = xMin;
+						if (yMin < by1) by1 = yMin;
+						if (xMax > bx2) bx2 = xMax;
+						if (yMax > by2) by2 = yMax;
+					}
+					if (!isFinite(bx1) && hasPoints && projection) {
+						const topo = workingTopologyData.get(layer.id);
+						if (topo) {
+							const objectName = Object.keys(topo.objects)[0];
+							const ptData = feature(topo, topo.objects[objectName]) as {
+								features?: { geometry?: { type?: string; coordinates?: unknown } }[]
+							};
+							const projCenter: [number, number] | null = interactionMode === 'rotate'
+								? [-projectionStore.rotate[0], -projectionStore.rotate[1]]
+								: null;
+							for (const f of ptData?.features ?? []) {
+								const geom = f?.geometry;
+								if (!geom) continue;
+								const coords: [number, number][] =
+									geom.type === 'Point'        ? [geom.coordinates as [number, number]]
+									: geom.type === 'MultiPoint' ? (geom.coordinates as [number, number][])
+									: [];
+								for (const coord of coords) {
+									if (projCenter && d3.geoDistance(coord, projCenter) >= Math.PI / 2) continue;
+									const pt = projection(coord);
+									if (!pt) continue;
+									if (pt[0] < bx1) bx1 = pt[0];
+									if (pt[1] < by1) by1 = pt[1];
+									if (pt[0] > bx2) bx2 = pt[0];
+									if (pt[1] > by2) by2 = pt[1];
+								}
+							}
+						}
+					}
+					if (isFinite(bx1)) {
+						const pad = 6 / mapScale;
+						ctx.strokeStyle = bboxColor;
+						ctx.lineWidth   = 1.5 / mapScale;
+						ctx.globalAlpha = 1;
+						ctx.setLineDash([]);
+						ctx.strokeRect(bx1 - pad, by1 - pad, (bx2 - bx1) + pad * 2, (by2 - by1) + pad * 2);
+					}
+
+					// Polygon fill — dark overlay so it darkens any fill color.
+					if (isPolygon && !stylePanelOpen) {
+						ctx.fillStyle   = '#000000';
+						ctx.globalAlpha = isSelected ? 0.08 : 0.05;
 						for (const { path2d, bbox } of chunks) {
 							const [xMin, yMin, xMax, yMax] = bbox;
 							if (xMax < vxMin || xMin > vxMax || yMax < vyMin || yMin > vyMax) continue;
@@ -1445,10 +1504,24 @@
 						}
 					}
 
-					// Line / stroke tint — wider solid stroke overlay
-					if (hasNonPt && (isLine || !isPolygon)) {
-						ctx.strokeStyle = tintColor;
-						ctx.lineWidth = (layer.style.strokeWidth + 5) / mapScale;
+					// Polygon stroke thickening — accent outline when selected.
+					if (isPolygon && isSelected && !stylePanelOpen) {
+						ctx.strokeStyle = accentColor;
+						ctx.lineWidth   = (layer.style.strokeWidth + 3) / mapScale;
+						ctx.globalAlpha = 0.6;
+						ctx.setLineDash([]);
+						for (const { path2d, bbox } of chunks) {
+							const [xMin, yMin, xMax, yMax] = bbox;
+							if (xMax < vxMin || xMin > vxMax || yMax < vyMin || yMin > vyMax) continue;
+							ctx.stroke(path2d);
+						}
+						ctx.setLineDash([]);
+					}
+
+					// Line stroke tint — grey for hover, accent for selected.
+					if (hasNonPt && (isLine || !isPolygon) && !stylePanelOpen) {
+						ctx.strokeStyle = bboxColor;
+						ctx.lineWidth   = (layer.style.strokeWidth + 5) / mapScale;
 						ctx.globalAlpha = isSelected ? 0.30 : 0.18;
 						ctx.setLineDash([]);
 						for (const { path2d, bbox } of chunks) {
@@ -1459,8 +1532,8 @@
 						ctx.setLineDash([]);
 					}
 
-					// Point symbol tint — larger halo symbol drawn on top
-					if (hasPoints && projection) {
+					// Point halos — grey for hover, accent for selected.
+					if (hasPoints && projection && !stylePanelOpen) {
 						const topo = workingTopologyData.get(layer.id);
 						if (topo) {
 							const objectName = Object.keys(topo.objects)[0];
@@ -1468,22 +1541,22 @@
 								features?: { geometry?: { type?: string; coordinates?: unknown } }[]
 							};
 							if (ptData?.features) {
-								const sym = shapeMap[layer.style.pointShape] ?? d3shape.symbolCircle;
-								const r = layer.style.pointRadius;
+								const sym      = shapeMap[layer.style.pointShape] ?? d3shape.symbolCircle;
+								const r        = layer.style.pointRadius;
 								const haloArea = Math.PI * r * r * 4.0;
 								const haloPath = new Path2D(d3shape.symbol(sym, haloArea)() ?? '');
 								const projCenter: [number, number] | null = interactionMode === 'rotate'
 									? [-projectionStore.rotate[0], -projectionStore.rotate[1]]
 									: null;
 
-								ctx.fillStyle = tintColor;
+								ctx.fillStyle   = bboxColor;
 								ctx.globalAlpha = isSelected ? 0.45 : 0.30;
 
 								for (const f of ptData.features) {
 									const geom = f?.geometry;
 									if (!geom) continue;
 									const coordsList: [number, number][] =
-										geom.type === 'Point'      ? [geom.coordinates as [number, number]]
+										geom.type === 'Point'       ? [geom.coordinates as [number, number]]
 										: geom.type === 'MultiPoint' ? (geom.coordinates as [number, number][])
 										: [];
 									for (const coord of coordsList) {
@@ -1505,7 +1578,7 @@
 			}
 		}
 
-		// Hover pass — weight/size change only, original colors preserved.
+		// Hover pass — grey stroke, subtle dark fill overlay, slightly larger points.
 		if (toolState.active === 'select' && hoveredFeature.value) {
 			const isSelected = selection.features.get(hoveredFeature.value.layerId)?.has(hoveredFeature.value.featureIndex) ?? false;
 			if (!isSelected) {
@@ -1513,17 +1586,16 @@
 					ctx,
 					hoveredFeature.value.layerId,
 					hoveredFeature.value.featureIndex,
-					surfaceSecColor,  // polygon fill overlay (grey tint)
-					'',               // ignored — useLayerStyle reads layer.style.stroke
-					0.5,              // polygon fill opacity
-					3 / mapScale,     // thicker stroke for lines/outlines
-					2,                // point extraRadius
-					true,             // useLayerStyle — keep original stroke/point colors
+					'#000000',    // polygon fill — dark overlay darkens any fill color
+					textColor,    // grey stroke for polygons and lines
+					0.08,         // subtle fill opacity
+					3 / mapScale, // thicker stroke
+					2,            // slightly larger points
 				);
 			}
 		}
 
-		// Selection pass — accent green, thicker strokes, bigger points.
+		// Selection pass — accent fill, accent border, accent stroke, accent dot.
 		for (const [layerId, featureIndices] of selection.features) {
 			for (const fi of featureIndices) {
 				drawFeatureHighlight(
@@ -1533,8 +1605,8 @@
 					accentColor,
 					accentColor,
 					0.25,         // polygon fill opacity
-					4 / mapScale, // noticeably thick for lines
-					5,            // point extraRadius — dot itself gets bigger
+					4 / mapScale, // thick border for polygons / stroke for lines
+					5,            // larger dot for points
 				);
 			}
 		}

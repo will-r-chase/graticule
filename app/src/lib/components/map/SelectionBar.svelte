@@ -70,7 +70,7 @@
 		<span>Delete</span>
 	</button>
 	<div class="bar-divider"></div>
-	<span class="count">{count} selected</span>
+	<span class="count">{count} {count === 1 ? 'feature' : 'features'}</span>
 	<button
 		class="bar-btn bar-btn--icon"
 		onclick={clearSelection}

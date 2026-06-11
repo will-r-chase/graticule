@@ -9,6 +9,7 @@
 	import FeaturesPanel from './FeaturesPanel.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
 	import { featuresTable, openFeaturesTable, closeFeaturesTable } from '$lib/stores/featuresTable.svelte';
+	import { stylePanel } from '$lib/stores/stylePanel.svelte';
 	import { Table } from 'phosphor-svelte';
 
 	function toggleTable(): void {
@@ -26,14 +27,11 @@
 	// Track which layer's style panel is open. Stored here (not inside the
 	// dndzone subtree) so the ColorPicker is never a descendant of the drag
 	// container — keeping pointer events fully isolated from the drag handler.
-	let openStyleLayerId = $state<string | null>(null);
 	let pickerOpen = $state(false);
 
 	setContext('stylePanel', {
-		get openId() { return openStyleLayerId; },
-		toggle(id: string) {
-			openStyleLayerId = openStyleLayerId === id ? null : id;
-		},
+		get openId() { return stylePanel.openId; },
+		toggle(id: string) { stylePanel.toggle(id); },
 		get pickerOpen() { return pickerOpen; },
 		setPickerOpen(open: boolean) { pickerOpen = open; },
 	});
