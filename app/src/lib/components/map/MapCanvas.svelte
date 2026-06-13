@@ -1198,7 +1198,8 @@
 		ctx.clearRect(0, 0, width, height);
 
 		if (canvasStyles.background.enabled) {
-			ctx.globalAlpha = canvasStyles.background.alpha;
+			const bgDim = layerSelection.enteredId !== null ? 0.35 : 1.0;
+			ctx.globalAlpha = canvasStyles.background.alpha * bgDim;
 			ctx.fillStyle = canvasStyles.background.hex;
 			ctx.fillRect(0, 0, width, height);
 			ctx.globalAlpha = 1;
@@ -1682,7 +1683,7 @@
 		position: relative;
 		flex: 1;
 		min-height: 0;
-		background-color: var(--grey-50);
+		background-color: #ffffff;
 		overflow: hidden;
 	}
 
