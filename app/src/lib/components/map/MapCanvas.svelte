@@ -56,6 +56,7 @@
 
 	// Drag tracking — plain vars, no reactivity needed.
 	let isDragging = $state(false); // $state so canvas cursor class updates
+	let spacePanning = $state(false); // Space held in select mode → temporary pan
 	let lastPointerX = 0;
 	let lastPointerY = 0;
 
@@ -318,10 +319,7 @@
 
 	function handleClick(e: MouseEvent) {
 		if (suppressNextClick) { suppressNextClick = false; return; }
-		if (toolState.active === 'pan') {
-			if (!getHitAtPoint(e.clientX, e.clientY)) clearLayerSelection();
-			return;
-		}
+		if (toolState.active === 'pan') return;
 		if (toolState.active !== 'select') return;
 
 		const hit = getHitAtPoint(e.clientX, e.clientY);
@@ -458,7 +456,7 @@
 	}
 
 	function handlePointerDown(e: PointerEvent) {
-		if (toolState.active === 'pan') {
+		if (toolState.active === 'pan' || spacePanning) {
 			isDragging = true;
 			panMoved = false;
 			lastPointerX = e.clientX;
@@ -989,10 +987,23 @@
 
 	// Global keyboard shortcuts.
 	$effect(() => {
+		function handleKeyUp(e: KeyboardEvent) {
+			if (e.key === ' ') {
+				spacePanning = false;
+				if (isDragging) { isDragging = false; }
+			}
+		}
+
 		function handleKeyDown(e: KeyboardEvent) {
 			// Don't intercept when focus is in a text field.
 			const tag = (e.target as Element | null)?.tagName;
 			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+			if (e.key === ' ' && toolState.active === 'select') {
+				e.preventDefault(); // prevent page scroll
+				spacePanning = true;
+				return;
+			}
 
 			if (e.key === 'v' || e.key === 'V') {
 				exitLayer();
@@ -1024,7 +1035,11 @@
 			}
 		}
 		window.addEventListener('keydown', handleKeyDown);
-		return () => window.removeEventListener('keydown', handleKeyDown);
+		window.addEventListener('keyup', handleKeyUp);
+		return () => {
+			window.removeEventListener('keydown', handleKeyDown);
+			window.removeEventListener('keyup', handleKeyUp);
+		};
 	});
 
 	// Observe container size and update width/height.
@@ -1414,7 +1429,7 @@
 
 		// Layer state pass — bbox stroke (zoom-independent) + geometry tints.
 		// Entered layers are excluded: they rely solely on the opacity knockback above.
-		if (toolState.active === 'select') {
+		if (layerSelection.ids.length > 0 || layerSelection.hoveredLayerId !== null) {
 			const hovId    = layerSelection.hoveredLayerId;
 			const selIds   = layerSelection.ids;
 			const enteredId = layerSelection.enteredId;
@@ -1652,9 +1667,10 @@
 		<canvas
 			bind:this={canvasEl}
 			class:dragging={isDragging}
-			class:select-mode={toolState.active === 'select'}
-			class:feature-hover={toolState.active === 'select' && hoveredFeature.value !== null}
-			class:layer-hover={toolState.active === 'select' && layerSelection.hoveredLayerId !== null && hoveredFeature.value === null}
+			class:select-mode={toolState.active === 'select' && !spacePanning}
+			class:space-pan={spacePanning}
+			class:feature-hover={toolState.active === 'select' && !spacePanning && hoveredFeature.value !== null}
+			class:layer-hover={toolState.active === 'select' && !spacePanning && layerSelection.hoveredLayerId !== null && hoveredFeature.value === null}
 	
 			onclick={handleClick}
 			ondblclick={handleDblClick}
@@ -1698,6 +1714,14 @@
 
 	canvas.select-mode {
 		cursor: default;
+	}
+
+	canvas.space-pan {
+		cursor: grab;
+	}
+
+	canvas.space-pan.dragging {
+		cursor: grabbing;
 	}
 
 	canvas.feature-hover,

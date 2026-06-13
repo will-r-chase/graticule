@@ -16,6 +16,28 @@
 
 	let { datasets, onOpenUpload }: { datasets: Dataset[]; onOpenUpload: () => void } = $props();
 
+	let datasetListEl = $state<HTMLDivElement | null>(null);
+	let hasBottomScroll = $state(false);
+
+	$effect(() => {
+		const el = datasetListEl;
+		if (!el) return;
+		function update() {
+			hasBottomScroll = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+		}
+		update();
+		el.addEventListener('scroll', update, { passive: true });
+		const ro = new ResizeObserver(update);
+		ro.observe(el);
+		const mo = new MutationObserver(update);
+		mo.observe(el, { childList: true, subtree: true });
+		return () => {
+			el.removeEventListener('scroll', update);
+			ro.disconnect();
+			mo.disconnect();
+		};
+	});
+
 	let filtersOpen = $state(false);
 	let search = $state('');
 	let activeType = $state<string | null>(null);
@@ -138,7 +160,8 @@
 		</div>
 	</div>
 
-	<div class="dataset-list">
+	<div class="dataset-list-wrapper">
+	<div class="dataset-list" bind:this={datasetListEl}>
 		{#if uploadedDatasets.length > 0}
 			<div class="source-section" class:collapsed={collapsedSections.has('__uploaded')}>
 				<button class="source-heading h4" onclick={() => toggleSection('__uploaded')}>
@@ -192,6 +215,10 @@
 				{/if}
 			</div>
 		{/each}
+	</div>
+	{#if hasBottomScroll}
+		<div class="scroll-fade-bottom" aria-hidden="true"></div>
+	{/if}
 	</div>
 
 	<div class="canvas-section">
@@ -487,10 +514,28 @@
 
 	/* --- Dataset list --- */
 
+	.dataset-list-wrapper {
+		position: relative;
+		flex: 1;
+		min-height: 0;
+		overflow: hidden;
+	}
+
 	.dataset-list {
 		overflow-y: auto;
-		flex: 1;
+		height: 100%;
 		padding: var(--space-l) 0;
+	}
+
+	.scroll-fade-bottom {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		height: 32px;
+		pointer-events: none;
+		z-index: 10;
+		background: linear-gradient(to top, var(--color-surface-primary) 0%, transparent 100%);
 	}
 
 	.source-section {

@@ -12,6 +12,28 @@
 	import { stylePanel } from '$lib/stores/stylePanel.svelte';
 	import { Table } from 'phosphor-svelte';
 
+	let layerListEl = $state<HTMLDivElement | null>(null);
+	let hasBottomScroll = $state(false);
+
+	$effect(() => {
+		const el = layerListEl;
+		if (!el) return;
+		function update() {
+			hasBottomScroll = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+		}
+		update();
+		el.addEventListener('scroll', update, { passive: true });
+		const ro = new ResizeObserver(update);
+		ro.observe(el);
+		const mo = new MutationObserver(update);
+		mo.observe(el, { childList: true, subtree: true });
+		return () => {
+			el.removeEventListener('scroll', update);
+			ro.disconnect();
+			mo.disconnect();
+		};
+	});
+
 	function toggleTable(): void {
 		if (featuresTable.open) {
 			closeFeaturesTable();
@@ -103,6 +125,7 @@
 		{:else}
 			<div
 				class="layer-list"
+				bind:this={layerListEl}
 				use:dragHandleZone={{ items: layers, flipDurationMs: 150, dropTargetStyle: {}, dragDisabled: pickerOpen, transformDraggedElement: collapseGhostAccordion }}
 				onconsider={handleConsider}
 				onfinalize={handleFinalize}
@@ -111,6 +134,9 @@
 					<LayerItem {layer} />
 				{/each}
 			</div>
+		{/if}
+		{#if hasBottomScroll}
+			<div class="scroll-fade-bottom" aria-hidden="true"></div>
 		{/if}
 	</div>
 
@@ -145,6 +171,7 @@
 	}
 
 	.layers-section {
+		position: relative;
 		flex: 1;
 		min-height: 0;
 		display: flex;
@@ -225,5 +252,15 @@
 		outline: none;
 	}
 
+	.scroll-fade-bottom {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		height: 32px;
+		pointer-events: none;
+		z-index: 10;
+		background: linear-gradient(to top, var(--color-surface-primary) 0%, transparent 100%);
+	}
 
 </style>
