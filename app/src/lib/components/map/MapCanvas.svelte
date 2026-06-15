@@ -26,6 +26,7 @@
 	import { MagnifyingGlassPlus, MagnifyingGlassMinus, CornersOut } from 'phosphor-svelte';
 	import { computeFeatureBboxes } from '$lib/utils/featureBbox';
 	import { featuresTable } from '$lib/stores/featuresTable.svelte';
+	import { clipBbox, setClipBbox } from '$lib/stores/clipBbox.svelte';
 
 	// Merge core and extended projection namespaces so we can look up any
 	// projection by its function name regardless of which package it comes from.
@@ -319,6 +320,7 @@
 
 	function handleClick(e: MouseEvent) {
 		if (suppressNextClick) { suppressNextClick = false; return; }
+		if (clipBbox.open && clipBbox.mode === 'bbox') return;
 		if (toolState.active === 'pan') return;
 		if (toolState.active !== 'select') return;
 
@@ -456,6 +458,7 @@
 	}
 
 	function handlePointerDown(e: PointerEvent) {
+		if (clipBbox.open && clipBbox.mode === 'bbox' && toolState.active !== 'pan' && !spacePanning) return;
 		if (toolState.active === 'pan' || spacePanning) {
 			isDragging = true;
 			panMoved = false;
@@ -627,6 +630,93 @@
 			Math.min(90,   Math.max(...lats)),
 		];
 	}
+
+	// --- Clip bbox overlay ---
+
+	let draggingHandle = $state<'nw' | 'ne' | 'se' | 'sw' | null>(null);
+
+	function projectPoint(lon: number, lat: number): [number, number] | null {
+		if (!projection) return null;
+		const p = projection([lon, lat]);
+		if (!p) return null;
+		return [p[0] * mapScale + tx, p[1] * mapScale + ty];
+	}
+
+	const BBOX_SAMPLES = 20;
+
+	const bboxPath = $derived.by(() => {
+		if (!clipBbox.open || clipBbox.mode !== 'bbox' || !projection) return '';
+		const { west, south, east, north } = clipBbox;
+		const pts: [number, number][] = [];
+		for (let i = 0; i <= BBOX_SAMPLES; i++) {
+			const t = i / BBOX_SAMPLES;
+			const p1 = projectPoint(west + (east - west) * t, north);   // top W→E
+			if (p1) pts.push(p1);
+		}
+		for (let i = 0; i <= BBOX_SAMPLES; i++) {
+			const t = i / BBOX_SAMPLES;
+			const p2 = projectPoint(east, north + (south - north) * t); // right N→S
+			if (p2) pts.push(p2);
+		}
+		for (let i = 0; i <= BBOX_SAMPLES; i++) {
+			const t = i / BBOX_SAMPLES;
+			const p3 = projectPoint(east + (west - east) * t, south);   // bottom E→W
+			if (p3) pts.push(p3);
+		}
+		for (let i = 0; i <= BBOX_SAMPLES; i++) {
+			const t = i / BBOX_SAMPLES;
+			const p4 = projectPoint(west, south + (north - south) * t); // left S→N
+			if (p4) pts.push(p4);
+		}
+		if (pts.length === 0) return '';
+		return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]},${p[1]}`).join(' ') + ' Z';
+	});
+
+	const bboxCorners = $derived.by(() => {
+		if (!clipBbox.open || clipBbox.mode !== 'bbox') return null;
+		return {
+			nw: projectPoint(clipBbox.west, clipBbox.north),
+			ne: projectPoint(clipBbox.east, clipBbox.north),
+			se: projectPoint(clipBbox.east, clipBbox.south),
+			sw: projectPoint(clipBbox.west, clipBbox.south),
+		};
+	});
+
+	function onHandleDragMove(e: MouseEvent) {
+		if (!draggingHandle || !projection || !containerEl) return;
+		const rect = containerEl.getBoundingClientRect();
+		const sx = e.clientX - rect.left;
+		const sy = e.clientY - rect.top;
+		const geo = projection.invert!([(sx - tx) / mapScale, (sy - ty) / mapScale]);
+		const lon = geo ? Math.max(-180, Math.min(180, geo[0])) : null;
+		const lat = geo ? Math.max(-90,  Math.min(90,  geo[1])) : null;
+		const { west, south, east, north } = clipBbox;
+		if (draggingHandle === 'nw') setClipBbox(lon ?? west, south, east, lat ?? north);
+		if (draggingHandle === 'ne') setClipBbox(west, south, lon ?? east, lat ?? north);
+		if (draggingHandle === 'se') setClipBbox(west, lat ?? south, lon ?? east, north);
+		if (draggingHandle === 'sw') setClipBbox(lon ?? west, lat ?? south, east, north);
+	}
+
+	function onHandleDragEnd() {
+		draggingHandle = null;
+		window.removeEventListener('mousemove', onHandleDragMove);
+		window.removeEventListener('mouseup', onHandleDragEnd);
+	}
+
+	function startHandleDrag(e: MouseEvent, handle: 'nw' | 'ne' | 'se' | 'sw') {
+		e.preventDefault();
+		e.stopPropagation();
+		draggingHandle = handle;
+		window.addEventListener('mousemove', onHandleDragMove);
+		window.addEventListener('mouseup', onHandleDragEnd);
+	}
+
+	$effect(() => {
+		return () => {
+			window.removeEventListener('mousemove', onHandleDragMove);
+			window.removeEventListener('mouseup', onHandleDragEnd);
+		};
+	});
 
 	// Parse a 6-digit hex string to [r, g, b], or null on failure.
 	function hexToRgb(hex: string): [number, number, number] | null {
@@ -1349,7 +1439,11 @@
 			const hasNonPoint = layer.geometryTypes.some((t) => t !== 'Point' && t !== 'MultiPoint');
 			const hasPoints   = layer.geometryTypes.some((t) => t === 'Point' || t === 'MultiPoint');
 
-				const dim = layerSelection.enteredId !== null && layer.id !== layerSelection.enteredId ? 0.35 : 1.0;
+				const dim = layerSelection.enteredId !== null && layer.id !== layerSelection.enteredId ? 0.35
+					: clipBbox.open && !layerSelection.ids.includes(layer.id) ? 0.2
+					: 1.0;
+				const isMaskLayer = clipBbox.open && clipBbox.mode === 'layer' && layer.id === clipBbox.maskId;
+				const clipFill   = isMaskLayer ? '#e9a400' : null;
 
 			if (hasNonPoint) {
 				const vxMin = -tx / mapScale;
@@ -1370,7 +1464,7 @@
 
 					if (layer.style.fill !== 'none') {
 						ctx.globalAlpha = layer.style.fillOpacity * dim;
-						ctx.fillStyle = layer.style.fill;
+						ctx.fillStyle = clipFill ?? layer.style.fill;
 						ctx.fill(path2d, 'evenodd');
 					}
 					ctx.globalAlpha = layer.style.strokeOpacity * dim;
@@ -1481,6 +1575,7 @@
 					const chunks = pathCache.get(layer.id);
 					if (!chunks) continue;
 
+					const isMask     = clipBbox.open && clipBbox.mode === 'layer' && layer.id === clipBbox.maskId;
 					const bboxColor  = isSelected ? accentColor : textColor;
 					const isPolygon  = layer.geometryTypes.some(t => t === 'Polygon'    || t === 'MultiPolygon');
 					const isLine     = layer.geometryTypes.some(t => t === 'LineString' || t === 'MultiLineString');
@@ -1538,7 +1633,7 @@
 					}
 
 					// Polygon fill — dark overlay so it darkens any fill color.
-					if (isPolygon && !stylePanelOpen) {
+					if (isPolygon && !stylePanelOpen && !isMask && !clipBbox.open) {
 						ctx.fillStyle   = '#000000';
 						ctx.globalAlpha = isSelected ? 0.08 : 0.05;
 						for (const { path2d, bbox } of chunks) {
@@ -1548,9 +1643,9 @@
 						}
 					}
 
-					// Polygon stroke thickening — accent outline when selected.
-					if (isPolygon && isSelected && !stylePanelOpen) {
-						ctx.strokeStyle = accentColor;
+					// Polygon stroke thickening — accent outline when selected, orange for clip mask.
+					if (isPolygon && isSelected && !stylePanelOpen && !clipBbox.open) {
+						ctx.strokeStyle = isMask ? '#f6c87e' : accentColor;
 						ctx.lineWidth   = (layer.style.strokeWidth + 3) / mapScale;
 						ctx.globalAlpha = 0.6;
 						ctx.setLineDash([]);
@@ -1708,6 +1803,28 @@
 			onpointerleave={() => { hoveredFeature.value = null; setHoveredLayer(null); }}
 		></canvas>
 
+		{#if clipBbox.open && clipBbox.mode === 'bbox'}
+		<svg class="clip-bbox-overlay" ondragstart={(e) => e.preventDefault()}>
+			{#if bboxPath}
+			<path d={bboxPath} class="bbox-outline" />
+			{/if}
+			{#if bboxCorners}
+				{#each ([['nw', bboxCorners.nw], ['ne', bboxCorners.ne], ['se', bboxCorners.se], ['sw', bboxCorners.sw]] as const) as [handle, pt]}
+					{#if pt}
+					<rect
+						x={pt[0] - 5}
+						y={pt[1] - 5}
+						width={10}
+						height={10}
+						class="bbox-handle"
+						onmousedown={(e) => startHandleDrag(e, handle)}
+					/>
+					{/if}
+				{/each}
+			{/if}
+		</svg>
+		{/if}
+
 		{#if featuresTable.open}
 			<FeaturesTable />
 		{/if}
@@ -1827,6 +1944,36 @@
 
 	.canvas-area.table-open .bottom-right-stack {
 		bottom: calc(260px + var(--space-m));
+	}
+
+	.clip-bbox-overlay {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		overflow: visible;
+	}
+
+	.bbox-outline {
+		fill: none;
+		stroke: var(--color-accent);
+		stroke-width: 1.5;
+		stroke-dasharray: 6 4;
+		opacity: 0.8;
+	}
+
+	.bbox-handle {
+		fill: white;
+		stroke: var(--color-accent);
+		stroke-width: 1.5;
+		rx: 2;
+		pointer-events: all;
+		cursor: grab;
+	}
+
+	.bbox-handle:hover {
+		fill: var(--color-accent);
 	}
 
 </style>

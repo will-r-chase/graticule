@@ -525,12 +525,31 @@ export function clipByPolygon(targetIds: string[], maskId: string, onComplete?: 
 	});
 
 	Promise.all(clips).then(results => {
-		for (const r of results) {
-			if (!r) continue;
+		const valid = results.filter((r): r is NonNullable<typeof r> => r !== null);
+		if (valid.length === 0) { onComplete?.(); return; }
+		let remaining = valid.length;
+		const afterEach = () => { if (--remaining === 0) onComplete?.(); };
+		for (const r of valid) {
 			removeLayer(r.t.id);
-			insertLayerAt(`${r.t.layer.name} (clipped)`, r.result, r.t.index, r.t.layer.datasetId, r.t.layer.style);
+			insertLayerAt(`${r.t.layer.name} (clipped)`, r.result, r.t.index, r.t.layer.datasetId, r.t.layer.style, afterEach);
 		}
-		onComplete?.();
+	});
+}
+
+function denseBboxGeoJSON(west: number, south: number, east: number, north: number): string {
+	const coords: [number, number][] = [];
+	const STEP = 1;
+	for (let lon = west; lon < east; lon += STEP) coords.push([lon, north]);
+	coords.push([east, north]);
+	for (let lat = north; lat > south; lat -= STEP) coords.push([east, lat]);
+	coords.push([east, south]);
+	for (let lon = east; lon > west; lon -= STEP) coords.push([lon, south]);
+	coords.push([west, south]);
+	for (let lat = south; lat < north; lat += STEP) coords.push([west, lat]);
+	coords.push([west, north]);
+	return JSON.stringify({
+		type: 'FeatureCollection',
+		features: [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [coords] } }],
 	});
 }
 
@@ -548,21 +567,28 @@ export function clipByBbox(layerIds: string[], bbox: [number, number, number, nu
 
 	if (targets.length === 0) return;
 
+	const bboxGeoJSON = denseBboxGeoJSON(west, south, east, north);
+
 	const clips = targets.map(t => {
-		const inputFiles = { 'input.topojson': JSON.stringify(t.topo) };
-		const cmd = `-i input.topojson -clip bbox=${west},${south},${east},${north} -o output.topojson format=topojson`;
+		const inputFiles = {
+			'input.topojson': JSON.stringify(withRenamedObject(t.topo, 'input')),
+			'bbox_mask.geojson': bboxGeoJSON,
+		};
+		const cmd = `-i input.topojson bbox_mask.geojson combine-files -clip source=bbox_mask target=input -o output.topojson format=topojson`;
 		return runMapshaper(cmd, inputFiles).then(output =>
 			output ? { t, result: JSON.parse(output['output.topojson']) as Topology } : null
 		);
 	});
 
 	Promise.all(clips).then(results => {
-		for (const r of results) {
-			if (!r) continue;
+		const valid = results.filter((r): r is NonNullable<typeof r> => r !== null);
+		if (valid.length === 0) { onComplete?.(); return; }
+		let remaining = valid.length;
+		const afterEach = () => { if (--remaining === 0) onComplete?.(); };
+		for (const r of valid) {
 			removeLayer(r.t.id);
-			insertLayerAt(`${r.t.layer.name} (clipped)`, r.result, r.t.index, r.t.layer.datasetId, r.t.layer.style);
+			insertLayerAt(`${r.t.layer.name} (clipped)`, r.result, r.t.index, r.t.layer.datasetId, r.t.layer.style, afterEach);
 		}
-		onComplete?.();
 	});
 }
 

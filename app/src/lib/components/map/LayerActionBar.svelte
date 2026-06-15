@@ -6,6 +6,7 @@
 	import { UniteSquare, DiamondsFour, Crop, SubtractSquare, Unite, GitMerge, X } from 'phosphor-svelte';
 	import type { Topology } from 'topojson-specification';
 	import Checkbox from '$lib/components/ui/Checkbox.svelte';
+	import { clipBbox, openClipPopover, closeClipPopover, setClipBbox } from '$lib/stores/clipBbox.svelte';
 
 	let { getViewportBbox }: { getViewportBbox: () => [number, number, number, number] | null } = $props();
 
@@ -115,12 +116,6 @@
 	}
 
 	// Clip popover state.
-	let clipOpen = $state(false);
-	let clipMode = $state<'layer' | 'bbox'>('layer');
-	let bboxNorth = $state('');
-	let bboxSouth = $state('');
-	let bboxEast = $state('');
-	let bboxWest = $state('');
 	let viewportChecked = $state(false);
 
 	const clipMask = $derived(selectedLayers[0] ?? null);
@@ -150,43 +145,30 @@
 		];
 	}
 
-	function setBboxState([west, south, east, north]: [number, number, number, number]) {
-		bboxWest = west.toFixed(4);
-		bboxSouth = south.toFixed(4);
-		bboxEast = east.toFixed(4);
-		bboxNorth = north.toFixed(4);
-	}
-
 	function openClip() {
-		clipMode = (count === 1 || !maskIsPolygon) ? 'bbox' : 'layer';
-		setBboxState(computeDefaultBbox());
+		const mode = (count === 1 || !maskIsPolygon) ? 'bbox' : 'layer';
+		const maskId = mode === 'layer' ? (selectedLayers[0]?.id ?? null) : null;
 		viewportChecked = false;
-		clipOpen = true;
+		openClipPopover(mode, computeDefaultBbox(), maskId);
 	}
 
 	function handleClipViewport() {
 		viewportChecked = !viewportChecked;
 		if (viewportChecked) {
 			const vp = getViewportBbox();
-			if (vp) setBboxState(vp);
+			if (vp) setClipBbox(vp[0], vp[1], vp[2], vp[3]);
 		}
 	}
 
 	function handleClipConfirm() {
-		clipOpen = false;
-		if (clipMode === 'layer' && count > 1) {
+		closeClipPopover();
+		if (clipBbox.mode === 'layer' && count > 1) {
 			clipByPolygon(clipTargets.map(l => l.id), clipMask!.id, () => {
 				clearLayerSelection();
 				pushSnapshot();
 			});
 		} else {
-			const bbox: [number, number, number, number] = [
-				parseFloat(bboxWest),
-				parseFloat(bboxSouth),
-				parseFloat(bboxEast),
-				parseFloat(bboxNorth),
-			];
-			clipByBbox(layerSelection.ids, bbox, () => {
+			clipByBbox(layerSelection.ids, [clipBbox.west, clipBbox.south, clipBbox.east, clipBbox.north], () => {
 				clearLayerSelection();
 				pushSnapshot();
 			});
@@ -195,7 +177,7 @@
 
 	function handleClipKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter') handleClipConfirm();
-		if (e.key === 'Escape') clipOpen = false;
+		if (e.key === 'Escape') closeClipPopover();
 	}
 </script>
 
@@ -210,23 +192,23 @@
 		Clip
 	</button>
 
-	{#if clipOpen}
+	{#if clipBbox.open}
 	<div class="clip-popover" onkeydown={handleClipKeydown} role="dialog" aria-label="Clip options">
 		{#if count > 1}
 		<div class="clip-radios">
 			<label class="clip-radio" class:clip-radio--disabled={!maskIsPolygon}>
-				<input type="radio" bind:group={clipMode} value="layer" disabled={!maskIsPolygon} />
+				<input type="radio" bind:group={clipBbox.mode} value="layer" disabled={!maskIsPolygon} />
 				Clip to layer
 			</label>
 			<label class="clip-radio">
-				<input type="radio" bind:group={clipMode} value="bbox" />
+				<input type="radio" bind:group={clipBbox.mode} value="bbox" />
 				Clip to bounding box
 			</label>
 		</div>
 		<div class="popover-divider"></div>
 		{/if}
 
-		{#if clipMode === 'layer' && count > 1}
+		{#if clipBbox.mode === 'layer' && count > 1}
 		<div class="clip-layer-info">
 			<span class="clip-layer-name clip-layer-name--mask">{clipMask?.name}</span>
 			<div class="clip-targets-row">
@@ -242,13 +224,13 @@
 		{:else}
 		<div class="bbox-grid">
 			<label class="bbox-label" for="clip-north">N</label>
-			<input id="clip-north" class="bbox-input" type="number" bind:value={bboxNorth} step="1" />
+			<input id="clip-north" class="bbox-input" type="number" bind:value={clipBbox.north} step="1" />
 			<label class="bbox-label" for="clip-west">W</label>
-			<input id="clip-west" class="bbox-input" type="number" bind:value={bboxWest} step="1" />
+			<input id="clip-west" class="bbox-input" type="number" bind:value={clipBbox.west} step="1" />
 			<label class="bbox-label" for="clip-east">E</label>
-			<input id="clip-east" class="bbox-input" type="number" bind:value={bboxEast} step="1" />
+			<input id="clip-east" class="bbox-input" type="number" bind:value={clipBbox.east} step="1" />
 			<label class="bbox-label" for="clip-south">S</label>
-			<input id="clip-south" class="bbox-input" type="number" bind:value={bboxSouth} step="1" />
+			<input id="clip-south" class="bbox-input" type="number" bind:value={clipBbox.south} step="1" />
 		</div>
 		<label class="clip-viewport">
 			<Checkbox checked={viewportChecked} onchange={handleClipViewport} />
@@ -257,7 +239,7 @@
 		{/if}
 
 		<div class="popover-actions">
-			<button class="popover-cancel" onclick={() => clipOpen = false}>Cancel</button>
+			<button class="popover-cancel" onclick={closeClipPopover}>Cancel</button>
 			<button class="popover-confirm" onclick={handleClipConfirm}>Clip</button>
 		</div>
 	</div>
@@ -683,6 +665,10 @@
 
 	.clip-layer-name--mask {
 		font-weight: 600;
+		background: var(--orange-300);
+		border-radius: 3px;
+		padding: 0 4px;
+		width: fit-content;
 	}
 
 	.bbox-grid {
