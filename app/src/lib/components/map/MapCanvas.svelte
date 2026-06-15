@@ -600,6 +600,34 @@
 		return fn().fitSize([width, height], { type: 'Sphere' }).rotate(rot);
 	});
 
+	// Returns the geographic bbox [west, south, east, north] of the current viewport,
+	// sampling the canvas border to handle curved projections. Returns null if the
+	// projection is not available.
+	function getViewportBbox(): [number, number, number, number] | null {
+		if (!projection || !width || !height) return null;
+		const EDGE_SAMPLES = 20;
+		const screenSamples: [number, number][] = [];
+		for (let i = 0; i <= EDGE_SAMPLES; i++) {
+			const t = i / EDGE_SAMPLES;
+			screenSamples.push([width * t, 0]);        // top edge
+			screenSamples.push([width * t, height]);   // bottom edge
+			screenSamples.push([0, height * t]);        // left edge
+			screenSamples.push([width, height * t]);    // right edge
+		}
+		const coords = screenSamples
+			.map(([sx, sy]) => projection!.invert!([(sx - tx) / mapScale, (sy - ty) / mapScale]))
+			.filter((c): c is [number, number] => c !== null);
+		if (coords.length === 0) return null;
+		const lons = coords.map(c => c[0]);
+		const lats = coords.map(c => c[1]);
+		return [
+			Math.max(-180, Math.min(...lons)),
+			Math.max(-90,  Math.min(...lats)),
+			Math.min(180,  Math.max(...lons)),
+			Math.min(90,   Math.max(...lats)),
+		];
+	}
+
 	// Parse a 6-digit hex string to [r, g, b], or null on failure.
 	function hexToRgb(hex: string): [number, number, number] | null {
 		const m = hex.replace('#', '').match(/^([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
@@ -1633,7 +1661,7 @@
 <div class="map-canvas">
 	<div class="canvas-area" class:table-open={featuresTable.open} bind:this={containerEl}>
 		<div class="bottom-center">
-			<LayerActionBar />
+			<LayerActionBar {getViewportBbox} />
 			<SelectionBar />
 			<MapToolbar />
 		</div>

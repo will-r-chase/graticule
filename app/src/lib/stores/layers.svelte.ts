@@ -498,24 +498,71 @@ export function explodeLayer(layerId: string, onComplete?: () => void): void {
 	});
 }
 
-export function clipLayers(targetId: string, maskId: string, onComplete?: () => void): void {
-	const targetLayer = layers.find(l => l.id === targetId);
-	const targetTopo = workingTopologyData.get(targetId);
+export function clipByPolygon(targetIds: string[], maskId: string, onComplete?: () => void): void {
 	const maskTopo = workingTopologyData.get(maskId);
-	if (!targetLayer || !targetTopo || !maskTopo) return;
+	if (!maskTopo) return;
 
-	const index = layers.findIndex(l => l.id === targetId);
-	const inputFiles = {
-		'layer0.topojson': JSON.stringify(withRenamedObject(targetTopo, 'layer0')),
-		'layer1.topojson': JSON.stringify(withRenamedObject(maskTopo, 'layer1')),
-	};
-	const cmd = `-i layer0.topojson layer1.topojson combine-files -clip source=layer1 target=layer0 -o output.topojson format=topojson`;
+	const targets = targetIds
+		.map(id => ({
+			id,
+			layer: layers.find(l => l.id === id),
+			topo: workingTopologyData.get(id),
+			index: layers.findIndex(l => l.id === id),
+		}))
+		.filter((t): t is typeof t & { layer: Layer; topo: Topology } => !!(t.layer && t.topo));
 
-	runMapshaper(cmd, inputFiles).then(output => {
-		if (!output) return;
-		const result = JSON.parse(output['output.topojson']) as Topology;
-		removeLayer(targetId);
-		insertLayerAt(`${targetLayer.name} (clipped)`, result, index, targetLayer.datasetId, targetLayer.style, onComplete);
+	if (targets.length === 0) return;
+
+	const clips = targets.map(t => {
+		const inputFiles = {
+			'layer0.topojson': JSON.stringify(withRenamedObject(t.topo, 'layer0')),
+			'layer1.topojson': JSON.stringify(withRenamedObject(maskTopo, 'layer1')),
+		};
+		const cmd = `-i layer0.topojson layer1.topojson combine-files -clip source=layer1 target=layer0 -o output.topojson format=topojson`;
+		return runMapshaper(cmd, inputFiles).then(output =>
+			output ? { t, result: JSON.parse(output['output.topojson']) as Topology } : null
+		);
+	});
+
+	Promise.all(clips).then(results => {
+		for (const r of results) {
+			if (!r) continue;
+			removeLayer(r.t.id);
+			insertLayerAt(`${r.t.layer.name} (clipped)`, r.result, r.t.index, r.t.layer.datasetId, r.t.layer.style);
+		}
+		onComplete?.();
+	});
+}
+
+export function clipByBbox(layerIds: string[], bbox: [number, number, number, number], onComplete?: () => void): void {
+	const [west, south, east, north] = bbox;
+
+	const targets = layerIds
+		.map(id => ({
+			id,
+			layer: layers.find(l => l.id === id),
+			topo: workingTopologyData.get(id),
+			index: layers.findIndex(l => l.id === id),
+		}))
+		.filter((t): t is typeof t & { layer: Layer; topo: Topology } => !!(t.layer && t.topo));
+
+	if (targets.length === 0) return;
+
+	const clips = targets.map(t => {
+		const inputFiles = { 'input.topojson': JSON.stringify(t.topo) };
+		const cmd = `-i input.topojson -clip bbox=${west},${south},${east},${north} -o output.topojson format=topojson`;
+		return runMapshaper(cmd, inputFiles).then(output =>
+			output ? { t, result: JSON.parse(output['output.topojson']) as Topology } : null
+		);
+	});
+
+	Promise.all(clips).then(results => {
+		for (const r of results) {
+			if (!r) continue;
+			removeLayer(r.t.id);
+			insertLayerAt(`${r.t.layer.name} (clipped)`, r.result, r.t.index, r.t.layer.datasetId, r.t.layer.style);
+		}
+		onComplete?.();
 	});
 }
 
@@ -537,6 +584,23 @@ export function differenceLayers(targetId: string, maskId: string, onComplete?: 
 		const result = JSON.parse(output['output.topojson']) as Topology;
 		removeLayer(targetId);
 		insertLayerAt(`${targetLayer.name} (subtracted)`, result, index, targetLayer.datasetId, targetLayer.style, onComplete);
+	});
+}
+
+export function mosaicLayer(layerId: string, onComplete?: () => void): void {
+	const layer = layers.find(l => l.id === layerId);
+	const topo = workingTopologyData.get(layerId);
+	if (!layer || !topo) return;
+
+	const index = layers.findIndex(l => l.id === layerId);
+	const inputFiles = { 'input.topojson': JSON.stringify(topo) };
+	const cmd = `-i input.topojson -mosaic -o output.topojson format=topojson`;
+
+	runMapshaper(cmd, inputFiles).then(output => {
+		if (!output) return;
+		const result = JSON.parse(output['output.topojson']) as Topology;
+		removeLayer(layerId);
+		insertLayerAt(`${layer.name} (mosaic)`, result, index, layer.datasetId, layer.style, onComplete);
 	});
 }
 
