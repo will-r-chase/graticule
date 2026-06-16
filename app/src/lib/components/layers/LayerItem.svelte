@@ -5,7 +5,7 @@
 	import DropdownMenu from '$lib/components/ui/DropdownMenu.svelte';
 	import type { Layer } from '$lib/types';
 	import { removeLayer, toggleVisibility, renameLayer, duplicateLayer } from '$lib/stores/layers.svelte';
-	import { layerSelection, selectLayer, toggleLayerSelection, rangeSelectLayers, setHoveredLayer } from '$lib/stores/layerSelection.svelte';
+	import { layerSelection, selectLayer, toggleLayerSelection, rangeSelectLayers, setHoveredLayer, startLayerEdit, clearLayerEdit } from '$lib/stores/layerSelection.svelte';
 	import { layers } from '$lib/stores/layers.svelte';
 	import { pushSnapshot, historyVersion } from '$lib/stores/history.svelte';
 	import { openFeaturesTable } from '$lib/stores/featuresTable.svelte';
@@ -37,7 +37,7 @@
 	}
 
 	let activeTab = $state<'style' | 'simplification'>('style');
-	let editing = $state(false);
+	let editing = $derived(layerSelection.editingId === layer.id);
 
 	let showSpinner = $state(false);
 	let spinnerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -55,24 +55,66 @@
 	let draft = $state('');
 	let inputEl = $state<HTMLInputElement | null>(null);
 
-	// Focus the input as soon as it appears in the DOM.
+	// Close the accordion when the layer loses selection.
 	$effect(() => {
-		if (editing && inputEl) inputEl.focus();
+		if (!isSelected && styleOpen) styleCtx.toggle(layer.id);
 	});
+
+	// Focus the input and select all text once when it first mounts.
+	$effect(() => {
+		if (editing && inputEl) {
+			inputEl.focus();
+			inputEl.select();
+		}
+	});
+
+	// Commit the edit when a pointerdown fires outside the input.
+	// Capture phase so we run before dragHandle sees the event.
+	$effect(() => {
+		if (!editing) return;
+		function onPointerDown(e: PointerEvent) {
+			if (inputEl && e.target instanceof Node && inputEl.contains(e.target)) return;
+			commitEdit();
+		}
+		document.addEventListener('pointerdown', onPointerDown, { capture: true });
+		return () => document.removeEventListener('pointerdown', onPointerDown, { capture: true });
+	});
+
+	// Wrap dragHandle so we can fully detach it while the row is being renamed.
+	// dragHandle's mousedown listener unconditionally calls preventDefault(),
+	// which blocks text selection in the rename input — so we remove it entirely
+	// during editing rather than trying to suppress it.
+	function rowDragHandle(node: HTMLElement, enabled: boolean) {
+		let handle: ReturnType<typeof dragHandle> | null = enabled ? dragHandle(node) : null;
+		return {
+			update(nowEnabled: boolean) {
+				if (nowEnabled && !handle) {
+					handle = dragHandle(node);
+				} else if (!nowEnabled && handle) {
+					handle.destroy?.();
+					handle = null;
+				}
+			},
+			destroy() {
+				handle?.destroy?.();
+			},
+		};
+	}
 
 	function startEditing() {
 		draft = layer.name;
-		editing = true;
+		startLayerEdit(layer.id);
 	}
 
 	function commitEdit() {
+		if (!editing) return;
 		renameLayer(layer.id, draft);
-		editing = false;
+		clearLayerEdit();
 		pushSnapshot();
 	}
 
 	function cancelEdit() {
-		editing = false;
+		clearLayerEdit();
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -111,7 +153,7 @@
 </script>
 
 <div class="layer-item-wrapper" class:open={styleOpen} onclick={(e) => e.stopPropagation()}>
-	<div class="layer-item" class:selected={!anyEntered && (styleOpen || isSelected)} class:menu-open={menuOpen} class:canvas-hovered={isCanvasHovered && !isSelected && !styleOpen} class:dimmed={anyEntered && !isEntered} use:dragHandle onclick={handleRowClick} onmouseenter={() => setHoveredLayer(layer.id)} onmouseleave={() => setHoveredLayer(null)} onpointerdown={(e) => { if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopImmediatePropagation(); }}>
+	<div class="layer-item" class:selected={!anyEntered && (styleOpen || isSelected)} class:menu-open={menuOpen} class:canvas-hovered={isCanvasHovered && !isSelected && !styleOpen} class:dimmed={anyEntered && !isEntered} tabindex="-1" use:rowDragHandle={!editing} onclick={handleRowClick} onmouseenter={() => setHoveredLayer(layer.id)} onmouseleave={() => setHoveredLayer(null)} onpointerdown={(e) => { if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopImmediatePropagation(); }}>
 		{#if showSpinner}
 			<div class="style-spinner" aria-label="Loading">
 				<CircleNotch size={14} color="var(--color-text-tertiary)" />
@@ -200,7 +242,7 @@
 				<span>Rename</span>
 			</button>
 			<div class="dropdown-divider"></div>
-			<button class="dropdown-item body-small danger" onclick={() => { removeLayer(layer.id); pushSnapshot(); closeMenu(); }}>
+			<button class="dropdown-item body-small danger" onclick={() => { toggleLayerSelection(layer.id); removeLayer(layer.id); pushSnapshot(); closeMenu(); }}>
 				<Trash size={14} />
 				<span>Delete</span>
 			</button>
@@ -279,11 +321,15 @@
 		gap: var(--space-s);
 		padding: 0 var(--space-l);
 		height: 36px;
-		cursor: grab;
+		cursor: default;
 	}
 
 	.layer-item:active {
 		cursor: grabbing;
+	}
+
+	.layer-item:focus {
+		outline: none;
 	}
 
 	.layer-item:hover,
@@ -366,6 +412,7 @@
 		outline: none;
 		padding: 0;
 		cursor: text;
+		user-select: text;
 	}
 
 	.actions {

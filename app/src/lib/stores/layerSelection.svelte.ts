@@ -3,6 +3,7 @@ const layerSelection = $state({
 	pivotId: null as string | null,
 	enteredId: null as string | null,
 	hoveredLayerId: null as string | null,
+	editingId: null as string | null,
 });
 
 export function selectLayer(id: string): void {
@@ -44,10 +45,19 @@ export function setHoveredLayer(id: string | null): void {
 	layerSelection.hoveredLayerId = id;
 }
 
+export function startLayerEdit(id: string): void {
+	layerSelection.editingId = id;
+}
+
+export function clearLayerEdit(): void {
+	layerSelection.editingId = null;
+}
+
 export function clearLayerSelection(): void {
 	layerSelection.ids = [];
 	layerSelection.pivotId = null;
 	layerSelection.enteredId = null;
+	layerSelection.editingId = null;
 }
 
 export { layerSelection };
