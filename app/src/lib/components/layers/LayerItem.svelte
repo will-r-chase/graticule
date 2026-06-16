@@ -21,6 +21,13 @@
 	const styleCtx = getContext<StylePanelCtx>('stylePanel');
 	let styleOpen = $derived(styleCtx.openId === layer.id);
 
+	let geomKind = $derived(
+		layer.geometryTypes.some(t => t === 'Polygon' || t === 'MultiPolygon') ? 'polygon'
+		: layer.geometryTypes.some(t => t === 'LineString' || t === 'MultiLineString') ? 'line'
+		: layer.geometryTypes.some(t => t === 'Point' || t === 'MultiPoint') ? 'point'
+		: 'polygon'
+	);
+
 	let isSelected = $derived(layerSelection.ids.includes(layer.id));
 	let isCanvasHovered = $derived(layerSelection.hoveredLayerId === layer.id);
 	let isEntered = $derived(layerSelection.enteredId === layer.id);
@@ -159,16 +166,40 @@
 				<CircleNotch size={14} color="var(--color-text-tertiary)" />
 			</div>
 		{:else}
-			<button
-				class="style-swatch"
-				style="
-					--fill: {layer.style.fill === 'none' ? 'transparent' : layer.style.fill};
-					--stroke: {layer.style.stroke};
-				"
-				onclick={() => styleCtx.toggle(layer.id)}
-				onpointerdown={(e) => e.stopPropagation()}
-				aria-label="Edit layer style"
-			></button>
+			{#if geomKind === 'line'}
+				<button
+					class="style-swatch line-swatch"
+					onclick={() => { activeTab = 'style'; styleCtx.toggle(layer.id); }}
+					onpointerdown={(e) => e.stopPropagation()}
+					aria-label="Edit layer style"
+				>
+					<svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+						<line x1="2" y1="12" x2="12" y2="2" stroke={layer.style.stroke} stroke-width="1.5" stroke-linecap="round"/>
+					</svg>
+				</button>
+			{:else if geomKind === 'point'}
+				<button
+					class="style-swatch point-swatch"
+					onclick={() => { activeTab = 'style'; styleCtx.toggle(layer.id); }}
+					onpointerdown={(e) => e.stopPropagation()}
+					aria-label="Edit layer style"
+				>
+					<svg width="14" height="14" viewBox="0 0 14 14">
+						<circle cx="7" cy="7" r="4" fill={layer.style.fill === 'none' ? 'transparent' : layer.style.fill} stroke={layer.style.stroke} stroke-width="1.5"/>
+					</svg>
+				</button>
+			{:else}
+				<button
+					class="style-swatch"
+					style="
+						--fill: {layer.style.fill === 'none' ? 'transparent' : layer.style.fill};
+						--stroke: {layer.style.stroke};
+					"
+					onclick={() => { activeTab = 'style'; styleCtx.toggle(layer.id); }}
+					onpointerdown={(e) => e.stopPropagation()}
+					aria-label="Edit layer style"
+				></button>
+			{/if}
 		{/if}
 
 		{#if editing}
@@ -193,9 +224,9 @@
 			<button
 				class="icon-btn"
 				class:active={styleOpen}
-				aria-label="Edit layer style"
-				title="Edit layer style"
-				onclick={() => styleCtx.toggle(layer.id)}
+				aria-label="Edit layer settings"
+				title="Edit layer settings"
+				onclick={() => { activeTab = 'simplification'; styleCtx.toggle(layer.id); }}
 			>
 				<SlidersHorizontal size={16} />
 			</button>
@@ -253,12 +284,12 @@
 		<div class="style-accordion">
 			<div class="tab-bar">
 				<button
-					class="tab-btn mono-regular"
+					class="tab-btn body-regular"
 					class:active={activeTab === 'style'}
 					onclick={() => activeTab = 'style'}
 				>Style</button>
 				<button
-					class="tab-btn mono-regular"
+					class="tab-btn body-regular"
 					class:active={activeTab === 'simplification'}
 					onclick={() => activeTab = 'simplification'}
 				>Simplify</button>
@@ -296,23 +327,21 @@
 
 	.tab-btn {
 		flex: 1;
-		padding: var(--space-l) var(--space-m) var(--space-m);
+		padding: var(--space-m);
 		border: none;
-		background: transparent;
+		background: none;
 		color: var(--color-text-tertiary);
 		cursor: pointer;
-		transition: color 150ms, background 150ms;
+		transition: color 150ms;
 	}
 
 	.tab-btn:hover {
-		color: var(--color-text-primary);
-		background: var(--color-surface-secondary);
+		color: var(--color-text-secondary);
 	}
 
 	.tab-btn.active {
-		color: var(--color-accent);
-		border-bottom: 2px solid var(--color-accent);
-		margin-bottom: -1px;
+		color: var(--color-text-primary);
+		box-shadow: inset 0 -2px 0 var(--color-accent);
 	}
 
 	.layer-item {
@@ -381,6 +410,21 @@
 
 	@keyframes spin {
 		to { transform: rotate(360deg); }
+	}
+
+	.style-swatch.line-swatch,
+	.style-swatch.point-swatch {
+		background-color: transparent;
+		background-image: none;
+		outline: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.style-swatch.line-swatch::after,
+	.style-swatch.point-swatch::after {
+		display: none;
 	}
 
 	.style-swatch::after {

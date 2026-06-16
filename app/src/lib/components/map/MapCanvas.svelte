@@ -1649,7 +1649,7 @@
 					// Polygon stroke thickening — accent outline when selected, orange for clip mask.
 					if (isPolygon && isSelected && !stylePanelOpen && !clipBbox.open) {
 						ctx.strokeStyle = isMask ? '#f6c87e' : accentColor;
-						ctx.lineWidth   = (layer.style.strokeWidth + 3) / mapScale;
+						ctx.lineWidth   = (layer.style.strokeWidth + 1) / mapScale;
 						ctx.globalAlpha = 0.6;
 						ctx.setLineDash([]);
 						for (const { path2d, bbox } of chunks) {
@@ -1663,7 +1663,7 @@
 					// Line stroke tint — grey for hover, accent for selected.
 					if (hasNonPt && (isLine || !isPolygon) && !stylePanelOpen) {
 						ctx.strokeStyle = bboxColor;
-						ctx.lineWidth   = (layer.style.strokeWidth + 5) / mapScale;
+						ctx.lineWidth   = (layer.style.strokeWidth + 2) / mapScale;
 						ctx.globalAlpha = isSelected ? 0.30 : 0.18;
 						ctx.setLineDash([]);
 						for (const { path2d, bbox } of chunks) {
@@ -1685,7 +1685,7 @@
 							if (ptData?.features) {
 								const sym      = shapeMap[layer.style.pointShape] ?? d3shape.symbolCircle;
 								const r        = layer.style.pointRadius;
-								const haloArea = Math.PI * r * r * 4.0;
+								const haloArea = Math.PI * r * r * 2.25;
 								const haloPath = new Path2D(d3shape.symbol(sym, haloArea)() ?? '');
 								const projCenter: [number, number] | null = interactionMode === 'rotate'
 									? [-projectionStore.rotate[0], -projectionStore.rotate[1]]
