@@ -21,6 +21,23 @@ const shapeMap: Record<string, d3shape.SymbolType> = {
 	symbolWye:      d3shape.symbolWye,
 };
 
+function sanitizeId(str: string): string {
+	return str.trim().replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^([^a-zA-Z_])/, '_$1');
+}
+
+const NAME_KEYS = ['name', 'NAME', 'Name', 'label', 'LABEL', 'Label'];
+
+function getFeatureName(properties: Record<string, unknown> | null | undefined, fallbackIndex: number): string {
+	if (properties) {
+		for (const key of NAME_KEYS) {
+			const val = properties[key];
+			if (typeof val === 'string' && val.trim()) return sanitizeId(val);
+			if (typeof val === 'number') return sanitizeId(String(val));
+		}
+	}
+	return `feature_${fallbackIndex}`;
+}
+
 function getCombinedGeoJSON(): FeatureCollection {
 	const features: Feature[] = [];
 	for (const layer of layers) {
@@ -106,7 +123,7 @@ function buildSVGString(options: SVGOptions): string | null {
 	// need to counteract that scale so they stay constant size in screen pixels.
 	const pointCounterScale = options.clip ? 1 / mapScale : 1;
 
-	for (const layer of layers) {
+	for (const layer of [...layers].reverse()) {
 		if (!layer.visible || !layer.hasTopology) continue;
 		const topo = workingTopologyData.get(layer.id);
 		if (!topo) continue;
@@ -121,55 +138,65 @@ function buildSVGString(options: SVGOptions): string | null {
 		const hasNonPoint = layer.geometryTypes.some((t) => t !== 'Point' && t !== 'MultiPoint');
 		const hasPoints   = layer.geometryTypes.some((t) => t === 'Point' || t === 'MultiPoint');
 
-		// ── Polygon / line geometry ────────────────────────────────────────────
+		parts.push(`  <g id="${sanitizeId(layer.name)}">`);
+
+		// ── Polygon / line geometry — one path per feature ────────────────────
 		if (hasNonPoint) {
-			const nonPointData: FeatureCollection = {
-				...data,
-				features: data.features.filter((f) => {
-					const t = f?.geometry?.type;
-					return t !== 'Point' && t !== 'MultiPoint';
-				}),
-			};
-			const d = pathGenerator(nonPointData);
-			if (d) {
+			const nonPointFeatures = data.features.filter((f) => {
+				const t = f?.geometry?.type;
+				return t !== 'Point' && t !== 'MultiPoint';
+			});
+			for (let i = 0; i < nonPointFeatures.length; i++) {
+				const f = nonPointFeatures[i];
+				const d = pathGenerator(f);
+				if (!d) continue;
+				const featureId = getFeatureName(f.properties as Record<string, unknown> | null, i);
 				parts.push(
-					`  <path d="${d}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-opacity="${strokeOpacity}" stroke-width="${effectiveStrokeWidth}"${dashAttr} />`
+					`    <path id="${featureId}" d="${d}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-opacity="${strokeOpacity}" stroke-width="${effectiveStrokeWidth}"${dashAttr} />`
 				);
 			}
 		}
 
-		// ── Point geometry — d3-shape symbols ─────────────────────────────────
+		// ── Point geometry — d3-shape symbols, one path per feature ──────────
 		if (hasPoints) {
 			const sym = shapeMap[layer.style.pointShape] ?? d3shape.symbolCircle;
 			const area = Math.PI * layer.style.pointRadius * layer.style.pointRadius;
 			const symD = d3shape.symbol(sym, area)();
-			if (!symD) continue;
+			if (symD) {
+				const pointFeatures = data.features.filter((f) => {
+					const t = f?.geometry?.type;
+					return t === 'Point' || t === 'MultiPoint';
+				});
+				for (let i = 0; i < pointFeatures.length; i++) {
+					const f = pointFeatures[i];
+					const geom = f?.geometry as { type?: string; coordinates?: unknown } | null | undefined;
+					if (!geom) continue;
 
-			for (const f of data.features) {
-				const geom = f?.geometry as { type?: string; coordinates?: unknown } | null | undefined;
-				if (!geom) continue;
+					const coordsList: [number, number][] =
+						geom.type === 'Point'
+							? [geom.coordinates as [number, number]]
+							: geom.type === 'MultiPoint'
+								? (geom.coordinates as [number, number][])
+								: [];
 
-				const coordsList: [number, number][] =
-					geom.type === 'Point'
-						? [geom.coordinates as [number, number]]
-						: geom.type === 'MultiPoint'
-							? (geom.coordinates as [number, number][])
-							: [];
-
-				for (const coord of coordsList) {
-					const pt = proj(coord);
-					if (!pt) continue;
-					const [px, py] = pt;
-					const transform = `translate(${px},${py})${pointCounterScale !== 1 ? ` scale(${pointCounterScale})` : ''}`;
-					const strokeAttrs = stroke !== 'none'
-						? ` stroke="${stroke}" stroke-opacity="${strokeOpacity}" stroke-width="${strokeWidth}"`
-						: ` stroke="none"`;
-					parts.push(
-						`  <path d="${symD}" transform="${transform}" fill="${fill}" fill-opacity="${fillOpacity}"${strokeAttrs} />`
-					);
+					const featureId = getFeatureName(f.properties as Record<string, unknown> | null, i);
+					for (const coord of coordsList) {
+						const pt = proj(coord);
+						if (!pt) continue;
+						const [px, py] = pt;
+						const transform = `translate(${px},${py})${pointCounterScale !== 1 ? ` scale(${pointCounterScale})` : ''}`;
+						const strokeAttrs = stroke !== 'none'
+							? ` stroke="${stroke}" stroke-opacity="${strokeOpacity}" stroke-width="${strokeWidth}"`
+							: ` stroke="none"`;
+						parts.push(
+							`    <path id="${featureId}" d="${symD}" transform="${transform}" fill="${fill}" fill-opacity="${fillOpacity}"${strokeAttrs} />`
+						);
+					}
 				}
 			}
 		}
+
+		parts.push(`  </g>`);
 	}
 
 	if (options.clip) parts.push(`  </g>`);
