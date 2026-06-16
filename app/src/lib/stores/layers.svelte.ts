@@ -5,6 +5,7 @@ import { countTopoPoints } from '$lib/utils/chaikin';
 import { workerChaikin } from '$lib/workers/geoWorker';
 import { workerSimplify } from '$lib/workers/simplifyWorker';
 import { showToast } from './toast.svelte';
+import { registerDataset } from './uploadedDatasets.svelte';
 
 const DISPLAY_VERTEX_THRESHOLD = 500_000;
 const DISPLAY_SIMP_TOLERANCE = 90;
@@ -441,15 +442,16 @@ function insertLayerAt(
 	name: string,
 	topology: Topology,
 	index: number,
-	uploadId: string,
 	style: LayerStyle | null,
 	onComplete?: () => void,
 ): void {
 	const id = generateId();
+	const datasetId = generateId();
 	const plainTopology = $state.snapshot(topology) as unknown as Topology;
+	registerDataset(datasetId, plainTopology);
 	layers.splice(index, 0, {
 		id,
-		datasetId: uploadId,
+		datasetId,
 		name,
 		visible: true,
 		loading: true,
@@ -477,7 +479,7 @@ export function dissolveLayer(layerId: string, field: string | null, onComplete?
 		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
 		removeLayer(layerId);
-		insertLayerAt(layer.name, result, index, layer.datasetId, layer.style, onComplete);
+		insertLayerAt(layer.name, result, index, layer.style, onComplete);
 	});
 }
 
@@ -494,7 +496,7 @@ export function explodeLayer(layerId: string, onComplete?: () => void): void {
 		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
 		removeLayer(layerId);
-		insertLayerAt(layer.name, result, index, layer.datasetId, layer.style, onComplete);
+		insertLayerAt(layer.name, result, index, layer.style, onComplete);
 	});
 }
 
@@ -531,7 +533,7 @@ export function clipByPolygon(targetIds: string[], maskId: string, onComplete?: 
 		const afterEach = () => { if (--remaining === 0) onComplete?.(); };
 		for (const r of valid) {
 			removeLayer(r.t.id);
-			insertLayerAt(`${r.t.layer.name} (clipped)`, r.result, r.t.index, r.t.layer.datasetId, r.t.layer.style, afterEach);
+			insertLayerAt(`${r.t.layer.name} (clipped)`, r.result, r.t.index, r.t.layer.style, afterEach);
 		}
 	});
 }
@@ -587,7 +589,7 @@ export function clipByBbox(layerIds: string[], bbox: [number, number, number, nu
 		const afterEach = () => { if (--remaining === 0) onComplete?.(); };
 		for (const r of valid) {
 			removeLayer(r.t.id);
-			insertLayerAt(`${r.t.layer.name} (clipped)`, r.result, r.t.index, r.t.layer.datasetId, r.t.layer.style, afterEach);
+			insertLayerAt(`${r.t.layer.name} (clipped)`, r.result, r.t.index, r.t.layer.style, afterEach);
 		}
 	});
 }
@@ -609,7 +611,7 @@ export function differenceLayers(targetId: string, maskId: string, onComplete?: 
 		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
 		removeLayer(targetId);
-		insertLayerAt(`${targetLayer.name} (subtracted)`, result, index, targetLayer.datasetId, targetLayer.style, onComplete);
+		insertLayerAt(`${targetLayer.name} (subtracted)`, result, index, targetLayer.style, onComplete);
 	});
 }
 
@@ -626,7 +628,7 @@ export function mosaicLayer(layerId: string, onComplete?: () => void): void {
 		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
 		removeLayer(layerId);
-		insertLayerAt(`${layer.name} (mosaic)`, result, index, layer.datasetId, layer.style, onComplete);
+		insertLayerAt(`${layer.name} (mosaic)`, result, index, layer.style, onComplete);
 	});
 }
 
@@ -660,7 +662,7 @@ export function unionLayers(layerIds: string[], onComplete?: () => void): void {
 			layers.findIndex(l => l.id === b) - layers.findIndex(l => l.id === a)
 		);
 		for (const id of byDescIndex) removeLayer(id);
-		insertLayerAt(resultName, result, insertIndex, 'union_' + Math.random().toString(36).slice(2, 9), null, onComplete);
+		insertLayerAt(resultName, result, insertIndex, null, onComplete);
 	});
 }
 
@@ -693,7 +695,7 @@ export function mergeLayers(layerIds: string[], onComplete?: () => void): void {
 			layers.findIndex(l => l.id === b) - layers.findIndex(l => l.id === a)
 		);
 		for (const id of byDescIndex) removeLayer(id);
-		insertLayerAt(resultName, result, insertIndex, 'merge_' + Math.random().toString(36).slice(2, 9), null, onComplete);
+		insertLayerAt(resultName, result, insertIndex, null, onComplete);
 	});
 }
 
@@ -773,7 +775,7 @@ export function extractSelectedFeatures(
 		.filter((_: unknown, i: number) => featureIndices.has(i));
 
 	// Copy only — features remain in the source layer.
-	addUploadedLayer(`${layer.name} (copy)`, extractedTopo, layer.datasetId, false, onComplete, layer.style);
+	insertLayerAt(`${layer.name} (copy)`, extractedTopo, layers.findIndex(l => l.id === layerId), layer.style, onComplete);
 }
 
 export function mergeSelectedFeatures(

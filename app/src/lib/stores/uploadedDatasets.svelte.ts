@@ -1,6 +1,5 @@
 import type { UploadedDataset } from '$lib/types';
 import type { Topology } from 'topojson-specification';
-import { addUploadedLayer } from './layers.svelte';
 
 let uploadedDatasets = $state<UploadedDataset[]>([]);
 
@@ -12,8 +11,16 @@ export function addUploadedDataset(name: string, topology: Topology): UploadedDa
 	const id = generateId();
 	const dataset: UploadedDataset = { id, name, topology };
 	uploadedDatasets.push(dataset);
-	addUploadedLayer(name, topology, id);
 	return dataset;
+}
+
+export function registerDataset(id: string, topology: Topology): void {
+	uploadedDatasets.push({ id, name: '', topology });
+}
+
+export function pruneUploadedDatasets(activeDatasetIds: Set<string>): void {
+	const pruned = uploadedDatasets.filter((u) => activeDatasetIds.has(u.id));
+	uploadedDatasets.splice(0, uploadedDatasets.length, ...pruned);
 }
 
 export function clearUploadedDatasets(): void {

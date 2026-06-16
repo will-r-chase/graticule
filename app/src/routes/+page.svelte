@@ -9,7 +9,7 @@
 	import { undo, redo, canUndo, canRedo, pushSnapshot } from '$lib/stores/history.svelte';
 	import { selection, clearSelection } from '$lib/stores/selection.svelte';
 	import { layerSelection, clearLayerSelection, exitLayer } from '$lib/stores/layerSelection.svelte';
-	import { layers, toggleVisibility, duplicateLayer, removeLayer, reorderLayers } from '$lib/stores/layers.svelte';
+	import { layers, toggleVisibility, duplicateLayer, removeLayer, reorderLayers, addUploadedLayer } from '$lib/stores/layers.svelte';
 	import { openFeaturesTable } from '$lib/stores/featuresTable.svelte';
 
 	let { data } = $props();
@@ -151,7 +151,8 @@
 			const collections = applyFixes(result, {});
 			for (const fc of collections) {
 				const name = file.name.replace(/\.[^.]+$/, '');
-				addUploadedDataset(name, fc);
+				const dataset = addUploadedDataset(name, fc);
+				addUploadedLayer(name, fc, dataset.id);
 			}
 		}
 	}

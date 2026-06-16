@@ -5,7 +5,7 @@
 	// import MappyMascot from './MappyMascot.svelte'; // kept for potential easter egg reuse
 	import GraticuleLogo from './GraticuleLogo.svelte';
 	import Button from '$lib/components/ui/Button.svelte';
-	import { Warning, GithubLogo } from 'phosphor-svelte';
+	import { Warning, GithubLogo, BookOpen } from 'phosphor-svelte';
 	import { prepareProject, downloadProject, loadProject, validateProject, formatBytes } from '$lib/utils/project';
 	import { clearLayers } from '$lib/stores/layers.svelte';
 	import { clearUploadedDatasets } from '$lib/stores/uploadedDatasets.svelte';
@@ -99,6 +99,16 @@
 	</div>
 
 	<div class="actions">
+		<a
+			class="github-link mono-small"
+			href="https://docs.graticule.org"
+			target="_blank"
+			rel="noopener noreferrer"
+			aria-label="Documentation"
+		>
+			<BookOpen size={14} />
+			<span>Docs</span>
+		</a>
 		<a
 			class="github-link mono-small"
 			href="https://github.com/will-r-chase/graticule"

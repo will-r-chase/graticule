@@ -1,4 +1,5 @@
 import { layers, runLayerPipeline } from './layers.svelte';
+import { pruneUploadedDatasets } from './uploadedDatasets.svelte';
 import { projection } from './projection.svelte';
 import { canvasStyles } from './canvasStyles.svelte';
 import type { LayerStyle, LayerProcessing } from '$lib/types';
@@ -143,6 +144,7 @@ export function undo(): void {
 	}
 	pointer--;
 	restore(stack[pointer]);
+	pruneUploadedDatasets(new Set(layers.map((l) => l.datasetId)));
 	version++;
 }
 
@@ -150,6 +152,7 @@ export function redo(): void {
 	if (pointer >= stack.length - 1) return;
 	pointer++;
 	restore(stack[pointer]);
+	pruneUploadedDatasets(new Set(layers.map((l) => l.datasetId)));
 	version++;
 }
 

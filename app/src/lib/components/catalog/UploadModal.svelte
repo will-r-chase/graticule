@@ -4,6 +4,7 @@
 	import Button from '$lib/components/ui/Button.svelte';
 	import { parseFile, applyFixes, type UploadResult, type UploadIssue } from '$lib/utils/fileUpload';
 	import { addUploadedDataset } from '$lib/stores/uploadedDatasets.svelte';
+	import { addUploadedLayer } from '$lib/stores/layers.svelte';
 	import type { Topology } from 'topojson-specification';
 
 	let { onclose, initialFile = null, initialResult = null }: {
@@ -83,7 +84,8 @@
 
 		// TopoJSON uploaded directly — topology is already ready, no conversion needed.
 		if (result.topology) {
-			addUploadedDataset(baseName, result.topology);
+			const dataset = addUploadedDataset(baseName, result.topology);
+			addUploadedLayer(baseName, result.topology, dataset.id);
 			onclose();
 			return;
 		}
@@ -117,7 +119,8 @@
 					{ 'input.geojson': JSON.stringify(fc) }
 				);
 				const topology = JSON.parse(output['output.topojson']) as Topology;
-				addUploadedDataset(name, topology);
+				const dataset = addUploadedDataset(name, topology);
+				addUploadedLayer(name, topology, dataset.id);
 			}
 			onclose();
 		} catch (e) {
