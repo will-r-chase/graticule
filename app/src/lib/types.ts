@@ -83,6 +83,7 @@ export interface UploadedDataset {
 	id: string;
 	name: string;
 	topology: import('topojson-specification').Topology;
+	internal?: boolean;
 }
 
 export interface Catalog {

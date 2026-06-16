@@ -162,7 +162,7 @@
 
 	<div class="dataset-list-wrapper">
 	<div class="dataset-list" bind:this={datasetListEl}>
-		{#if uploadedDatasets.length > 0}
+		{#if uploadedDatasets.some(d => !d.internal)}
 			<div class="source-section" class:collapsed={collapsedSections.has('__uploaded')}>
 				<button class="source-heading h4" onclick={() => toggleSection('__uploaded')}>
 					<span class="caret" class:collapsed={collapsedSections.has('__uploaded')}>
@@ -170,12 +170,12 @@
 					</span>
 					Uploaded
 					{#if collapsedSections.has('__uploaded')}
-						<span class="dataset-count">({uploadedDatasets.length})</span>
+						<span class="dataset-count">({uploadedDatasets.filter(d => !d.internal).length})</span>
 					{/if}
 				</button>
 				{#if !collapsedSections.has('__uploaded')}
 					<ul>
-						{#each uploadedDatasets as dataset}
+						{#each uploadedDatasets.filter(d => !d.internal) as dataset}
 							{@const added = layers.some(l => l.datasetId === dataset.id)}
 							<li
 								class="dataset-item"

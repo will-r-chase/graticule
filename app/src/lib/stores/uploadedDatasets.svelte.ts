@@ -15,7 +15,7 @@ export function addUploadedDataset(name: string, topology: Topology): UploadedDa
 }
 
 export function registerDataset(id: string, topology: Topology): void {
-	uploadedDatasets.push({ id, name: '', topology });
+	uploadedDatasets.push({ id, name: '', topology, internal: true });
 }
 
 export function pruneUploadedDatasets(activeDatasetIds: Set<string>): void {
