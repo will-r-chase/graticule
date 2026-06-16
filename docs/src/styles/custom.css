@@ -276,6 +276,35 @@ header.header {
 }
 
 /* ============================================================
+   HEADER — graticule.org TEXT LINK
+   Show the label text and hide the icon for the app link.
+   ============================================================ */
+
+a[href='https://graticule.org'] svg {
+	display: none;
+}
+
+a[href='https://graticule.org'] > span {
+	position: static;
+	width: auto;
+	height: auto;
+	clip: auto;
+	clip-path: none;
+	overflow: visible;
+	white-space: nowrap;
+	font-size: var(--sl-text-sm);
+}
+
+/* Remove vertical divider after social icons */
+.social-icons {
+	border-inline-end: none;
+}
+
+.social-icons::after {
+	display: none;
+}
+
+/* ============================================================
    TYPOGRAPHY
    ============================================================ */
 

@@ -3,21 +3,22 @@ title: What is Graticule
 description: An overview of Graticule — what it does, who it's for, and the basic workflow.
 ---
 
-Graticule is a browser-based tool for building map linework. Load geographic boundary data from the built-in catalog or your own files, choose a projection, style your layers, and export to SVG, PNG, or geodata formats.
+Graticule is a browser-based tool for building and editing maps. Graticule is under active development, and currently focuses on editing and styling vector data.
 
-It's a linework tool, not a full GIS application. It doesn't do thematic mapping, raster data, or spatial analysis. For those, QGIS or Observable Plot are better fits.
+Graticule is not a replacement for QGIS, Mapshaper, or GDAL. It aims to provide a superior user experience for common techniques and workflows for producing maps, but experienced GIS experts may find it lacking in the power that more mature tools provide. But if you are a dataviz professional, journalist, designer, or map enthusiast who just wants a quick and joyful experience making a nice map, you may enjoy Graticule.
 
 ## Principles
 
-**Nothing leaves your machine.** Graticule runs entirely in the browser — no account, no server, no data upload.
+**Nothing leaves your machine.** Graticule runs entirely in the browser — no account, no server, no data collection.
 
-**File-over-app.** Projects save as plain `.json` files you own. Exports are standard formats (SVG, PNG, GeoJSON, Shapefile).
+**File-over-app.** Projects save as plain `.json` files you own. 
 
-**Non-destructive.** Projections, simplification, and styling are all applied on top of the stored data. The underlying geometry is never modified, so you can always change settings or re-export.
+**Non-destructive.** Operations are applied on top of the stored data. The underlying geometry is never modified, so you can always change settings or undo an action.
 
-## Workflow
+## Quickstart
 
 1. **Add data** — browse the catalog, or upload a GeoJSON, Shapefile, KML, CSV, or other file.
-2. **Project** — choose from 80+ projections grouped by type. Azimuthal and conic projections use drag-to-rotate; flat projections use pan and zoom.
+2. **Project** — choose from 80+ projections.
 3. **Style** — per-layer fill, stroke, simplification, and smoothing controls.
-4. **Export** — SVG or PNG. Save a project file to resume later.
+4. **Select and edit** — switch to Select mode (`S`) to pick layers or drill into individual features. Use the action bar to dissolve, clip, subtract, explode, or merge geometry.
+5. **Export** — SVG or PNG. Save a project file to resume later.

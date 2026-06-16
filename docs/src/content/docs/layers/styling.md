@@ -3,37 +3,36 @@ title: Styling
 description: How to control the visual appearance of layers in Graticule.
 ---
 
-Style controls are in the **Style** tab of each layer. All changes are non-destructive and immediately reflected on the canvas.
+Style controls are in the **Style** tab of each layer, which you can access by clicking the swatch to the left of the layer name, or by using the controls button that appears when hovering a layer.
 
-## Fill
+## Polygons
 
-Toggle fill on or off. Click the color swatch to set fill color and opacity.
+**Fill** — toggle on or off. Click the color swatch to set fill color and opacity.
 
-Polygon layers have fill off by default.
+**Stroke** — always on. Click the swatch to set color and opacity. Set width in pixels (decimals accepted, e.g. `0.5`).
 
-## Stroke
+**Dash** — toggle on or off. When on, set the dash length and gap length in pixels.
 
-Toggle stroke on or off. When on:
+## Lines
 
-- **Color** — click the swatch to set color and opacity.
-- **Width** — stroke thickness in pixels. Accepts decimals (e.g. `0.5`).
-- **Dash pattern** — solid, dashed, or dotted.
+**Stroke** — always on. Click the swatch to set color and opacity. Set width in pixels.
 
-Polygon and line layers have stroke on by default.
+**Dash** — toggle on or off. When on, set the dash length and gap length in pixels.
 
 ## Points
 
-Point layers use shape and size controls instead of fill/stroke:
+**Fill** — toggle on or off. Click the color swatch to set color and opacity.
 
-- **Shape** — Circle, Square, Diamond, Triangle, Cross, Star, or Wye.
-- **Size** — diameter in pixels.
+**Stroke** — toggle on or off. Click the swatch to set color and opacity. Set width in pixels.
 
-Point color is set via the fill swatch.
+**Size** — diameter of the point symbol in pixels.
+
+**Shape** — Circle, Square, Diamond, Triangle, Cross, Star, or Wye.
 
 ## Canvas styles
 
-Canvas-level styles — background color, graticules, and globe options like ocean and halo — are set at the project level, not per-layer. Open the **Style** section at the bottom of the catalog panel to adjust them.
+Canvas background color, graticules, and globe options like ocean and halo are project-level settings. Open the **Style** section at the bottom of the lefthand sidebar to adjust them.
 
 ## Color picker
 
-Graticule's color picker has HSL sliders, an opacity slider, and a direct hex input. The opacity here is the fill or stroke alpha — not a layer-level opacity.
+Graticule's color picker has HSL sliders, an opacity slider, and a direct hex input. The opacity controls fill or stroke alpha, not layer-level opacity.

@@ -4,6 +4,7 @@ import starlight from '@astrojs/starlight';
 
 // https://astro.build/config
 export default defineConfig({
+	site: 'https://docs.graticule.org',
 	integrations: [
 		starlight({
 			title: 'Graticule',
@@ -17,12 +18,16 @@ export default defineConfig({
 					content: 'document.documentElement.dataset.theme = "light"',
 				},
 			],
-			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/will-r-chase/mappy' }],
+			social: [
+				{ icon: 'external', label: 'graticule.org', href: 'https://graticule.org' },
+				{ icon: 'github', label: 'GitHub', href: 'https://github.com/will-r-chase/graticule' },
+			],
 			sidebar: [
 				{
 					label: 'Getting Started',
 					items: [
 						{ label: 'What is Graticule', slug: '' },
+						{ label: 'Release Notes', slug: 'release-notes' },
 					],
 				},
 				{
@@ -38,6 +43,13 @@ export default defineConfig({
 						{ label: 'Working with Layers', slug: 'layers/working-with-layers' },
 						{ label: 'Styling', slug: 'layers/styling' },
 						{ label: 'Simplification & Smoothing', slug: 'layers/simplification' },
+					],
+				},
+				{
+					label: 'Features',
+					items: [
+						{ label: 'Working with Features', slug: 'features/working-with-features' },
+						{ label: 'Features Table', slug: 'features/features-table' },
 					],
 				},
 				{
@@ -59,6 +71,13 @@ export default defineConfig({
 						{ label: 'Keyboard Shortcuts', slug: 'reference/keyboard-shortcuts' },
 						{ label: 'File Formats', slug: 'reference/file-formats' },
 						{ label: 'Data Sources', slug: 'reference/data-sources' },
+					],
+				},
+				{
+					label: 'Blog',
+					items: [
+						{ label: 'Introducing Graticule', link: 'https://www.williamrchase.com/writing/2026-06-03-introducing-graticule', attrs: { target: '_blank', rel: 'noopener noreferrer' } },
+						{ label: 'Designing an Interaction Model, Part 1', link: 'https://www.williamrchase.com/writing/2026-06-15-designing-an-interaction-model-for-graticule-part-1', attrs: { target: '_blank', rel: 'noopener noreferrer' } },
 					],
 				},
 			],

@@ -1,17 +1,17 @@
 ---
 title: Working with Layers
-description: How to add, remove, reorder, and manage layers in Graticule.
+description: How to add, select, edit, and manage layers in Graticule.
 ---
 
-Every dataset you load — whether from the catalog or uploaded — becomes a layer. Layers are listed in the **Layers panel** on the right side of the screen.
+A layer is the rendered form of a dataset that you can style or perform operations on. Layers are listed in the **Layers panel** on the right side of the screen.
 
 ## Adding layers
 
-Load a dataset from the catalog or upload a file. Each one is added as a new layer at the top of the stack.
+Click a data from the catalog or upload a file to add it as a layer. New layers appear at the top of the stack.
 
 ## Layer order
 
-Layers render bottom to top — the bottom of the list draws first, layers above draw on top. Drag layers in the panel to reorder them.
+Layers render bottom to top — the bottom of the list draws first, layers above draw on top. Drag layers in the panel to reorder them or use the keyboard shortcuts `[ ]` with a layer selected.
 
 ## Renaming layers
 
@@ -19,18 +19,62 @@ Double-click a layer name to rename it. Press Enter or click away to confirm.
 
 ## Toggling visibility
 
-Click the eye icon on any layer to hide or show it. Hidden layers don't affect the canvas but remain in your project — their data and settings are preserved.
+Click the eye icon on any layer or press `H` to hide or show it. Hidden layers stay in your project with their data and settings intact — they just don't render on the canvas.
 
 ## Duplicating a layer
 
-Right-click a layer (or use the context menu) to duplicate it. The copy has the same style and data as the original and is added directly above it.
+Press `Cmd+D` or use the `...` menu to duplicate a layer. The copy has the same style and data as the original and is added directly above it.
 
 ## Removing layers
 
-Click the × button on a layer to remove it. This can be undone with `Cmd+Z`.
+Use `Cmd+delete` or the `...` menu to delete a layer. This can be undone with `Cmd+Z`.
 
 ## Undo / Redo
 
-All layer changes — adding, removing, reordering, renaming, and style changes — are undoable. Use `Cmd+Z` to undo and `Cmd+Shift+Z` to redo, or the Undo/Redo buttons in the toolbar.
+All layer changes — adding, removing, reordering, renaming, and style changes — are undoable. Use `Cmd+Z` to undo and `Cmd+Shift+Z` to redo, or the Undo/Redo buttons in the top toolbar.
 
 The history stack goes back 50 steps.
+
+---
+
+## Interaction modes
+
+The map canvas has two modes, **Pan** and **Select**, which can be set using the floating toolbar on the canvas.
+
+- **Pan mode** (`V`) — drag to pan or rotate the map. This is the default.
+- **Select mode** (`S`) — click, shift-click, or drag to select layers and features.
+
+Press `V` or `S` to switch modes. In select mode, hold `Space` to temporarily pan without switching modes.
+
+## Selecting layers
+
+Layers can be selected directly from the layers panel by clicking them or on the canvas while in select mode.
+
+- **Click** a layer to select it. **Shift+click** to range-select, **Cmd+click** to toggle individual layers in or out.
+- Selected layers are highlighted on the canvas with visual feedback tuned to geometry type: bounding box strokes for all types, fill tint and outline thickening for polygons, stroke tint for lines, and halos for points.
+- **Click and drag** to create a marquee that will select all layers it intersects.
+- **Escape** clears the selection (feature selection clears first, then layer selection).
+- An **X button** in the action bar dismisses the selection at any time.
+- **Double-clicking** a layer on the map allows you to select features within it.
+
+## The action bar
+
+When one or more layers are selected, a floating action bar appears above the canvas toolbar.
+
+| Action       | What it does                                                                                          |
+| ------------ | ----------------------------------------------------------------------------------------------------- |
+| **Dissolve** | Merges all features in the layer into a single geometry.                                              |
+| **Explode**  | Splits multi-part features into individual single-part features.                                      |
+| **Clip**     | Clips the layer to another layer's extent or to a bounding box.                                       |
+| **Subtract** | Subtracts another layer's geometry from the selected layer.                                           |
+| **Mosaic**   | Flattens overlapping polygons by converting overlapping areas into separate non-overlapping polygons. |
+| **Merge**    | Combines multiple selected layers into one.                                                           |
+
+## The Clip operation
+
+Clip trims a layer to a boundary. Click **Clip** to open a popover with two options:
+
+- **Clip to layer** — choose another layer from the list. Graticule clips the active layer to that layer's outer boundary.
+- **Clip to bounding box** — drag handles appear on the canvas. Resize and position the box, then confirm. Graticule clips to the box edges.
+
+The original layer is replaced with the clipped result. Press `Cmd+Z` to undo.

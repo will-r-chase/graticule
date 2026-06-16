@@ -3,31 +3,21 @@ title: Projections
 description: How to choose and work with map projections in Graticule.
 ---
 
-A map projection is a method of representing the curved surface of the Earth on a flat plane. Every projection distorts something — area, shape, distance, or direction — because no flat map can perfectly represent a sphere. The choice of projection is one of the most consequential decisions in making a map.
+A map projection is a method of representing the curved surface of the Earth on a flat plane. Every projection distorts something — area, shape, distance, or direction — because no flat map can perfectly represent a sphere.
 
-Graticule supports over 80 projections, grouped by family. You can search by name or browse the grouped list in the **Projection** selector in the right panel.
+Graticule supports over 80 projections, grouped by family. You can search by name or browse the grouped list in the **Projection** selector in canvas panel of the lefthand sidebar.
 
 ## Choosing a projection
 
-The right projection depends on your geographic extent and what property you want to preserve:
+For **world maps**, compromise projections like Natural Earth, Robinson, or Winkel Tripel are widely used and generally well-regarded. Equal Earth is a newer equal-area option.
 
-| Property | What it means | Good for |
-|---|---|---|
-| **Equal-area** | Areas are correctly proportioned relative to each other | Comparing regions, density maps |
-| **Conformal** | Local shapes are preserved (angles are correct) | Navigation, detailed regional maps |
-| **Compromise** | Neither area nor shape is perfectly preserved, but both are reasonable | General-purpose world maps |
-| **Equidistant** | Distances from a central point or along certain lines are correct | Reference maps, distance-based analysis |
-| **Perspective** | Simulates a view from a point in space | Globe views, dramatic presentation |
+For **continental or regional maps**, azimuthal or conic projections are usually appropriate. Albers USA is the standard for the US. Azimuthal Equal Area works well for polar regions and hemispheric views.
 
-For **world maps**, compromise projections like Natural Earth, Robinson, or Winkel Tripel are widely used and generally well-regarded. Equal Earth is a newer equal-area option with a natural, pleasing shape.
-
-For **continental or regional maps**, azimuthal or conic projections are usually appropriate. Albers (conic, equal-area) is the standard for the contiguous US. Azimuthal Equal Area works well for polar regions and hemispheric views.
-
-For **country or sub-national maps**, the choice is more situation-dependent. Many countries have an official or conventional projection — if you're making a map for a specific national context, it's worth checking.
+For **country or sub-national maps**, the right choice depends on the specific region. Many countries have an official or conventional projection — check before committing to one for a national-context map.
 
 ## Projection families
 
-**Globe** — `Globe` renders the data on a rotatable sphere. Drag to spin. This is orthographic projection with visual enhancements.
+**Globe** — renders the data on a rotatable sphere. Drag to spin.
 
 **Cylindrical** — the simplest family. The globe is conceptually "unrolled" onto a cylinder. Mercator is the most familiar; it preserves shape but dramatically inflates area near the poles.
 
@@ -37,16 +27,16 @@ For **country or sub-national maps**, the choice is more situation-dependent. Ma
 
 **Conic** — project onto a cone. Good for mid-latitude regions like North America, Europe, or China. Albers and Lambert Conformal Conic are the standards. Conic projections use drag-to-rotate interaction.
 
-**Interrupted** — the globe is "interrupted" and unfolded with cuts, reducing distortion in specific regions at the cost of gaps in others. Goode's Homolosine is the classic example.
+**Interrupted** — the globe is "interrupted" and unfolded with cuts, reducing distortion in specific regions at the cost of gaps in others. 
 
-**Polyhedral** — unfolds the globe onto a polyhedron. Waterman Butterfly is the most common. Visually striking, rarely used for practical maps.
+**Polyhedral** — unfolds the globe onto a polyhedron. Waterman Butterfly is the most common example. 
 
-## Interaction modes
+## Coordinate systems and imported data
 
-Projections in Graticule have two interaction modes:
+Graticule works in **WGS84 (EPSG:4326)** — longitude/latitude in decimal degrees. All data must be in this coordinate system to display correctly.
 
-**Pan mode** — used by cylindrical, pseudocylindrical, and most flat projections. Drag to pan the canvas, scroll to zoom.
+When you upload a file, Graticule inspects the coordinates. If they fall outside the valid WGS84 range, it warns you that the file is likely in a projected coordinate system (e.g. UTM or State Plane) and will not display correctly. To fix this, re-export the file as WGS84 from your GIS software before uploading.
 
-**Rotate mode** — used by Globe, azimuthal, and conic projections. Drag directly on the map to rotate the projection around the globe. The projection rotates so that whatever you drag toward the center becomes the new focal point. Scroll to zoom.
+## Projection engine
 
-The interaction mode switches automatically when you change projections.
+Graticule uses [D3-geo](https://d3js.org/d3-geo) for all projection math. This covers the 80+ projections in the selector well, but it is not a full cartographic projection library. You will not find the deep parameter control or obscure local projections available in QGIS or ArcGIS. For highly specialized projection work, those tools are a better fit.
