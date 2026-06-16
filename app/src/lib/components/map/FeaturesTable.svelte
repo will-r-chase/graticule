@@ -12,6 +12,11 @@
 	let hasRightScroll = $state(false);
 	let hasBottomScroll = $state(false);
 
+	const ROW_HEIGHT = 32;
+	const BUFFER = 40;
+	let scrollTop = $state(0);
+	let containerHeight = $state(0);
+
 	$effect(() => {
 		const el = tableScrollEl;
 		if (!el) return;
@@ -19,6 +24,8 @@
 		function update() {
 			hasRightScroll = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
 			hasBottomScroll = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+			scrollTop = el.scrollTop;
+			containerHeight = el.clientHeight;
 		}
 
 		update();
@@ -106,6 +113,13 @@
 	// Local mutable copies so edits don't collide with the derived.
 	let columns = $state<Column[]>([]);
 	let rows = $state<Row[]>([]);
+
+	// Virtual scrolling — only render rows in the visible window + buffer.
+	let virtualStart = $derived(Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER));
+	let virtualEnd = $derived(Math.min(rows.length, Math.ceil((scrollTop + containerHeight) / ROW_HEIGHT) + BUFFER));
+	let visibleRows = $derived(rows.slice(virtualStart, virtualEnd));
+	let topSpacerHeight = $derived(virtualStart * ROW_HEIGHT);
+	let bottomSpacerHeight = $derived(Math.max(0, rows.length - virtualEnd) * ROW_HEIGHT);
 
 	// Which insert zone is currently hovered (index = insert before that column index;
 	// columns.length = insert at end).
@@ -521,7 +535,10 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each rows as row (row.index)}
+					{#if topSpacerHeight > 0}
+						<tr class="virtual-spacer" style="height: {topSpacerHeight}px"><td colspan="999"></td></tr>
+					{/if}
+					{#each visibleRows as row (row.index)}
 						<tr class:selected={isSelected(row.index)}>
 							<td class="col-checkbox">
 								<Checkbox
@@ -556,6 +573,9 @@
 							<td class="col-add-end"></td>
 						</tr>
 					{/each}
+					{#if bottomSpacerHeight > 0}
+						<tr class="virtual-spacer" style="height: {bottomSpacerHeight}px"><td colspan="999"></td></tr>
+					{/if}
 				</tbody>
 			</table>
 		{/if}
@@ -780,6 +800,11 @@
 		outline: 1px solid var(--color-accent);
 		outline-offset: 1px;
 		border-radius: 2px;
+	}
+
+	tr.virtual-spacer td {
+		border: none;
+		padding: 0;
 	}
 
 	td {

@@ -314,7 +314,7 @@
 	.label {
 		width: 72px;
 		flex-shrink: 0;
-		color: var(--color-text-tertiary);
+		color: var(--color-text-primary);
 	}
 
 	.controls {
