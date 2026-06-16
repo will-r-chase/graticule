@@ -72,7 +72,7 @@ export const PROJECTIONS: ProjectionEntry[] = [
 	{ id: 'geoConicConformal',       label: 'Conic Conformal',        group: 'Conic', interactionMode: 'rotate', property: 'conformal',   parallels: [29.5, 45.5] },
 	{ id: 'geoConicEquidistant',     label: 'Conic Equidistant',      group: 'Conic', interactionMode: 'rotate', property: 'equidistant', parallels: [29.5, 45.5] },
 	{ id: 'geoAlbers',               label: 'Albers',                 group: 'Conic', interactionMode: 'rotate', property: 'equal-area',  parallels: [29.5, 45.5] },
-	{ id: 'geoAlbersUsa',            label: 'Albers USA',             group: 'Conic', interactionMode: 'rotate', property: 'equal-area'   },
+	{ id: 'geoAlbersUsa',            label: 'Albers USA',             group: 'Conic', interactionMode: 'pan',    property: 'equal-area'   },
 	{ id: 'geoBonne',                label: 'Bonne',                  group: 'Conic', interactionMode: 'rotate', property: 'equal-area'   },
 	{ id: 'geoPolyconic',            label: 'Polyconic',              group: 'Conic', interactionMode: 'rotate', property: 'compromise'   },
 	{ id: 'geoRectangularPolyconic', label: 'Rectangular Polyconic',  group: 'Conic', interactionMode: 'rotate', property: 'compromise'   },

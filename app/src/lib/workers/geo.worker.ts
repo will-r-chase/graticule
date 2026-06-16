@@ -37,7 +37,10 @@ function buildProjection(projId: string, width: number, height: number, rotate: 
 	const resolvedId = projId === 'geoGlobe' ? 'geoOrthographic' : projId;
 	const fn = allProjections[resolvedId] as (() => d3.GeoProjection) | undefined;
 	if (!fn) return null;
-	return fn().fitSize([width, height], { type: 'Sphere' }).rotate(rotate);
+	const proj = fn().fitSize([width, height], { type: 'Sphere' });
+	// Composite projections (e.g. geoAlbersUsa) omit .rotate; only apply it when supported.
+	if (typeof proj.rotate === 'function') proj.rotate(rotate);
+	return proj;
 }
 
 // A PathRecorder that accumulates path commands and tracks the bbox simultaneously.

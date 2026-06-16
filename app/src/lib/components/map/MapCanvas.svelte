@@ -600,7 +600,10 @@
 		const fn = allProjections[resolvedId] as (() => d3.GeoProjection) | undefined;
 		if (!fn || !width || !height) return null;
 		const rot = projectionEntry.interactionMode === 'rotate' ? projectionStore.rotate : [0, 0, 0] as [number, number, number];
-		return fn().fitSize([width, height], { type: 'Sphere' }).rotate(rot);
+		const proj = fn().fitSize([width, height], { type: 'Sphere' });
+		// Composite projections (e.g. geoAlbersUsa) omit .rotate; only apply it when supported.
+		if (projectionEntry.interactionMode === 'rotate' && typeof proj.rotate === 'function') proj.rotate(rot);
+		return proj;
 	});
 
 	// Returns the geographic bbox [west, south, east, north] of the current viewport,

@@ -398,7 +398,9 @@ function traceAntimeridianBoundary(
 	const EPS    = 0.01; // stay just inside ±180 to avoid boundary instability
 	const STEP   = 0.1;  // degrees latitude per sample
 	const MARGIN = 4;    // px — allow fractional overhang at the canvas edge
-	const rotFn  = d3.geoRotation(proj.rotate());
+	// geoAlbersUsa and other composite projections have no .rotate method; guard with typeof.
+	const rot    = typeof proj.rotate === 'function' ? proj.rotate() : ([0, 0, 0] as [number, number, number]);
+	const rotFn  = d3.geoRotation(rot);
 	// Use the actual canvas dimensions when available; fall back to the projection's
 	// translate as a rough estimate (accurate only for centred projections).
 	const [tx, ty] = proj.translate();
@@ -562,7 +564,8 @@ function arcRingReconstructHemisphere(
 
 	// Boundary circle: center = projection of the geographic projection center,
 	// radius = distance from center to any crossing point.
-	const rot = proj.rotate();
+	// geoAlbersUsa and other composite projections have no .rotate method; guard with typeof.
+	const rot = typeof proj.rotate === 'function' ? proj.rotate() : ([0, 0, 0] as [number, number, number]);
 	const projCenter: [number, number] = [-rot[0], -rot[1]];
 	const centerPt = proj(projCenter) as [number, number] | null;
 	if (!centerPt) return;
@@ -907,9 +910,15 @@ function arcRingReconstructAntimeridian(
  * Path2D satisfies PathRecorder, so existing callers are unaffected.
  */
 export function arcRingToPath(arcIndices: number[], bezierArcs: BezierArc[], recorder: PathRecorder, close = true, proj: d3.GeoProjection | null = null, viewport?: [number, number]): void {
+	// Composite projections (e.g. geoAlbersUsa) have no single rotation/clip geometry,
+	// so the boundary-reconstruction algorithms don't apply — they assume a globe-wide
+	// projection with a meaningful rotate()/clip circle. Detect them via the missing
+	// .rotate method and fall through to the plain streaming path instead.
+	const isComposite = !!proj && typeof proj.rotate !== 'function';
+
 	// Quick scan: route to the appropriate reconstruction function when the ring has
 	// a single reconstructable break type and no plain clamp breaks mixed in.
-	if (close) {
+	if (close && !isComposite) {
 		let hasAnti = false, hasHemi = false, hasVp = false, hasOther = false;
 		let antiBreakCount = 0;
 		outer: for (const idx of arcIndices) {
