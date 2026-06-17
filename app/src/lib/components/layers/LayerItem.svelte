@@ -160,7 +160,7 @@
 </script>
 
 <div class="layer-item-wrapper" class:open={styleOpen} onclick={(e) => e.stopPropagation()}>
-	<div class="layer-item" class:selected={!anyEntered && (styleOpen || isSelected)} class:menu-open={menuOpen} class:canvas-hovered={isCanvasHovered && !isSelected && !styleOpen} class:dimmed={anyEntered && !isEntered} tabindex="-1" use:rowDragHandle={!editing} onclick={handleRowClick} onmouseenter={() => setHoveredLayer(layer.id)} onmouseleave={() => setHoveredLayer(null)} onpointerdown={(e) => { if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopImmediatePropagation(); }}>
+	<div class="layer-item" class:selected={!anyEntered && (styleOpen || isSelected)} class:menu-open={menuOpen} class:canvas-hovered={isCanvasHovered && !isSelected && !styleOpen} class:dimmed={anyEntered && !isEntered} class:layer-hidden={!layer.visible} tabindex="-1" use:rowDragHandle={!editing} onclick={handleRowClick} onmouseenter={() => setHoveredLayer(layer.id)} onmouseleave={() => setHoveredLayer(null)} onpointerdown={(e) => { if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopImmediatePropagation(); }}>
 		{#if showSpinner}
 			<div class="style-spinner" aria-label="Loading">
 				<CircleNotch size={14} color="var(--color-text-tertiary)" />
@@ -232,7 +232,7 @@
 			</button>
 
 			<button
-				class="icon-btn"
+				class="icon-btn visibility-btn"
 				aria-label={layer.visible ? 'Hide layer' : 'Show layer'}
 				title={layer.visible ? 'Hide layer' : 'Show layer'}
 				onclick={(e) => { e.stopPropagation(); toggleVisibility(layer.id); pushSnapshot(); }}
@@ -460,17 +460,33 @@
 	}
 
 	.actions {
-		display: none;
+		display: flex;
 		align-items: center;
 		gap: var(--space-xs);
 		flex-shrink: 0;
 	}
 
-	.layer-item:hover .actions,
-	.layer-item.canvas-hovered .actions,
-	.layer-item.selected .actions,
-	.layer-item.menu-open .actions {
+	.actions .icon-btn {
+		display: none;
+	}
+
+	/* When hidden: all buttons take up space but only the eye is visible */
+	.layer-item.layer-hidden .actions .icon-btn {
 		display: flex;
+		visibility: hidden;
+	}
+
+	.layer-item.layer-hidden .actions .visibility-btn {
+		visibility: visible;
+	}
+
+	/* Hover/selected: all buttons visible */
+	.layer-item:hover .actions .icon-btn,
+	.layer-item.canvas-hovered .actions .icon-btn,
+	.layer-item.selected .actions .icon-btn,
+	.layer-item.menu-open .actions .icon-btn {
+		display: flex;
+		visibility: visible;
 	}
 
 	/* Only apply the grey hover-lock when the row isn't already in the selected (green) state */
