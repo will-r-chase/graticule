@@ -444,6 +444,7 @@ function insertLayerAt(
 	index: number,
 	style: LayerStyle | null,
 	onComplete?: () => void,
+	processing?: LayerProcessing,
 ): void {
 	const id = generateId();
 	const datasetId = generateId();
@@ -458,7 +459,7 @@ function insertLayerAt(
 		error: null,
 		hasTopology: false,
 		style: style ? JSON.parse(JSON.stringify(style)) : defaultStyle(),
-		processing: defaultProcessing(),
+		processing: processing ? JSON.parse(JSON.stringify(processing)) : defaultProcessing(),
 		geometryTypes: [],
 		bezierCacheKey: 0,
 	});
@@ -717,6 +718,10 @@ export function deleteSelectedFeatures(
 	const rawTopo = rawTopologyData.get(layerId);
 	if (!layer || !rawTopo) return;
 
+	const index = layers.findIndex((l) => l.id === layerId);
+
+	// Clone raw and drop the selected geometries. We filter raw (not working) so
+	// the new layer's preserved processing re-derives the same simplification.
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const newTopo = JSON.parse(JSON.stringify(rawTopo)) as typeof rawTopo;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -725,11 +730,11 @@ export function deleteSelectedFeatures(
 	anyTopo.objects[objectName].geometries = anyTopo.objects[objectName].geometries
 		.filter((_: unknown, i: number) => !featureIndices.has(i));
 
-	rawTopologyData.set(layerId, newTopo);
-	simplifiedTopologyData.delete(layerId);
-	layer.hasTopology = false;
-	layer.loading = true;
-	runLayerPipeline(layerId, false).then(() => onComplete?.());
+	// Model delete like the other geometry ops: drop the old layer (its raw stays
+	// in the Maps so undo can restore it) and insert a new layer id holding the
+	// reduced geometry, preserving the original style and processing.
+	removeLayer(layerId);
+	insertLayerAt(layer.name, newTopo, index, layer.style, onComplete, layer.processing);
 }
 
 function geometryFamily(type: string): string {
