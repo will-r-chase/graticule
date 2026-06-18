@@ -7,6 +7,7 @@
 	import { parseFile, applyFixes, type UploadResult } from '$lib/utils/fileUpload';
 	import { addUploadedDataset } from '$lib/stores/uploadedDatasets.svelte';
 	import { undo, redo, canUndo, canRedo, pushSnapshot } from '$lib/stores/history.svelte';
+	import { editSession, undoEdit, redoEdit } from '$lib/stores/editSession.svelte';
 	import { selection, clearSelection } from '$lib/stores/selection.svelte';
 	import { layerSelection, clearLayerSelection, exitLayer } from '$lib/stores/layerSelection.svelte';
 	import { layers, toggleVisibility, duplicateLayer, removeLayer, reorderLayers, addUploadedLayer } from '$lib/stores/layers.svelte';
@@ -81,7 +82,7 @@
 				pushSnapshot();
 				return;
 			}
-			if (e.key === 'Backspace' && (e.metaKey || e.ctrlKey)) {
+			if (e.key === 'Backspace' && (e.metaKey || e.ctrlKey) && !editSession.activeLayerId) {
 				e.preventDefault();
 				for (const id of [...layerSelection.ids]) removeLayer(id);
 				clearLayerSelection();
@@ -91,8 +92,13 @@
 		}
 		if (e.key === 'z' && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
-			if (e.shiftKey) { if (canRedo()) redo(); }
-			else            { if (canUndo()) undo(); }
+			// While editing, Ctrl/Cmd+Z drives the session-local per-vertex undo, leaving
+			// the global history untouched until the session commits.
+			if (editSession.activeLayerId) {
+				if (e.shiftKey) redoEdit();
+				else            undoEdit();
+			} else if (e.shiftKey) { if (canRedo()) redo(); }
+			else                   { if (canUndo()) undo(); }
 		}
 	}
 

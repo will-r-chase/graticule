@@ -2,6 +2,7 @@ import type { Topology } from 'topojson-specification';
 import type { Layer, LayerStyle, LayerProcessing, Dataset } from '$lib/types';
 import { catalog } from './catalog.svelte';
 import { countTopoPoints } from '$lib/utils/chaikin';
+import { topologyToAbsolute } from '$lib/utils/topology';
 import { workerChaikin } from '$lib/workers/geoWorker';
 import { workerSimplify } from '$lib/workers/simplifyWorker';
 import { showToast } from './toast.svelte';
@@ -465,6 +466,53 @@ function insertLayerAt(
 	});
 	rawTopologyData.set(id, plainTopology);
 	runLayerPipeline(id, style === null).then(() => onComplete?.());
+}
+
+// Duplicates a processed layer with its current on-screen (simplified/smoothed) geometry
+// baked in as the new raw, and processing reset to defaults — so the duplicate renders
+// exactly as it looked but is now editable at full fidelity. The original is kept.
+// Calls onReady with the new layer id once its pipeline has produced working geometry.
+export function bakeLayerForEdit(sourceId: string, onReady: (newId: string) => void): void {
+	const source = layers.find((l) => l.id === sourceId);
+	const working = workingTopologyData.get(sourceId);
+	if (!source || !working) return;
+
+	// topologyToAbsolute gives a clean, transform-free copy so editing never mutates the
+	// source layer's cached geometry.
+	const baked = topologyToAbsolute(working);
+	const id = generateId();
+	const datasetId = generateId();
+	registerDataset(datasetId, baked);
+
+	const index = layers.findIndex((l) => l.id === sourceId);
+	layers.splice(index, 0, {
+		id,
+		datasetId,
+		name: `${source.name} (edited)`,
+		visible: true,
+		loading: true,
+		error: null,
+		hasTopology: false,
+		style: JSON.parse(JSON.stringify(source.style)),
+		processing: defaultProcessing(),
+		geometryTypes: [],
+		bezierCacheKey: 0,
+	});
+	rawTopologyData.set(id, baked);
+	runLayerPipeline(id, false).then(() => onReady(id));
+}
+
+// Commits an edited draft as a NEW layer replacing the one being edited: removes the
+// source (its raw stays in the caches so undo can re-derive the pre-edit geometry) and
+// inserts a fresh layer with the draft as raw at the same z-index, name, and style. The
+// new id is what keeps vertex editing undoable.
+export function commitEditedLayer(sourceId: string, draftTopo: Topology, onComplete?: () => void): void {
+	const source = layers.find((l) => l.id === sourceId);
+	if (!source) { onComplete?.(); return; }
+	const index = layers.findIndex((l) => l.id === sourceId);
+	const { name, style } = source;
+	removeLayer(sourceId);
+	insertLayerAt(name, draftTopo, index, style, onComplete);
 }
 
 export function dissolveLayer(layerId: string, field: string | null, onComplete?: () => void): void {

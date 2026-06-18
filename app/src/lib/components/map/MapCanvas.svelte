@@ -11,6 +11,8 @@
 	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
 	import { layerSelection, clearLayerSelection, selectLayer, toggleLayerSelection, enterLayer, exitLayer, setHoveredLayer } from '$lib/stores/layerSelection.svelte';
 	import { hoveredFeature } from '$lib/stores/hoveredFeature.svelte';
+	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, type DragMember } from '$lib/stores/editSession.svelte';
+	import { featureArcIndices } from '$lib/utils/topology';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
 	import { mapState } from '$lib/stores/mapState.svelte';
@@ -21,7 +23,9 @@
 	import Toaster from '$lib/components/ui/Toaster.svelte';
 	import MapToolbar from '$lib/components/map/MapToolbar.svelte';
 	import SelectionBar from '$lib/components/map/SelectionBar.svelte';
+	import EditSessionBar from '$lib/components/map/EditSessionBar.svelte';
 	import LayerActionBar from '$lib/components/map/LayerActionBar.svelte';
+	import ConfirmModal from '$lib/components/ui/ConfirmModal.svelte';
 	import FeaturesTable from '$lib/components/map/FeaturesTable.svelte';
 	import { MagnifyingGlassPlus, MagnifyingGlassMinus, CornersOut } from 'phosphor-svelte';
 	import { computeFeatureBboxes } from '$lib/utils/featureBbox';
@@ -318,10 +322,243 @@
 		return hitDecodeMap.get(bestKey) ?? null;
 	}
 
+	// --- Vertex editing: hit-testing + drag ---------------------------------
+	const VERTEX_HIT_RADIUS = 8; // px
+
+	// The vertex group currently being dragged, or null. `group` holds one member per
+	// selected vertex (each with its node-fanned targets + origin); `from` is the grabbed
+	// vertex's origin (delta vs the cursor drives the translation). `insert` marks a drag
+	// that began by inserting a new vertex (committed as one op).
+	let vertexDrag = $state<{
+		group: DragMember[];
+		from: [number, number];
+		insert?: { arcIndex: number; atIndex: number };
+	} | null>(null);
+	// Whether the cursor is hovering a draggable vertex (drives the grab cursor).
+	let overVertex = $state(false);
+	// Hovered edge where a new vertex can be inserted; the ghost marker sits at its midpoint.
+	let insertHover = $state<{ arcIndex: number; atIndex: number; geo: [number, number] } | null>(null);
+	// Whether the cursor is directly over the ghost point (active state — click to insert).
+	let overInsertGhost = $state(false);
+	const EDGE_HIT_RADIUS = 8;   // px — how close to a segment shows the ghost
+	const GHOST_HOVER_RADIUS = 7; // px — how close to the ghost point activates it
+	// rAF throttle for vertex drags: the latest pointer position, applied once per frame.
+	let pendingDragGeo: [number, number] | null = null;
+	let dragRafId: number | null = null;
+
+	// Inverse of the projection + pan/zoom transform: a screen point → [lon, lat].
+	function screenToGeo(clientX: number, clientY: number): [number, number] | null {
+		if (!projection || !canvasEl) return null;
+		const rect = canvasEl.getBoundingClientRect();
+		const px = (clientX - rect.left - tx) / mapScale;
+		const py = (clientY - rect.top - ty) / mapScale;
+		return projection.invert?.([px, py]) ?? null;
+	}
+
+	// Nearest draft vertex of the targeted feature within VERTEX_HIT_RADIUS, or null.
+	function hitVertex(clientX: number, clientY: number): { arcIndex: number; vertexIndex: number } | null {
+		const draft = getDraft();
+		if (!draft || !projection || !canvasEl) return null;
+		const rect = canvasEl.getBoundingClientRect();
+		const mx = clientX - rect.left;
+		const my = clientY - rect.top;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const arcs = (draft as any).arcs as number[][][];
+		const arcIndices = featureArcIndices(draft, editSession.featureIndex);
+		const stride = markerStride(); // only the drawn (decimated) vertices are grabbable
+
+		let best: { arcIndex: number; vertexIndex: number } | null = null;
+		let bestDist = VERTEX_HIT_RADIUS * VERTEX_HIT_RADIUS;
+		for (const ai of arcIndices) {
+			const arc = arcs[ai];
+			if (!arc) continue;
+			for (let vi = 0; vi < arc.length; vi += stride) {
+				const p = projection(arc[vi] as [number, number]);
+				if (!p) continue;
+				const sx = p[0] * mapScale + tx;
+				const sy = p[1] * mapScale + ty;
+				// Cheap reject before the distance math: only vertices near the cursor.
+				if (Math.abs(sx - mx) > VERTEX_HIT_RADIUS || Math.abs(sy - my) > VERTEX_HIT_RADIUS) continue;
+				const dx = sx - mx;
+				const dy = sy - my;
+				const d = dx * dx + dy * dy;
+				if (d < bestDist) { bestDist = d; best = { arcIndex: ai, vertexIndex: vi }; }
+			}
+		}
+		return best;
+	}
+
+	// Current draft coordinate of a vertex.
+	function vertexCoord(arcIndex: number, vertexIndex: number): [number, number] | null {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const arc = ((getDraft() as any)?.arcs as number[][][] | undefined)?.[arcIndex];
+		const c = arc?.[vertexIndex];
+		return c ? [c[0], c[1]] : null;
+	}
+
+	// A drag member for a vertex: its node-fanned targets plus its origin coordinate.
+	function dragMemberFor(arcIndex: number, vertexIndex: number): DragMember | null {
+		const orig = vertexCoord(arcIndex, vertexIndex);
+		if (!orig) return null;
+		return { targets: vertexDragTargets(arcIndex, vertexIndex), orig };
+	}
+
+	// Marker decimation. While zoomed out, the targeted feature's markers are thinned to
+	// every Nth vertex (kept ~MARKER_TARGET_SPACING px apart) so a detailed feature stays
+	// fast and isn't an unusable blur. Once vertices are naturally that far apart on screen
+	// — a scale where you'd actually edit — the stride is 1 and the marker set stops shifting.
+	//
+	// The decision is driven by the *real* on-screen spacing of vertices that are currently
+	// in view, measured by sampling ~MARKER_SPACING_SAMPLES consecutive pairs and projecting
+	// them. This is far more accurate than a bbox proxy (which underestimates spacing badly
+	// for very wiggly boundaries, leaving huge features still decimating when zoomed in), yet
+	// still cheap — a fixed sample, not every vertex.
+	const MARKER_TARGET_SPACING = 6; // px between drawn markers; at/above this on screen, show all
+	const MARKER_SPACING_SAMPLES = 64;
+	function markerStride(): number {
+		const draft = getDraft();
+		if (!draft || !projection || !editSession.activeLayerId) return 1;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const arcs = (draft as any).arcs as number[][][];
+		const arcIndices = featureArcIndices(draft, editSession.featureIndex);
+
+		let total = 0;
+		for (const ai of arcIndices) total += arcs[ai]?.length ?? 0;
+		if (total < 2) return 1;
+		const step = Math.max(1, Math.floor(total / MARKER_SPACING_SAMPLES));
+
+		// Sample consecutive-pair distances; prefer pairs in the viewport (the density you
+		// actually see), falling back to all sampled pairs if too few are visible.
+		let sumVis = 0, nVis = 0, sumAll = 0, nAll = 0, counter = 0;
+		for (const ai of arcIndices) {
+			const arc = arcs[ai];
+			if (!arc || arc.length < 2) continue;
+			for (let vi = 0; vi < arc.length - 1; vi++) {
+				if (counter++ % step !== 0) continue;
+				const a = projection(arc[vi] as [number, number]);
+				const b = projection(arc[vi + 1] as [number, number]);
+				if (!a || !b) continue;
+				const ax = a[0] * mapScale + tx, ay = a[1] * mapScale + ty;
+				const bx = b[0] * mapScale + tx, by = b[1] * mapScale + ty;
+				const d = Math.hypot(ax - bx, ay - by);
+				sumAll += d; nAll++;
+				const inView = (ax >= 0 && ax <= width && ay >= 0 && ay <= height)
+					|| (bx >= 0 && bx <= width && by >= 0 && by <= height);
+				if (inView) { sumVis += d; nVis++; }
+			}
+		}
+		const spacing = nVis >= 8 ? sumVis / nVis : (nAll > 0 ? sumAll / nAll : MARKER_TARGET_SPACING);
+		if (spacing >= MARKER_TARGET_SPACING) return 1;
+		return Math.max(1, Math.round(MARKER_TARGET_SPACING / spacing));
+	}
+
+	// Squared distance from point (px,py) to segment (ax,ay)-(bx,by), in screen space.
+	function distToSegmentSq(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+		const dx = bx - ax;
+		const dy = by - ay;
+		const len2 = dx * dx + dy * dy;
+		let t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+		t = Math.max(0, Math.min(1, t));
+		const ex = px - (ax + t * dx);
+		const ey = py - (ay + t * dy);
+		return ex * ex + ey * ey;
+	}
+
+	// Nearest segment of the targeted feature within EDGE_HIT_RADIUS of the cursor (hovering
+	// anywhere along the segment counts). The ghost is placed at that segment's midpoint;
+	// atIndex is the splice position.
+	function hitEdge(clientX: number, clientY: number): { arcIndex: number; atIndex: number; geo: [number, number] } | null {
+		const draft = getDraft();
+		// Insert is disabled while markers are decimated — inserting among sub-pixel
+		// vertices is meaningless; the user zooms in (stride 1) to add points.
+		if (!draft || !projection || !canvasEl || markerStride() > 1) return null;
+		const rect = canvasEl.getBoundingClientRect();
+		const mx = clientX - rect.left;
+		const my = clientY - rect.top;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const arcs = (draft as any).arcs as number[][][];
+		const arcIndices = featureArcIndices(draft, editSession.featureIndex);
+
+		let best: { arcIndex: number; atIndex: number; sx: number; sy: number } | null = null;
+		let bestDist = EDGE_HIT_RADIUS * EDGE_HIT_RADIUS;
+		for (const ai of arcIndices) {
+			const arc = arcs[ai];
+			if (!arc) continue;
+			for (let vi = 0; vi < arc.length - 1; vi++) {
+				const a = projection(arc[vi] as [number, number]);
+				const b = projection(arc[vi + 1] as [number, number]);
+				if (!a || !b) continue;
+				const ax = a[0] * mapScale + tx;
+				const ay = a[1] * mapScale + ty;
+				const bx = b[0] * mapScale + tx;
+				const by = b[1] * mapScale + ty;
+				// Cull segments fully outside the viewport.
+				if ((ax < 0 && bx < 0) || (ax > width && bx > width) || (ay < 0 && by < 0) || (ay > height && by > height)) continue;
+				const d = distToSegmentSq(mx, my, ax, ay, bx, by);
+				if (d < bestDist) { bestDist = d; best = { arcIndex: ai, atIndex: vi + 1, sx: (ax + bx) / 2, sy: (ay + by) / 2 }; }
+			}
+		}
+		if (!best) return null;
+		const geo = projection.invert?.([(best.sx - tx) / mapScale, (best.sy - ty) / mapScale]);
+		if (!geo) return null;
+		return { arcIndex: best.arcIndex, atIndex: best.atIndex, geo: geo as [number, number] };
+	}
+
+	// Highlights one feature of the edit layer using the live draft geometry (the path
+	// cache is stale during a session). Drawn in projection space, like drawFeatureHighlight.
+	function drawDraftFeatureHighlight(
+		c: CanvasRenderingContext2D,
+		featureIndex: number,
+		fillColor: string,
+		strokeColor: string,
+		fillOpacity: number,
+		lineWidth: number,
+	): void {
+		const draft = getDraft();
+		if (!draft || !projection) return;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const anyDraft = draft as any;
+		const objName = Object.keys(anyDraft.objects)[0];
+		const geom = anyDraft.objects[objName].geometries[featureIndex];
+		if (!geom) return;
+		const pathStr = d3.geoPath(projection)(feature(anyDraft, geom));
+		if (!pathStr) return;
+		const path = new Path2D(pathStr);
+		if ((geom.type === 'Polygon' || geom.type === 'MultiPolygon') && fillColor !== 'none') {
+			c.globalAlpha = fillOpacity;
+			c.fillStyle = fillColor;
+			c.fill(path, 'evenodd');
+		}
+		c.globalAlpha = 1;
+		c.strokeStyle = strokeColor;
+		c.lineWidth = lineWidth;
+		c.stroke(path);
+	}
+
 	function handleClick(e: MouseEvent) {
 		if (suppressNextClick) { suppressNextClick = false; return; }
 		if (clipBbox.open && clipBbox.mode === 'bbox') return;
 		if (toolState.active === 'pan') return;
+
+		if (toolState.active === 'edit') {
+			const editHit = getHitAtPoint(e.clientX, e.clientY);
+			if (editSession.activeLayerId) {
+				// Active draft: single-click only swaps to another feature in the SAME
+				// layer. Clicks on other layers or empty space do nothing — leaving the
+				// draft requires a double-click (protection).
+				if (editHit && editHit.layerId === editSession.activeLayerId) {
+					startEditing(editHit.layerId, editHit.featureIndex);
+					selectFeature(editHit.layerId, editHit.featureIndex, false);
+				}
+			} else {
+				// Targeting: single-click selects a feature so the contextual action bar
+				// (with its Edit button) appears. Clicking empty clears.
+				if (editHit) selectFeature(editHit.layerId, editHit.featureIndex, false);
+				else clearSelection();
+			}
+			return;
+		}
+
 		if (toolState.active !== 'select') return;
 
 		const hit = getHitAtPoint(e.clientX, e.clientY);
@@ -360,6 +597,24 @@
 	}
 
 	function handleDblClick(e: MouseEvent) {
+		if (toolState.active === 'edit') {
+			const editHit = getHitAtPoint(e.clientX, e.clientY);
+			if (editSession.activeLayerId) {
+				// Active draft: double-click commits. On another feature, jump straight
+				// into editing it; on empty space, return to targeting.
+				if (editHit) {
+					startEditing(editHit.layerId, editHit.featureIndex);
+					selectFeature(editHit.layerId, editHit.featureIndex, false);
+				} else {
+					exitEditing();
+					clearSelection();
+				}
+			} else {
+				// Targeting: double-click starts editing the feature (the fast path).
+				if (editHit) startEditing(editHit.layerId, editHit.featureIndex);
+			}
+			return;
+		}
 		if (toolState.active !== 'select') return;
 		const hit = getHitAtPoint(e.clientX, e.clientY);
 		if (!hit) return;
@@ -459,6 +714,45 @@
 
 	function handlePointerDown(e: PointerEvent) {
 		if (clipBbox.open && clipBbox.mode === 'bbox' && toolState.active !== 'pan' && !spacePanning) return;
+
+		// Edit tool, active draft: select/drag a vertex, insert, or clear the selection.
+		if (toolState.active === 'edit' && editSession.activeLayerId && !spacePanning) {
+			const hit = hitVertex(e.clientX, e.clientY);
+			if (hit) {
+				if (e.shiftKey) {
+					// Shift = toggle this vertex's selection; no drag.
+					toggleVertex(hit.arcIndex, hit.vertexIndex);
+					return;
+				}
+				// Select on mousedown, but only if not already selected — keeping an
+				// existing multi-selection intact so a drag moves the whole group.
+				if (!isVertexSelected(hit.arcIndex, hit.vertexIndex)) {
+					selectVertex(hit.arcIndex, hit.vertexIndex);
+				}
+				const group = getSelectedVertices()
+					.map((v) => dragMemberFor(v.arcIndex, v.vertexIndex))
+					.filter((m): m is DragMember => m !== null);
+				const from = vertexCoord(hit.arcIndex, hit.vertexIndex);
+				if (group.length && from) {
+					vertexDrag = { group, from };
+					(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+				}
+				return;
+			}
+			// On the active ghost point — insert a vertex there and drag it into place.
+			if (insertHover && overInsertGhost) {
+				const { arcIndex, atIndex, geo } = insertHover;
+				beginInsert(arcIndex, atIndex, geo);
+				vertexDrag = { group: [{ targets: [{ arcIndex, vertexIndex: atIndex }], orig: geo }], from: geo, insert: { arcIndex, atIndex } };
+				insertHover = null;
+				overInsertGhost = false;
+				(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+				return;
+			}
+			// Clicked feature body or empty space — clear the vertex selection.
+			clearVertexSelection();
+		}
+
 		if (toolState.active === 'pan' || spacePanning) {
 			isDragging = true;
 			panMoved = false;
@@ -495,6 +789,24 @@
 	}
 
 	function handlePointerMove(e: PointerEvent) {
+		// Dragging a vertex — record the latest position and apply it at most once per
+		// animation frame (coalesces rapid pointer-moves into one repaint).
+		if (vertexDrag) {
+			const geo = screenToGeo(e.clientX, e.clientY);
+			if (geo) {
+				pendingDragGeo = geo;
+				if (dragRafId === null) {
+					dragRafId = requestAnimationFrame(() => {
+						dragRafId = null;
+						if (vertexDrag && pendingDragGeo) {
+							translateGroup(vertexDrag.group, pendingDragGeo[0] - vertexDrag.from[0], pendingDragGeo[1] - vertexDrag.from[1]);
+						}
+					});
+				}
+			}
+			return;
+		}
+
 		// Promote pointerdown to marquee once the threshold is exceeded.
 		if (marqueeStart && !isMarqueeDragging && !isDragging) {
 			const dx = e.clientX - marqueePtrStartX;
@@ -546,6 +858,31 @@
 			} // end featureHoverActive
 		}
 
+		// Edit tool, targeting sub-state: feature hover is always active (you target
+		// features directly), so highlight whatever feature is under the cursor.
+		if (toolState.active === 'edit' && !isDragging && hitCanvas && canvasEl) {
+			hoveredFeature.value = getHitAtPoint(e.clientX, e.clientY);
+			if (editSession.activeLayerId !== null) {
+				overVertex = hitVertex(e.clientX, e.clientY) !== null;
+				// Show the insert ghost only when not already over a draggable vertex.
+				insertHover = overVertex ? null : hitEdge(e.clientX, e.clientY);
+				// Active when the cursor is right on the ghost point itself.
+				if (insertHover && projection && canvasEl) {
+					const gp = projection(insertHover.geo);
+					const rect = canvasEl.getBoundingClientRect();
+					const gx = gp ? gp[0] * mapScale + tx : -1e9;
+					const gy = gp ? gp[1] * mapScale + ty : -1e9;
+					overInsertGhost = Math.hypot(gx - (e.clientX - rect.left), gy - (e.clientY - rect.top)) <= GHOST_HOVER_RADIUS;
+				} else {
+					overInsertGhost = false;
+				}
+			} else {
+				overVertex = false;
+				insertHover = null;
+				overInsertGhost = false;
+			}
+		}
+
 		if (!isDragging) return;
 		panMoved = true;
 
@@ -575,6 +912,27 @@
 	}
 
 	function handlePointerUp() {
+		// End of a vertex drag — rebuild the node map (a moved node has new coords) and
+		// swallow the trailing click so it doesn't retarget/deselect.
+		if (vertexDrag) {
+			// Flush any pending throttled move so the final position is applied.
+			if (dragRafId !== null) { cancelAnimationFrame(dragRafId); dragRafId = null; }
+			if (pendingDragGeo) {
+				translateGroup(vertexDrag.group, pendingDragGeo[0] - vertexDrag.from[0], pendingDragGeo[1] - vertexDrag.from[1]);
+				pendingDragGeo = null;
+			}
+			if (vertexDrag.insert) {
+				// Insert + placement collapse into one undo step.
+				commitInsert(vertexDrag.insert.arcIndex, vertexDrag.insert.atIndex);
+			} else {
+				recordMoves(vertexDrag.group);
+			}
+			vertexDrag = null;
+			rebuildNodeMap();
+			suppressNextClick = true;
+			return;
+		}
+
 		if (isMarqueeDragging) {
 			isMarqueeDragging = false;
 			suppressNextClick = true;
@@ -1120,7 +1478,27 @@
 			const tag = (e.target as Element | null)?.tagName;
 			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
-			if (e.key === ' ' && toolState.active === 'select') {
+			// Esc backs out of the bake dialog, then out of an active edit session.
+			if (e.key === 'Escape') {
+				if (editSession.pendingBake) { cancelBake(); return; }
+				if (editSession.activeLayerId) { exitEditing(); return; }
+			}
+
+			// Enter confirms the bake dialog, then commits an active edit session.
+			if (e.key === 'Enter') {
+				if (editSession.pendingBake) { confirmBake(); return; }
+				if (editSession.activeLayerId) { exitEditing(); return; }
+			}
+
+			// During a session, Delete/Backspace removes the selected vertices (and takes
+			// precedence over feature/layer deletion).
+			if ((e.key === 'Delete' || e.key === 'Backspace') && editSession.activeLayerId) {
+				e.preventDefault();
+				deleteSelectedVertices();
+				return;
+			}
+
+			if (e.key === ' ' && (toolState.active === 'select' || toolState.active === 'edit')) {
 				e.preventDefault(); // prevent page scroll
 				spacePanning = true;
 				return;
@@ -1132,6 +1510,9 @@
 			} else if (e.key === 's' || e.key === 'S') {
 				exitLayer();
 				toolState.active = 'select';
+			} else if (e.key === 'e' || e.key === 'E') {
+				exitLayer();
+				toolState.active = 'edit';
 			} else if ((e.key === 'Delete' || e.key === 'Backspace') && selection.features.size > 0) {
 				e.preventDefault();
 				const snapshot = new Map([...selection.features.entries()].map(([k, v]) => [k, new Set(v)]));
@@ -1143,7 +1524,7 @@
 						if (remaining === 0) pushSnapshot();
 					});
 				}
-			} else if ((e.key === 'e' || e.key === 'E') && selection.features.size > 0) {
+			} else if ((e.key === 'c' || e.key === 'C') && selection.features.size > 0) {
 				e.preventDefault();
 				const snapshot = new Map([...selection.features.entries()].map(([k, v]) => [k, new Set(v)]));
 				clearSelection();
@@ -1161,6 +1542,15 @@
 			window.removeEventListener('keydown', handleKeyDown);
 			window.removeEventListener('keyup', handleKeyUp);
 		};
+	});
+
+	// Leaving the edit tool (toolbar button or shortcut) ends any active edit session
+	// and dismisses a pending bake dialog.
+	$effect(() => {
+		if (toolState.active !== 'edit') {
+			if (editSession.pendingBake) cancelBake();
+			if (editSession.activeLayerId) exitEditing();
+		}
 	});
 
 	// Observe container size and update width/height.
@@ -1334,7 +1724,7 @@
 		ctx.clearRect(0, 0, width, height);
 
 		if (canvasStyles.background.enabled) {
-			const bgDim = layerSelection.enteredId !== null ? 0.35 : 1.0;
+			const bgDim = (layerSelection.enteredId !== null || editSession.activeLayerId !== null) ? 0.35 : 1.0;
 			ctx.globalAlpha = canvasStyles.background.alpha * bgDim;
 			ctx.fillStyle = canvasStyles.background.hex;
 			ctx.fillRect(0, 0, width, height);
@@ -1436,6 +1826,64 @@
 		for (const layer of [...layers].reverse()) {
 			if (!layer.visible) continue;
 
+			// Edit layer: draw clean features from the (still-valid) path cache and only
+			// the edited "dirty" features live from the draft — so a drag on a complex
+			// layer re-projects one feature, not the whole layer.
+			if (editSession.activeLayerId === layer.id) {
+				void editSession.version; // subscribe so draft mutations repaint
+				const draft = getDraft();
+				const editChunks = pathCache.get(layer.id);
+				if (draft && projection) {
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					const anyDraft = draft as any;
+					const objName = Object.keys(anyDraft.objects)[0];
+					const geometries = anyDraft.objects[objName].geometries as { type?: string }[];
+					const dirty = getDirtyFeatures();
+
+					const vxMin = -tx / mapScale;
+					const vxMax = (width - tx) / mapScale;
+					const vyMin = -ty / mapScale;
+					const vyMax = (height - ty) / mapScale;
+					const fillEnabled = layer.style.fill !== 'none';
+
+					ctx.strokeStyle = layer.style.stroke;
+					ctx.lineWidth = layer.style.strokeWidth / mapScale;
+					if (layer.style.strokeDashed) {
+						ctx.setLineDash([layer.style.strokeDash / mapScale, layer.style.strokeGap / mapScale]);
+					}
+
+					const count = editChunks ? editChunks.length : geometries.length;
+					for (let ci = 0; ci < count; ci++) {
+						let path2d: Path2D;
+						if (dirty.has(ci) || !editChunks) {
+							// Edited feature (or no cache) — project it from the draft now.
+							const geom = geometries[ci];
+							if (!geom) continue;
+							// eslint-disable-next-line @typescript-eslint/no-explicit-any
+							const pathStr = d3.geoPath(projection)(feature(anyDraft, geom as any));
+							if (!pathStr) continue;
+							path2d = new Path2D(pathStr);
+						} else {
+							const chunk = editChunks[ci];
+							if (!chunk) continue;
+							const [xMin, yMin, xMax, yMax] = chunk.bbox;
+							if (xMax < vxMin || xMin > vxMax || yMax < vyMin || yMin > vyMax) continue;
+							path2d = chunk.path2d;
+						}
+						if (fillEnabled) {
+							ctx.globalAlpha = layer.style.fillOpacity;
+							ctx.fillStyle = layer.style.fill;
+							ctx.fill(path2d, 'evenodd');
+						}
+						ctx.globalAlpha = layer.style.strokeOpacity;
+						ctx.stroke(path2d);
+					}
+					ctx.setLineDash([]);
+					ctx.globalAlpha = 1;
+				}
+				continue;
+			}
+
 			const chunks = pathCache.get(layer.id);
 			if (chunks === undefined) continue;
 
@@ -1443,6 +1891,7 @@
 			const hasPoints   = layer.geometryTypes.some((t) => t === 'Point' || t === 'MultiPoint');
 
 				const dim = layerSelection.enteredId !== null && layer.id !== layerSelection.enteredId ? 0.35
+					: editSession.activeLayerId !== null && layer.id !== editSession.activeLayerId ? 0.35
 					: clipBbox.open && !layerSelection.ids.includes(layer.id) ? 0.2
 					: 1.0;
 				const isMaskLayer = clipBbox.open && clipBbox.mode === 'layer' && layer.id === clipBbox.maskId;
@@ -1721,35 +2170,154 @@
 		}
 
 		// Hover pass — grey stroke, subtle dark fill overlay, slightly larger points.
-		if (toolState.active === 'select' && hoveredFeature.value) {
-			const isSelected = selection.features.get(hoveredFeature.value.layerId)?.has(hoveredFeature.value.featureIndex) ?? false;
-			if (!isSelected) {
-				drawFeatureHighlight(
-					ctx,
-					hoveredFeature.value.layerId,
-					hoveredFeature.value.featureIndex,
-					'#000000',    // polygon fill — dark overlay darkens any fill color
-					textColor,    // grey stroke for polygons and lines
-					0.08,         // subtle fill opacity
-					3 / mapScale, // thicker stroke
-					2,            // slightly larger points
-				);
+		if ((toolState.active === 'select' || toolState.active === 'edit') && hoveredFeature.value) {
+			const hv = hoveredFeature.value;
+			if (editSession.activeLayerId === hv.layerId) {
+				// Edit layer: draw the hover highlight from the draft (the cache is stale
+				// during a session). Skip the currently-targeted feature — it already shows
+				// the tint + vertex markers.
+				if (hv.featureIndex !== editSession.featureIndex) {
+					drawDraftFeatureHighlight(ctx, hv.featureIndex, '#000000', textColor, 0.08, 3 / mapScale);
+				}
+			} else {
+				const isSelected = selection.features.get(hv.layerId)?.has(hv.featureIndex) ?? false;
+				if (!isSelected) {
+					drawFeatureHighlight(
+						ctx,
+						hv.layerId,
+						hv.featureIndex,
+						'#000000',    // polygon fill — dark overlay darkens any fill color
+						textColor,    // grey stroke for polygons and lines
+						0.08,         // subtle fill opacity
+						3 / mapScale, // thicker stroke
+						2,            // slightly larger points
+					);
+				}
 			}
 		}
 
 		// Selection pass — accent fill, accent border, accent stroke, accent dot.
-		for (const [layerId, featureIndices] of selection.features) {
-			for (const fi of featureIndices) {
-				drawFeatureHighlight(
-					ctx,
-					layerId,
-					fi,
-					accentColor,
-					accentColor,
-					0.25,         // polygon fill opacity
-					4 / mapScale, // thick border for polygons / stroke for lines
-					5,            // larger dot for points
-				);
+		// Skipped while editing: the edit-marker pass below is the relevant overlay.
+		if (!editSession.activeLayerId) {
+			for (const [layerId, featureIndices] of selection.features) {
+				for (const fi of featureIndices) {
+					drawFeatureHighlight(
+						ctx,
+						layerId,
+						fi,
+						accentColor,
+						accentColor,
+						0.25,         // polygon fill opacity
+						4 / mapScale, // thick border for polygons / stroke for lines
+						5,            // larger dot for points
+					);
+				}
+			}
+		}
+
+		// Vertex-edit pass — fixed-size markers on the targeted feature's vertices.
+		// Drawn in CSS-pixel space so markers stay a constant size regardless of zoom.
+		if (editSession.activeLayerId && projection) {
+			const draft = getDraft();
+			if (draft) {
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				const anyDraft = draft as any;
+
+				// Tint the targeted feature (accent fill, projection space) so it stays
+				// easy to distinguish from surrounding features while editing.
+				const objName = Object.keys(anyDraft.objects)[0];
+				const geom = anyDraft.objects[objName].geometries[editSession.featureIndex];
+				if (geom && (geom.type === 'Polygon' || geom.type === 'MultiPolygon')) {
+					const featPathStr = d3.geoPath(projection)(feature(anyDraft, geom));
+					if (featPathStr) {
+						ctx.globalAlpha = 0.18;
+						ctx.fillStyle = accentColor || '#84a000';
+						ctx.fill(new Path2D(featPathStr), 'evenodd');
+						ctx.globalAlpha = 1;
+					}
+				}
+
+				const stride = markerStride(); const arcs = anyDraft.arcs as number[][][];
+				const arcIndices = featureArcIndices(draft, editSession.featureIndex);
+
+				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+				const RADIUS = 4;
+				const accent = accentColor || '#2563eb';
+				const M = RADIUS + 2; // viewport cull margin
+				ctx.lineWidth = 1.5;
+
+				// Decimated hollow markers — every `stride`th vertex, so the drawn count is
+				// bounded by screen size rather than the feature's vertex count.
+				ctx.strokeStyle = accent;
+				ctx.fillStyle = '#ffffff';
+				for (const ai of arcIndices) {
+					const arc = arcs[ai];
+					if (!arc) continue;
+					for (let vi = 0; vi < arc.length; vi += stride) {
+						const p = projection(arc[vi] as [number, number]);
+						if (!p) continue;
+						const sx = p[0] * mapScale + tx;
+						const sy = p[1] * mapScale + ty;
+						if (sx < -M || sx > width + M || sy < -M || sy > height + M) continue;
+						ctx.beginPath();
+						ctx.arc(sx, sy, RADIUS, 0, Math.PI * 2);
+						ctx.fill();
+						ctx.stroke();
+					}
+				}
+
+				// Selected vertices always drawn on top (accent fill + white outline),
+				// regardless of the decimation stride.
+				ctx.fillStyle = accent;
+				ctx.strokeStyle = '#ffffff';
+				for (const v of getSelectedVertices()) {
+					const pt = arcs[v.arcIndex]?.[v.vertexIndex];
+					if (!pt) continue;
+					const p = projection(pt as [number, number]);
+					if (!p) continue;
+					const sx = p[0] * mapScale + tx;
+					const sy = p[1] * mapScale + ty;
+					if (sx < -M || sx > width + M || sy < -M || sy > height + M) continue;
+					ctx.beginPath();
+					ctx.arc(sx, sy, RADIUS, 0, Math.PI * 2);
+					ctx.fill();
+					ctx.stroke();
+				}
+
+				// Ghost insert marker at the hovered edge midpoint. Grows and fills with the
+				// accent colour when the cursor is right on it (active, ready to click).
+				if (insertHover) {
+					const gp = projection(insertHover.geo);
+					if (gp) {
+						const gx = gp[0] * mapScale + tx;
+						const gy = gp[1] * mapScale + ty;
+						const accent = accentColor || '#2563eb';
+						const gr = overInsertGhost ? RADIUS + 2 : RADIUS;
+						const plus = overInsertGhost ? 3 : 2;
+						ctx.beginPath();
+						ctx.arc(gx, gy, gr, 0, Math.PI * 2);
+						if (overInsertGhost) {
+							ctx.globalAlpha = 1;
+							ctx.fillStyle = accent;
+							ctx.fill();
+						} else {
+							ctx.globalAlpha = 0.6;
+							ctx.fillStyle = '#ffffff';
+							ctx.fill();
+							ctx.globalAlpha = 1;
+						}
+						ctx.strokeStyle = accent;
+						ctx.stroke();
+						// Plus sign — white on the filled (active) state, accent otherwise.
+						ctx.strokeStyle = overInsertGhost ? '#ffffff' : accent;
+						ctx.beginPath();
+						ctx.moveTo(gx - plus, gy);
+						ctx.lineTo(gx + plus, gy);
+						ctx.moveTo(gx, gy - plus);
+						ctx.lineTo(gx, gy + plus);
+						ctx.stroke();
+					}
+				}
 			}
 		}
 
@@ -1760,7 +2328,11 @@
 	<div class="canvas-area" class:table-open={featuresTable.open} bind:this={containerEl}>
 		<div class="bottom-center">
 			<LayerActionBar {getViewportBbox} />
-			<SelectionBar />
+			{#if editSession.activeLayerId}
+				<EditSessionBar />
+			{:else}
+				<SelectionBar />
+			{/if}
 			<MapToolbar />
 		</div>
 
@@ -1794,8 +2366,12 @@
 			bind:this={canvasEl}
 			class:dragging={isDragging}
 			class:select-mode={toolState.active === 'select' && !spacePanning}
+			class:edit-mode={toolState.active === 'edit' && !spacePanning}
+			class:vertex-grab={toolState.active === 'edit' && overVertex && !vertexDrag && !spacePanning}
+			class:insert-ghost-hover={toolState.active === 'edit' && overInsertGhost && !vertexDrag && !spacePanning}
+			class:vertex-grabbing={vertexDrag !== null}
 			class:space-pan={spacePanning}
-			class:feature-hover={toolState.active === 'select' && !spacePanning && hoveredFeature.value !== null}
+			class:feature-hover={(toolState.active === 'select' || toolState.active === 'edit') && !spacePanning && hoveredFeature.value !== null}
 			class:layer-hover={toolState.active === 'select' && !spacePanning && layerSelection.hoveredLayerId !== null && hoveredFeature.value === null}
 	
 			onclick={handleClick}
@@ -1803,7 +2379,7 @@
 			onpointerdown={handlePointerDown}
 			onpointermove={handlePointerMove}
 			onpointerup={handlePointerUp}
-			onpointerleave={() => { hoveredFeature.value = null; setHoveredLayer(null); }}
+			onpointerleave={() => { hoveredFeature.value = null; setHoveredLayer(null); insertHover = null; overVertex = false; overInsertGhost = false; }}
 		></canvas>
 
 		{#if clipBbox.open && clipBbox.mode === 'bbox'}
@@ -1832,6 +2408,16 @@
 			<FeaturesTable />
 		{/if}
 	</div>
+
+	{#if editSession.pendingBake}
+		<ConfirmModal
+			title="Bake processing to edit?"
+			message="To edit this layer's vertices, it will be duplicated with its current simplified and smoothed geometry baked in as the new shape. Any further simplification or smoothing will apply on top of that. The original layer is kept."
+			confirmLabel="Bake & edit"
+			onconfirm={confirmBake}
+			oncancel={cancelBake}
+		/>
+	{/if}
 </div>
 
 <style>
@@ -1862,6 +2448,23 @@
 
 	canvas.select-mode {
 		cursor: default;
+	}
+
+	canvas.edit-mode {
+		cursor: default;
+	}
+
+	canvas.vertex-grab {
+		cursor: grab;
+	}
+
+	canvas.insert-ghost-hover {
+		cursor: pointer;
+	}
+
+
+	canvas.vertex-grabbing {
+		cursor: grabbing;
 	}
 
 	canvas.space-pan {

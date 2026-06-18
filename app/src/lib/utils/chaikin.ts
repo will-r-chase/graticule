@@ -1,4 +1,5 @@
 import type { Topology } from 'topojson-specification';
+import { topologyToAbsolute } from './topology';
 
 /**
  * Counts the total number of coordinate points across all arcs in a topology.
@@ -22,28 +23,16 @@ export function countTopoPoints(topo: Topology): number {
  * geographic values, which topojson-client reads correctly via its identity transform.
  */
 export function applyChaikinToTopology(topo: Topology, iterations: number): Topology {
+	// Decode to absolute coords once up front; the transform is already dropped,
+	// so the Chaikin loop below works in plain geographic space.
+	const absolute = topologyToAbsolute(topo);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const anyTopo = topo as any;
-	const transform = anyTopo.transform as
-		| { scale: [number, number]; translate: [number, number] }
-		| undefined;
-	const [sx, sy] = transform ? transform.scale : [1, 1];
-	const [tx, ty] = transform ? transform.translate : [0, 0];
+	const anyAbsolute = absolute as any;
 
-	const newArcs = (anyTopo.arcs as number[][][]).map((arc: number[][]) => {
-		// Decode delta-encoded quantized coords -> absolute geographic coords.
-		// If there's a transform, apply scale + translate after accumulation.
-		const pts: number[][] = [];
-		let qx = 0, qy = 0;
-		for (const [dqx, dqy] of arc) {
-			qx += dqx;
-			qy += dqy;
-			pts.push([qx * sx + tx, qy * sy + ty]);
-		}
-
+	const newArcs = (anyAbsolute.arcs as number[][][]).map((arc: number[][]) => {
 		// Open-line Chaikin — preserves first and last point so arc junction
 		// nodes (where multiple borders meet) stay pinned in place.
-		let line = pts;
+		let line = arc;
 		for (let iter = 0; iter < iterations; iter++) {
 			const out = [line[0]];
 			for (let i = 0; i < line.length - 1; i++) {
@@ -55,17 +44,10 @@ export function applyChaikinToTopology(topo: Topology, iterations: number): Topo
 			out.push(line[line.length - 1]);
 			line = out;
 		}
-
-		// No re-encoding needed. When a topology has no transform,
-		// topojson-client uses identity() — it reads coords as absolute
-		// values with no delta decoding. So we just return the decoded
-		// geographic coordinates directly.
 		return line;
 	});
 
-	// Drop the transform — coordinates are geographic from here on.
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const result: any = { ...topo, arcs: newArcs };
-	delete result.transform;
-	return result as Topology;
+	(anyAbsolute as any).arcs = newArcs;
+	return absolute;
 }

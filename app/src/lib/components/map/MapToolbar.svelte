@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Hand, Cursor } from 'phosphor-svelte';
+	import { Hand, Cursor, LineSegments } from 'phosphor-svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
 	import { tooltip } from '$lib/actions/tooltip';
 </script>
@@ -22,6 +22,15 @@
 		use:tooltip={{ text: 'Select', shortcut: 'S', placement: 'up' }}
 	>
 		<Cursor size={24} />
+	</button>
+	<button
+		class="tool-btn"
+		class:active={toolState.active === 'edit'}
+		aria-label="Edit tool"
+		onclick={() => toolState.active = 'edit'}
+		use:tooltip={{ text: 'Edit', shortcut: 'E', placement: 'up' }}
+	>
+		<LineSegments size={24} />
 	</button>
 </div>
 

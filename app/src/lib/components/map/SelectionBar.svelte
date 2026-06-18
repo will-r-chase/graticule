@@ -1,8 +1,10 @@
 <script lang="ts">
-	import { Trash, StackPlus, X } from 'phosphor-svelte';
+	import { Trash, StackPlus, X, LineSegments } from 'phosphor-svelte';
 	import { selection, clearSelection } from '$lib/stores/selection.svelte';
 	import { deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures, isMergeCompatible } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
+	import { toolState } from '$lib/stores/tool.svelte';
+	import { startEditing } from '$lib/stores/editSession.svelte';
 	import { tooltip } from '$lib/actions/tooltip';
 
 	const count = $derived(
@@ -16,7 +18,7 @@
 			? (isMultiLayer ? 'Merge to new layer' : 'Copy to new layer')
 			: 'Cannot merge features of different geometry types'
 	);
-	const copyTooltipShortcut = $derived(canMerge ? 'E' : undefined);
+	const copyTooltipShortcut = $derived(canMerge ? 'C' : undefined);
 
 	function handleCopyToLayer() {
 		if (!canMerge || count === 0) return;
@@ -30,6 +32,17 @@
 			const [layerId, indices] = [...snapshot.entries()][0];
 			extractSelectedFeatures(layerId, indices, () => pushSnapshot());
 		}
+	}
+
+	// Edit is only offered for a single feature (vertex editing targets one at a time)
+	// and only while the edit tool is active.
+	const canEdit = $derived(toolState.active === 'edit' && count === 1);
+
+	function handleEdit() {
+		if (!canEdit) return;
+		const [layerId, indices] = [...selection.features.entries()][0];
+		const featureIndex = [...indices][0];
+		startEditing(layerId, featureIndex);
 	}
 
 	function handleDelete() {
@@ -50,6 +63,19 @@
 
 {#if count > 0}
 <div class="selection-bar">
+	{#if canEdit}
+	<button
+		class="bar-btn"
+		onclick={handleEdit}
+		aria-label="Edit vertices"
+		use:tooltip={{ text: 'Edit vertices', placement: 'up' }}
+	>
+		<LineSegments size={16} weight="regular" />
+		<span>Edit</span>
+	</button>
+	<div class="bar-divider"></div>
+	{/if}
+	{#if toolState.active !== 'edit'}
 	<button
 		class="bar-btn"
 		onclick={handleCopyToLayer}
@@ -70,6 +96,7 @@
 		<span>Delete</span>
 	</button>
 	<div class="bar-divider"></div>
+	{/if}
 	<span class="count">{count} {count === 1 ? 'feature' : 'features'}</span>
 	<button
 		class="bar-btn bar-btn--icon"
