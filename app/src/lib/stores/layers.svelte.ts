@@ -468,6 +468,21 @@ function insertLayerAt(
 	runLayerPipeline(id, style === null).then(() => onComplete?.());
 }
 
+// Processing for a layer produced by editing. Simplification and Chaikin are baked into
+// the geometry, so they reset; bezier is a live render from the vertices, so it carries
+// over (otherwise editing a smoothed layer would silently drop the curve).
+function processingForEdit(source: Layer): LayerProcessing {
+	return {
+		...defaultProcessing(),
+		bezierEnabled: source.processing.bezierEnabled,
+		bezierCurveType: source.processing.bezierCurveType,
+		bezierTension: source.processing.bezierTension,
+		bezierAlpha: source.processing.bezierAlpha,
+		bezierContinuity: source.processing.bezierContinuity,
+		bezierBias: source.processing.bezierBias,
+	};
+}
+
 // Duplicates a processed layer with its current on-screen (simplified/smoothed) geometry
 // baked in as the new raw, and processing reset to defaults — so the duplicate renders
 // exactly as it looked but is now editable at full fidelity. The original is kept.
@@ -494,7 +509,7 @@ export function bakeLayerForEdit(sourceId: string, onReady: (newId: string) => v
 		error: null,
 		hasTopology: false,
 		style: JSON.parse(JSON.stringify(source.style)),
-		processing: defaultProcessing(),
+		processing: processingForEdit(source),
 		geometryTypes: [],
 		bezierCacheKey: 0,
 	});
@@ -511,8 +526,9 @@ export function commitEditedLayer(sourceId: string, draftTopo: Topology, onCompl
 	if (!source) { onComplete?.(); return; }
 	const index = layers.findIndex((l) => l.id === sourceId);
 	const { name, style } = source;
+	const processing = processingForEdit(source);
 	removeLayer(sourceId);
-	insertLayerAt(name, draftTopo, index, style, onComplete);
+	insertLayerAt(name, draftTopo, index, style, onComplete, processing);
 }
 
 export function dissolveLayer(layerId: string, field: string | null, onComplete?: () => void): void {

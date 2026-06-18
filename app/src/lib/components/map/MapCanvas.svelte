@@ -6,6 +6,7 @@
 	import { feature } from 'topojson-client';
 	import { workerBuildPaths, workerStoreTopology, workerRemoveTopology } from '$lib/workers/geoWorker';
 	import type { PathCommand } from '$lib/workers/types';
+	import type { LayerProcessing } from '$lib/types';
 	import { layers, workingTopologyData, layerDrag, deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures } from '$lib/stores/layers.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
 	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
@@ -13,6 +14,7 @@
 	import { hoveredFeature } from '$lib/stores/hoveredFeature.svelte';
 	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, type DragMember } from '$lib/stores/editSession.svelte';
 	import { featureArcIndices } from '$lib/utils/topology';
+	import { buildBezierArcs, arcRingToPath } from '$lib/utils/bezier';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
 	import { mapState } from '$lib/stores/mapState.svelte';
@@ -228,13 +230,27 @@
 		extraRadius = 0,
 		useLayerStyle = false,
 	) {
-		const chunks = pathCache.get(layerId);
-		if (chunks === undefined) return;
-
 		const layer = layers.find((l) => l.id === layerId);
 
-		const chunk = chunks[featureIndex];
-		if (chunk) {
+		// Resolve the polygon/line path to highlight. Normal layers use the per-feature
+		// cache chunk; bezier layers cache as one whole-layer chunk, so we build a straight
+		// per-feature outline from the working topology instead (selection feedback shows
+		// the unsmoothed shape — see the on-screen note).
+		let highlightPath: Path2D | undefined;
+		if (layer?.processing.bezierEnabled && projection) {
+			const topo = workingTopologyData.get(layerId);
+			const objName = topo ? Object.keys(topo.objects)[0] : null;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const geom = topo && objName ? (topo.objects[objName] as any).geometries[featureIndex] : null;
+			if (geom && geom.type !== 'Point' && geom.type !== 'MultiPoint') {
+				const pathStr = d3.geoPath(projection)(feature(topo!, geom));
+				if (pathStr) highlightPath = new Path2D(pathStr);
+			}
+		} else {
+			highlightPath = pathCache.get(layerId)?.[featureIndex]?.path2d;
+		}
+
+		if (highlightPath) {
 			const hasPolygons = layer?.geometryTypes.some(
 				(t) => t === 'Polygon' || t === 'MultiPolygon'
 			) ?? false;
@@ -244,10 +260,10 @@
 			if (hasPolygons) {
 				ctx.globalAlpha = fillOpacity;
 				ctx.fillStyle   = fillHex;
-				ctx.fill(chunk.path2d, 'evenodd');
+				ctx.fill(highlightPath, 'evenodd');
 				ctx.globalAlpha = 1;
 			}
-			ctx.stroke(chunk.path2d);
+			ctx.stroke(highlightPath);
 			return;
 		}
 
@@ -342,6 +358,24 @@
 	let overInsertGhost = $state(false);
 	const EDGE_HIT_RADIUS = 8;   // px — how close to a segment shows the ghost
 	const GHOST_HOVER_RADIUS = 7; // px — how close to the ghost point activates it
+
+	// True when hover/selection feedback is showing the straight (unsmoothed) outline of a
+	// bezier-smoothed layer — drives the on-screen note. Bezier layers can't be highlighted
+	// per feature from the smoothed cache, so highlights fall back to the straight shape.
+	let bezierNoteDismissed = $state(false);
+	const showBezierOutlineNote = $derived.by(() => {
+		if (bezierNoteDismissed) return false;
+		// Only in select/edit mode — switching to pan dismisses it.
+		if (toolState.active !== 'select' && toolState.active !== 'edit') return false;
+		if (editSession.activeLayerId !== null) return false; // editing shows the live curve
+		const isBez = (id: string | null | undefined) =>
+			!!layers.find((l) => l.id === id)?.processing.bezierEnabled;
+		if (hoveredFeature.value && isBez(hoveredFeature.value.layerId)) return true;
+		for (const layerId of selection.features.keys()) if (isBez(layerId)) return true;
+		if (isBez(layerSelection.hoveredLayerId)) return true;
+		for (const id of layerSelection.ids) if (isBez(id)) return true;
+		return false;
+	});
 	// rAF throttle for vertex drags: the latest pointer position, applied once per frame.
 	let pendingDragGeo: [number, number] | null = null;
 	let dragRafId: number | null = null;
@@ -450,6 +484,50 @@
 		const spacing = nVis >= 8 ? sumVis / nVis : (nAll > 0 ? sumAll / nAll : MARKER_TARGET_SPACING);
 		if (spacing >= MARKER_TARGET_SPACING) return 1;
 		return Math.max(1, Math.round(MARKER_TARGET_SPACING / spacing));
+	}
+
+	// Live bezier-smoothed path for the whole edit layer, rebuilt from the draft into a
+	// single Path2D (all features share one recorder — splitting per feature breaks the
+	// boundary reconstruction). Memoised on the draft version + projection, so it only
+	// rebuilds when geometry or the projection changes (not on pan/zoom).
+	let editBezierPath: Path2D | null = null;
+	let editBezierKey = '';
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	function getEditBezierPath(draft: any, processing: LayerProcessing): Path2D | null {
+		const proj = projection;
+		if (!proj) return null;
+		const key = [
+			editSession.version, projectionStore.id, projectionStore.rotate.join(','), width, height,
+			processing.bezierCurveType, processing.bezierTension, processing.bezierAlpha,
+			processing.bezierContinuity, processing.bezierBias,
+		].join('|');
+		if (editBezierPath && editBezierKey === key) return editBezierPath;
+		try {
+			const bezierArcs = buildBezierArcs(
+				draft, proj, processing.bezierCurveType, processing.bezierTension,
+				processing.bezierAlpha, processing.bezierContinuity, processing.bezierBias, width, height,
+			);
+			const path = new Path2D();
+			const vp: [number, number] = [width, height];
+			const objName = Object.keys(draft.objects)[0];
+			for (const geom of draft.objects[objName].geometries) {
+				if (geom.type === 'Polygon') {
+					for (const ring of geom.arcs) arcRingToPath(ring, bezierArcs, path, true, proj, vp);
+				} else if (geom.type === 'MultiPolygon') {
+					for (const poly of geom.arcs) for (const ring of poly) arcRingToPath(ring, bezierArcs, path, true, proj, vp);
+				} else if (geom.type === 'LineString') {
+					arcRingToPath(geom.arcs, bezierArcs, path, false);
+				} else if (geom.type === 'MultiLineString') {
+					for (const line of geom.arcs) arcRingToPath(line, bezierArcs, path, false);
+				}
+			}
+			editBezierPath = path;
+			editBezierKey = key;
+			return path;
+		} catch (err) {
+			console.warn('[editBezier] build failed', err);
+			return null;
+		}
 	}
 
 	// Squared distance from point (px,py) to segment (ax,ay)-(bx,by), in screen space.
@@ -1384,7 +1462,29 @@
 			const hasPoints   = layer.geometryTypes.some((t) => t === 'Point' || t === 'MultiPoint');
 
 			if (hasNonPoint) {
-				for (let fi = 0; fi < chunks.length; fi++) {
+				// Bezier layers cache as one whole-layer chunk, so they can't be picked per
+				// feature from the cache — build the regions from the working topology
+				// (straight geometry) so individual features stay selectable/editable.
+				const bezierHit = layer.processing.bezierEnabled;
+				const bezTopo = bezierHit ? workingTopologyData.get(layer.id) : undefined;
+				const bezProj = bezierHit ? untrack(() => projection) : null;
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				const bezGeoms = bezTopo ? (bezTopo.objects[Object.keys(bezTopo.objects)[0]] as any).geometries as any[] : null;
+				const bezPathGen = bezProj ? d3.geoPath(bezProj) : null;
+				const count = bezierHit ? (bezGeoms?.length ?? 0) : chunks.length;
+
+				for (let fi = 0; fi < count; fi++) {
+					let p2d: Path2D;
+					if (bezierHit) {
+						const g = bezGeoms?.[fi];
+						if (!g || g.type === 'Point' || g.type === 'MultiPoint' || !bezPathGen || !bezTopo) continue;
+						// eslint-disable-next-line @typescript-eslint/no-explicit-any
+						const pathStr = bezPathGen(feature(bezTopo, g) as any);
+						if (!pathStr) continue;
+						p2d = new Path2D(pathStr);
+					} else {
+						p2d = chunks[fi].path2d;
+					}
 					const r = (colorIdx >> 16) & 0xff;
 					const g = (colorIdx >> 8)  & 0xff;
 					const b =  colorIdx        & 0xff;
@@ -1393,8 +1493,8 @@
 					hctx.strokeStyle = color;
 					// Minimum 4px stroke so thin lines stay clickable.
 					hctx.lineWidth = Math.max(layer.style.strokeWidth, 4) / mapScale;
-					hctx.fill(chunks[fi].path2d, 'evenodd');
-					hctx.stroke(chunks[fi].path2d);
+					hctx.fill(p2d, 'evenodd');
+					hctx.stroke(p2d);
 					hitDecodeMap.set(colorIdx, { layerId: layer.id, featureIndex: fi });
 					colorIdx++;
 				}
@@ -1833,6 +1933,30 @@
 				void editSession.version; // subscribe so draft mutations repaint
 				const draft = getDraft();
 				const editChunks = pathCache.get(layer.id);
+
+				// Bezier layers cache as one whole-layer path, so rebuild the smoothed
+				// curve live from the draft — the edited vertices are the control points.
+				if (draft && projection && layer.processing.bezierEnabled) {
+					const bpath = getEditBezierPath(draft, layer.processing);
+					if (bpath) {
+					if (layer.style.fill !== 'none') {
+						ctx.globalAlpha = layer.style.fillOpacity;
+						ctx.fillStyle = layer.style.fill;
+						ctx.fill(bpath, 'evenodd');
+					}
+					ctx.globalAlpha = layer.style.strokeOpacity;
+					ctx.strokeStyle = layer.style.stroke;
+					ctx.lineWidth = layer.style.strokeWidth / mapScale;
+					if (layer.style.strokeDashed) {
+						ctx.setLineDash([layer.style.strokeDash / mapScale, layer.style.strokeGap / mapScale]);
+					}
+					ctx.stroke(bpath);
+					ctx.setLineDash([]);
+					ctx.globalAlpha = 1;
+					}
+					continue;
+				}
+
 				if (draft && projection) {
 					// eslint-disable-next-line @typescript-eslint/no-explicit-any
 					const anyDraft = draft as any;
@@ -2045,6 +2169,17 @@
 						if (yMin < by1) by1 = yMin;
 						if (xMax > bx2) bx2 = xMax;
 						if (yMax > by2) by2 = yMax;
+					}
+					// Bezier layers cache as one infinite-bbox chunk; bound the projected
+					// geometry from the working topology instead.
+					if (!isFinite(bx1) && hasNonPt && projection) {
+						const topo = workingTopologyData.get(layer.id);
+						if (topo) {
+							const objectName = Object.keys(topo.objects)[0];
+							// eslint-disable-next-line @typescript-eslint/no-explicit-any
+							const b = d3.geoPath(projection).bounds(feature(topo, topo.objects[objectName]) as any);
+							if (isFinite(b[0][0])) { bx1 = b[0][0]; by1 = b[0][1]; bx2 = b[1][0]; by2 = b[1][1]; }
+						}
 					}
 					if (!isFinite(bx1) && hasPoints && projection) {
 						const topo = workingTopologyData.get(layer.id);
@@ -2382,6 +2517,13 @@
 			onpointerleave={() => { hoveredFeature.value = null; setHoveredLayer(null); insertHover = null; overVertex = false; overInsertGhost = false; }}
 		></canvas>
 
+		{#if showBezierOutlineNote}
+			<div class="bezier-outline-note">
+				<span>Highlights may not match the smoothed outline for layers with bezier smoothing enabled</span>
+				<button class="note-dismiss" aria-label="Dismiss" onclick={() => (bezierNoteDismissed = true)}>×</button>
+			</div>
+		{/if}
+
 		{#if clipBbox.open && clipBbox.mode === 'bbox'}
 		<svg class="clip-bbox-overlay" ondragstart={(e) => e.preventDefault()}>
 			{#if bboxPath}
@@ -2460,6 +2602,41 @@
 
 	canvas.insert-ghost-hover {
 		cursor: pointer;
+	}
+
+	.bezier-outline-note {
+		position: absolute;
+		top: 16px;
+		left: 50%;
+		transform: translateX(-50%);
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		max-width: 320px;
+		background: rgba(20, 24, 25, 0.82);
+		color: #ffffff;
+		font-family: var(--font-mono);
+		font-size: 12px;
+		line-height: 16px;
+		padding: 8px 10px 8px 12px;
+		border-radius: 6px;
+		z-index: 5;
+	}
+
+	.note-dismiss {
+		flex-shrink: 0;
+		border: none;
+		background: transparent;
+		color: #ffffff;
+		font-size: 16px;
+		line-height: 14px;
+		padding: 0;
+		cursor: pointer;
+		opacity: 0.8;
+	}
+
+	.note-dismiss:hover {
+		opacity: 1;
 	}
 
 
