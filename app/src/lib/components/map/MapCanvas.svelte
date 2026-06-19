@@ -12,7 +12,7 @@
 	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
 	import { layerSelection, clearLayerSelection, selectLayer, toggleLayerSelection, enterLayer, exitLayer, setHoveredLayer } from '$lib/stores/layerSelection.svelte';
 	import { hoveredFeature } from '$lib/stores/hoveredFeature.svelte';
-	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, type DragMember } from '$lib/stores/editSession.svelte';
+	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, getPointCoord, movePoint, recordPointMove, type DragMember } from '$lib/stores/editSession.svelte';
 	import { featureArcIndices } from '$lib/utils/topology';
 	import { buildBezierArcs, arcRingToPath } from '$lib/utils/bezier';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -339,7 +339,8 @@
 	}
 
 	// --- Vertex editing: hit-testing + drag ---------------------------------
-	const VERTEX_HIT_RADIUS = 8; // px
+	const VERTEX_HIT_RADIUS = 12; // px — generous grab buffer so border vertices are easy to
+	                              // catch without the click falling through to a neighbour feature
 
 	// The vertex group currently being dragged, or null. `group` holds one member per
 	// selected vertex (each with its node-fanned targets + origin); `from` is the grabbed
@@ -350,6 +351,50 @@
 		from: [number, number];
 		insert?: { arcIndex: number; atIndex: number };
 	} | null>(null);
+	// Point-feature drag (points store coords directly, not in arcs, so they're separate).
+	let pointDrag = $state<{ featureIndex: number; pointIndex: number; from: [number, number] } | null>(null);
+	// Currently hovered / selected point (for marker styling). Keyed "featureIndex:pointIndex".
+	let hoveredPoint = $state<string | null>(null);
+	let selectedPoint = $state<string | null>(null);
+	const ptKey = (fi: number, pi: number) => `${fi}:${pi}`;
+	// Currently hovered arc vertex, keyed "arcIndex:vertexIndex" (drives the marker hover state).
+	let hoveredVertexKey = $state<string | null>(null);
+
+	const MARKER_RADIUS = 4;
+	// Blends a CSS color toward white by `amt` (0–1) — used to lighten markers on hover.
+	function lightenColor(color: string, amt: number): string {
+		let r: number, g: number, b: number;
+		if (color[0] === '#') {
+			const h = color.slice(1);
+			const f = h.length === 3 ? h.split('').map((ch) => ch + ch).join('') : h;
+			r = parseInt(f.slice(0, 2), 16); g = parseInt(f.slice(2, 4), 16); b = parseInt(f.slice(4, 6), 16);
+		} else {
+			const m = color.match(/[\d.]+/g);
+			if (!m || m.length < 3) return color;
+			r = +m[0]; g = +m[1]; b = +m[2];
+		}
+		const mix = (x: number) => Math.round(x + (255 - x) * amt);
+		return `rgb(${mix(r)},${mix(g)},${mix(b)})`;
+	}
+
+	// Draws one edit marker. Default: white dot + accent ring. Hover: enlarged + lightened.
+	// Selected: accent dot (enlarged) with the white outline pushed OUTSIDE so it reads full
+	// size rather than shrinking the dot.
+	function drawMarker(c: CanvasRenderingContext2D, sx: number, sy: number, sel: boolean, hov: boolean, accent: string): void {
+		const r = MARKER_RADIUS + (sel ? 1 : 0) + (hov ? 1 : 0);
+		c.globalAlpha = 1;
+		if (sel) {
+			c.fillStyle = hov ? lightenColor(accent, 0.3) : accent;
+			c.beginPath(); c.arc(sx, sy, r, 0, Math.PI * 2); c.fill();
+			c.strokeStyle = '#ffffff'; c.lineWidth = 1.5;
+			c.beginPath(); c.arc(sx, sy, r + 0.75, 0, Math.PI * 2); c.stroke(); // outside the fill
+		} else {
+			c.fillStyle = '#ffffff';
+			c.beginPath(); c.arc(sx, sy, r, 0, Math.PI * 2); c.fill();
+			c.strokeStyle = hov ? lightenColor(accent, 0.3) : accent; c.lineWidth = 1.5;
+			c.stroke();
+		}
+	}
 	// Whether the cursor is hovering a draggable vertex (drives the grab cursor).
 	let overVertex = $state(false);
 	// Hovered edge where a new vertex can be inserted; the ghost marker sits at its midpoint.
@@ -530,6 +575,35 @@
 		}
 	}
 
+	// Nearest point within VERTEX_HIT_RADIUS across ALL point features of the edit layer —
+	// every point is directly grabbable (no need to target its feature first). Returns null
+	// for non-point geometry / when nothing is close.
+	function hitPoint(clientX: number, clientY: number): { featureIndex: number; pointIndex: number } | null {
+		const draft = getDraft();
+		if (!draft || !projection || !canvasEl || editSession.activeLayerId === null) return null;
+		const rect = canvasEl.getBoundingClientRect();
+		const mx = clientX - rect.left;
+		const my = clientY - rect.top;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const geometries = (draft as any).objects[Object.keys((draft as any).objects)[0]].geometries as any[];
+		let best: { featureIndex: number; pointIndex: number } | null = null;
+		let bestDist = VERTEX_HIT_RADIUS * VERTEX_HIT_RADIUS;
+		for (let fi = 0; fi < geometries.length; fi++) {
+			const geom = geometries[fi];
+			if (!geom || (geom.type !== 'Point' && geom.type !== 'MultiPoint')) continue;
+			const coords: number[][] = geom.type === 'Point' ? [geom.coordinates] : geom.coordinates;
+			for (let i = 0; i < coords.length; i++) {
+				const p = projection(coords[i] as [number, number]);
+				if (!p) continue;
+				const dx = p[0] * mapScale + tx - mx;
+				const dy = p[1] * mapScale + ty - my;
+				const d = dx * dx + dy * dy;
+				if (d < bestDist) { bestDist = d; best = { featureIndex: fi, pointIndex: geom.type === 'Point' ? 0 : i }; }
+			}
+		}
+		return best;
+	}
+
 	// Squared distance from point (px,py) to segment (ax,ay)-(bx,by), in screen space.
 	function distToSegmentSq(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
 		const dx = bx - ax;
@@ -582,6 +656,52 @@
 		return { arcIndex: best.arcIndex, atIndex: best.atIndex, geo: geo as [number, number] };
 	}
 
+	// True when the cursor is within EDIT_SELECT_BUFFER px of the edited feature's geometry
+	// (its edges/vertices, or its points). Used to create a no-select zone so hovering near
+	// the feature you're editing doesn't highlight or select a neighbouring feature.
+	const EDIT_SELECT_BUFFER = 14; // px
+	function nearEditedGeometry(clientX: number, clientY: number): boolean {
+		const draft = getDraft();
+		if (!draft || !projection || !canvasEl || editSession.activeLayerId === null) return false;
+		const rect = canvasEl.getBoundingClientRect();
+		const mx = clientX - rect.left;
+		const my = clientY - rect.top;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const anyDraft = draft as any;
+		const objName = Object.keys(anyDraft.objects)[0];
+		const geom = anyDraft.objects[objName].geometries[editSession.featureIndex];
+		if (!geom) return false;
+		const buf2 = EDIT_SELECT_BUFFER * EDIT_SELECT_BUFFER;
+
+		if (geom.type === 'Point' || geom.type === 'MultiPoint') {
+			const coords: number[][] = geom.type === 'Point' ? [geom.coordinates] : geom.coordinates;
+			for (const c of coords) {
+				const p = projection(c as [number, number]);
+				if (!p) continue;
+				const dx = p[0] * mapScale + tx - mx;
+				const dy = p[1] * mapScale + ty - my;
+				if (dx * dx + dy * dy < buf2) return true;
+			}
+			return false;
+		}
+
+		const arcs = anyDraft.arcs as number[][][];
+		for (const ai of featureArcIndices(draft, editSession.featureIndex)) {
+			const arc = arcs[ai];
+			if (!arc) continue;
+			for (let vi = 0; vi < arc.length - 1; vi++) {
+				const a = projection(arc[vi] as [number, number]);
+				const b = projection(arc[vi + 1] as [number, number]);
+				if (!a || !b) continue;
+				const ax = a[0] * mapScale + tx, ay = a[1] * mapScale + ty;
+				const bx = b[0] * mapScale + tx, by = b[1] * mapScale + ty;
+				if ((ax < 0 && bx < 0) || (ax > width && bx > width) || (ay < 0 && by < 0) || (ay > height && by > height)) continue;
+				if (distToSegmentSq(mx, my, ax, ay, bx, by) < buf2) return true;
+			}
+		}
+		return false;
+	}
+
 	// Highlights one feature of the edit layer using the live draft geometry (the path
 	// cache is stale during a session). Drawn in projection space, like drawFeatureHighlight.
 	function drawDraftFeatureHighlight(
@@ -599,6 +719,8 @@
 		const objName = Object.keys(anyDraft.objects)[0];
 		const geom = anyDraft.objects[objName].geometries[featureIndex];
 		if (!geom) return;
+		// Point features are shown via their own markers, not a feature outline.
+		if (geom.type === 'Point' || geom.type === 'MultiPoint') return;
 		const pathStr = d3.geoPath(projection)(feature(anyDraft, geom));
 		if (!pathStr) return;
 		const path = new Path2D(pathStr);
@@ -621,6 +743,8 @@
 		if (toolState.active === 'edit') {
 			const editHit = getHitAtPoint(e.clientX, e.clientY);
 			if (editSession.activeLayerId) {
+				// No-select zone: a click near the edited feature never swaps to a neighbour.
+				if (nearEditedGeometry(e.clientX, e.clientY)) return;
 				// Active draft: single-click only swaps to another feature in the SAME
 				// layer. Clicks on other layers or empty space do nothing — leaving the
 				// draft requires a double-click (protection).
@@ -795,6 +919,15 @@
 
 		// Edit tool, active draft: select/drag a vertex, insert, or clear the selection.
 		if (toolState.active === 'edit' && editSession.activeLayerId && !spacePanning) {
+			// Point feature — grab the point itself (points aren't stored in arcs).
+			const pHit = hitPoint(e.clientX, e.clientY);
+			if (pHit) {
+				const from = getPointCoord(pHit.featureIndex, pHit.pointIndex);
+				selectedPoint = ptKey(pHit.featureIndex, pHit.pointIndex);
+				pointDrag = { ...pHit, from: from ?? [0, 0] };
+				(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+				return;
+			}
 			const hit = hitVertex(e.clientX, e.clientY);
 			if (hit) {
 				if (e.shiftKey) {
@@ -827,8 +960,9 @@
 				(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
 				return;
 			}
-			// Clicked feature body or empty space — clear the vertex selection.
+			// Clicked feature body or empty space — clear the vertex/point selection.
 			clearVertexSelection();
+			selectedPoint = null;
 		}
 
 		if (toolState.active === 'pan' || spacePanning) {
@@ -867,6 +1001,13 @@
 	}
 
 	function handlePointerMove(e: PointerEvent) {
+		// Dragging a point feature — move the point under the cursor.
+		if (pointDrag) {
+			const geo = screenToGeo(e.clientX, e.clientY);
+			if (geo) movePoint(pointDrag.featureIndex, pointDrag.pointIndex, geo[0], geo[1]);
+			return;
+		}
+
 		// Dragging a vertex — record the latest position and apply it at most once per
 		// animation frame (coalesces rapid pointer-moves into one repaint).
 		if (vertexDrag) {
@@ -939,9 +1080,17 @@
 		// Edit tool, targeting sub-state: feature hover is always active (you target
 		// features directly), so highlight whatever feature is under the cursor.
 		if (toolState.active === 'edit' && !isDragging && hitCanvas && canvasEl) {
-			hoveredFeature.value = getHitAtPoint(e.clientX, e.clientY);
 			if (editSession.activeLayerId !== null) {
-				overVertex = hitVertex(e.clientX, e.clientY) !== null;
+				// No-select zone: don't highlight neighbours while the cursor is near the
+				// feature being edited.
+				const pHover = hitPoint(e.clientX, e.clientY);
+				hoveredPoint = pHover ? ptKey(pHover.featureIndex, pHover.pointIndex) : null;
+				const vHover = hitVertex(e.clientX, e.clientY);
+				hoveredVertexKey = vHover ? `${vHover.arcIndex}:${vHover.vertexIndex}` : null;
+				// Over a point (or near the edited feature) → no neighbour highlight; the
+				// point markers convey hover instead.
+				hoveredFeature.value = pHover || nearEditedGeometry(e.clientX, e.clientY) ? null : getHitAtPoint(e.clientX, e.clientY);
+				overVertex = vHover !== null || pHover !== null;
 				// Show the insert ghost only when not already over a draggable vertex.
 				insertHover = overVertex ? null : hitEdge(e.clientX, e.clientY);
 				// Active when the cursor is right on the ghost point itself.
@@ -955,6 +1104,7 @@
 					overInsertGhost = false;
 				}
 			} else {
+				hoveredFeature.value = getHitAtPoint(e.clientX, e.clientY);
 				overVertex = false;
 				insertHover = null;
 				overInsertGhost = false;
@@ -990,6 +1140,14 @@
 	}
 
 	function handlePointerUp() {
+		// End of a point drag — record it for undo and swallow the trailing click.
+		if (pointDrag) {
+			recordPointMove(pointDrag.featureIndex, pointDrag.pointIndex, pointDrag.from);
+			pointDrag = null;
+			suppressNextClick = true;
+			return;
+		}
+
 		// End of a vertex drag — rebuild the node map (a moved node has new coords) and
 		// swallow the trailing click so it doesn't retarget/deselect.
 		if (vertexDrag) {
@@ -1653,6 +1811,14 @@
 		}
 	});
 
+	// Reset point hover/selection whenever the edit session starts, ends, or changes layer.
+	$effect(() => {
+		void editSession.activeLayerId;
+		selectedPoint = null;
+		hoveredPoint = null;
+		hoveredVertexKey = null;
+	});
+
 	// Observe container size and update width/height.
 	$effect(() => {
 		if (!containerEl) return;
@@ -1983,6 +2149,7 @@
 							// Edited feature (or no cache) — project it from the draft now.
 							const geom = geometries[ci];
 							if (!geom) continue;
+							if (geom.type === 'Point' || geom.type === 'MultiPoint') continue; // drawn below
 							// eslint-disable-next-line @typescript-eslint/no-explicit-any
 							const pathStr = d3.geoPath(projection)(feature(anyDraft, geom as any));
 							if (!pathStr) continue;
@@ -2004,6 +2171,8 @@
 					}
 					ctx.setLineDash([]);
 					ctx.globalAlpha = 1;
+
+					// Point features are drawn as editable markers in the marker pass below.
 				}
 				continue;
 			}
@@ -2381,10 +2550,8 @@
 				const M = RADIUS + 2; // viewport cull margin
 				ctx.lineWidth = 1.5;
 
-				// Decimated hollow markers — every `stride`th vertex, so the drawn count is
-				// bounded by screen size rather than the feature's vertex count.
-				ctx.strokeStyle = accent;
-				ctx.fillStyle = '#ffffff';
+				// Decimated markers — every `stride`th vertex, so the drawn count is bounded
+				// by screen size rather than the feature's vertex count.
 				for (const ai of arcIndices) {
 					const arc = arcs[ai];
 					if (!arc) continue;
@@ -2394,17 +2561,11 @@
 						const sx = p[0] * mapScale + tx;
 						const sy = p[1] * mapScale + ty;
 						if (sx < -M || sx > width + M || sy < -M || sy > height + M) continue;
-						ctx.beginPath();
-						ctx.arc(sx, sy, RADIUS, 0, Math.PI * 2);
-						ctx.fill();
-						ctx.stroke();
+						drawMarker(ctx, sx, sy, isVertexSelected(ai, vi), hoveredVertexKey === `${ai}:${vi}`, accent);
 					}
 				}
 
-				// Selected vertices always drawn on top (accent fill + white outline),
-				// regardless of the decimation stride.
-				ctx.fillStyle = accent;
-				ctx.strokeStyle = '#ffffff';
+				// Selected vertices always drawn on top, regardless of the decimation stride.
 				for (const v of getSelectedVertices()) {
 					const pt = arcs[v.arcIndex]?.[v.vertexIndex];
 					if (!pt) continue;
@@ -2413,10 +2574,26 @@
 					const sx = p[0] * mapScale + tx;
 					const sy = p[1] * mapScale + ty;
 					if (sx < -M || sx > width + M || sy < -M || sy > height + M) continue;
-					ctx.beginPath();
-					ctx.arc(sx, sy, RADIUS, 0, Math.PI * 2);
-					ctx.fill();
-					ctx.stroke();
+					drawMarker(ctx, sx, sy, true, hoveredVertexKey === `${v.arcIndex}:${v.vertexIndex}`, accent);
+				}
+
+				// Point markers — every point of the layer is a directly grabbable handle.
+				// Selected point: accent fill + white outline. Others: white fill + accent
+				// outline (the hovered one drawn a touch larger as a grab affordance).
+				const allGeoms = anyDraft.objects[objName].geometries as { type?: string; coordinates?: number[] | number[][] }[];
+				for (let fi = 0; fi < allGeoms.length; fi++) {
+					const g = allGeoms[fi];
+					if (!g || (g.type !== 'Point' && g.type !== 'MultiPoint')) continue;
+					const pCoords: number[][] = g.type === 'Point' ? [g.coordinates as number[]] : g.coordinates as number[][];
+					for (let pi = 0; pi < pCoords.length; pi++) {
+						const p = projection(pCoords[pi] as [number, number]);
+						if (!p) continue;
+						const sx = p[0] * mapScale + tx;
+						const sy = p[1] * mapScale + ty;
+						if (sx < -M || sx > width + M || sy < -M || sy > height + M) continue;
+						const key = `${fi}:${pi}`;
+						drawMarker(ctx, sx, sy, key === selectedPoint, key === hoveredPoint, accent);
+					}
 				}
 
 				// Ghost insert marker at the hovered edge midpoint. Grows and fills with the
@@ -2504,7 +2681,7 @@
 			class:edit-mode={toolState.active === 'edit' && !spacePanning}
 			class:vertex-grab={toolState.active === 'edit' && overVertex && !vertexDrag && !spacePanning}
 			class:insert-ghost-hover={toolState.active === 'edit' && overInsertGhost && !vertexDrag && !spacePanning}
-			class:vertex-grabbing={vertexDrag !== null}
+			class:vertex-grabbing={vertexDrag !== null || pointDrag !== null}
 			class:space-pan={spacePanning}
 			class:feature-hover={(toolState.active === 'select' || toolState.active === 'edit') && !spacePanning && hoveredFeature.value !== null}
 			class:layer-hover={toolState.active === 'select' && !spacePanning && layerSelection.hoveredLayerId !== null && hoveredFeature.value === null}
@@ -2514,7 +2691,7 @@
 			onpointerdown={handlePointerDown}
 			onpointermove={handlePointerMove}
 			onpointerup={handlePointerUp}
-			onpointerleave={() => { hoveredFeature.value = null; setHoveredLayer(null); insertHover = null; overVertex = false; overInsertGhost = false; }}
+			onpointerleave={() => { hoveredFeature.value = null; setHoveredLayer(null); insertHover = null; overVertex = false; overInsertGhost = false; hoveredPoint = null; hoveredVertexKey = null; }}
 		></canvas>
 
 		{#if showBezierOutlineNote}

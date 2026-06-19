@@ -45,7 +45,8 @@ interface RemovedVertex { arcIndex: number; atIndex: number; coord: [number, num
 type EditOp =
 	| { type: 'move'; moves: SubMove[] }
 	| { type: 'insert'; arcIndex: number; atIndex: number; coord: [number, number] }
-	| { type: 'delete'; removed: RemovedVertex[] };
+	| { type: 'delete'; removed: RemovedVertex[] }
+	| { type: 'pointMove'; featureIndex: number; pointIndex: number; from: [number, number]; to: [number, number] };
 let undoStack: EditOp[] = [];
 let redoStack: EditOp[] = [];
 
@@ -163,6 +164,46 @@ export function recordMoves(group: DragMember[]): void {
 	}
 	if (moves.length === 0) return;
 	undoStack.push({ type: 'move', moves });
+	redoStack.length = 0;
+}
+
+// --- Point editing (points store coordinates directly, not in arcs) ---------
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function pointGeom(featureIndex: number): any | null {
+	if (!draft) return null;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const objName = Object.keys((draft as any).objects)[0];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const g = (draft as any).objects[objName].geometries?.[featureIndex];
+	return g && (g.type === 'Point' || g.type === 'MultiPoint') ? g : null;
+}
+
+export function getPointCoord(featureIndex: number, pointIndex: number): [number, number] | null {
+	const g = pointGeom(featureIndex);
+	if (!g) return null;
+	const c = g.type === 'Point' ? g.coordinates : g.coordinates[pointIndex];
+	return c ? [c[0], c[1]] : null;
+}
+
+function applyPointCoord(featureIndex: number, pointIndex: number, coord: [number, number]): void {
+	const g = pointGeom(featureIndex);
+	if (!g) return;
+	if (g.type === 'Point') g.coordinates = [coord[0], coord[1]];
+	else if (g.coordinates[pointIndex]) g.coordinates[pointIndex] = [coord[0], coord[1]];
+	dirtyFeatures.add(featureIndex);
+}
+
+export function movePoint(featureIndex: number, pointIndex: number, lon: number, lat: number): void {
+	applyPointCoord(featureIndex, pointIndex, [lon, lat]);
+	editSession.edited = true;
+	editSession.version++;
+}
+
+export function recordPointMove(featureIndex: number, pointIndex: number, from: [number, number]): void {
+	const to = getPointCoord(featureIndex, pointIndex);
+	if (!to) return;
+	if (from[0] === to[0] && from[1] === to[1]) return;
+	undoStack.push({ type: 'pointMove', featureIndex, pointIndex, from, to });
 	redoStack.length = 0;
 }
 
@@ -293,6 +334,7 @@ export function undoEdit(): void {
 	if (!op) return;
 	if (op.type === 'move') for (const m of op.moves) applyMove(m.targets, m.from);
 	else if (op.type === 'insert') unspliceVertex(op.arcIndex, op.atIndex);
+	else if (op.type === 'pointMove') applyPointCoord(op.featureIndex, op.pointIndex, op.from);
 	else {
 		// Delete undo — re-insert ascending so each lands at its original index.
 		for (const r of [...op.removed].sort((a, b) => a.atIndex - b.atIndex)) {
@@ -311,6 +353,7 @@ export function redoEdit(): void {
 	if (!op) return;
 	if (op.type === 'move') for (const m of op.moves) applyMove(m.targets, m.to);
 	else if (op.type === 'insert') spliceVertex(op.arcIndex, op.atIndex, op.coord);
+	else if (op.type === 'pointMove') applyPointCoord(op.featureIndex, op.pointIndex, op.to);
 	else {
 		// Delete redo — remove descending so indices stay valid.
 		for (const r of [...op.removed].sort((a, b) => b.atIndex - a.atIndex)) {

@@ -43,8 +43,30 @@ export function topologyToAbsolute(topo: Topology): Topology {
 		);
 	}
 
+	// Point/MultiPoint geometries store coordinates directly (quantized when a transform
+	// exists, but never delta-encoded). Decode them and copy each point geometry so the
+	// draft can move points without mutating the source. Arc-based geometries only hold arc
+	// indices, so they're left as-is (the arcs themselves are copied above).
+	const [psx, psy] = transform ? transform.scale : [1, 1];
+	const [ptx, pty] = transform ? transform.translate : [0, 0];
+	const decodePt = (c: number[]): number[] =>
+		transform ? [c[0] * psx + ptx, c[1] * psy + pty] : [c[0], c[1]];
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const result: any = { ...topo, arcs: newArcs };
+	const decodeGeom = (g: any): any => {
+		if (g?.type === 'Point') return { ...g, coordinates: decodePt(g.coordinates) };
+		if (g?.type === 'MultiPoint') return { ...g, coordinates: (g.coordinates as number[][]).map(decodePt) };
+		return g;
+	};
+	const newObjects: Record<string, unknown> = {};
+	for (const name of Object.keys(anyTopo.objects)) {
+		const obj = anyTopo.objects[name];
+		newObjects[name] = obj?.type === 'GeometryCollection'
+			? { ...obj, geometries: (obj.geometries as unknown[]).map(decodeGeom) }
+			: decodeGeom(obj);
+	}
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const result: any = { ...topo, arcs: newArcs, objects: newObjects };
 	delete result.transform;
 	return result as Topology;
 }
