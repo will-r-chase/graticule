@@ -42,11 +42,12 @@ let dirtyFeatures = new Set<number>();
 // A move op carries one sub-move per dragged vertex (a group drag moves several at once).
 interface SubMove { targets: VertexPos[]; from: [number, number]; to: [number, number] }
 interface RemovedVertex { arcIndex: number; atIndex: number; coord: [number, number] }
+interface PointSubMove { featureIndex: number; pointIndex: number; from: [number, number]; to: [number, number] }
 type EditOp =
 	| { type: 'move'; moves: SubMove[] }
 	| { type: 'insert'; arcIndex: number; atIndex: number; coord: [number, number] }
 	| { type: 'delete'; removed: RemovedVertex[] }
-	| { type: 'pointMove'; featureIndex: number; pointIndex: number; from: [number, number]; to: [number, number] };
+	| { type: 'pointMove'; moves: PointSubMove[] };
 let undoStack: EditOp[] = [];
 let redoStack: EditOp[] = [];
 
@@ -193,17 +194,27 @@ function applyPointCoord(featureIndex: number, pointIndex: number, coord: [numbe
 	dirtyFeatures.add(featureIndex);
 }
 
-export function movePoint(featureIndex: number, pointIndex: number, lon: number, lat: number): void {
-	applyPointCoord(featureIndex, pointIndex, [lon, lat]);
+// A point drag member: which point, and its pre-drag coordinate.
+export interface PointMember { featureIndex: number; pointIndex: number; orig: [number, number] }
+
+// Live point (group) drag — translate every member by the same geographic delta.
+export function translatePoints(group: PointMember[], dLon: number, dLat: number): void {
+	for (const m of group) applyPointCoord(m.featureIndex, m.pointIndex, [m.orig[0] + dLon, m.orig[1] + dLat]);
 	editSession.edited = true;
 	editSession.version++;
 }
 
-export function recordPointMove(featureIndex: number, pointIndex: number, from: [number, number]): void {
-	const to = getPointCoord(featureIndex, pointIndex);
-	if (!to) return;
-	if (from[0] === to[0] && from[1] === to[1]) return;
-	undoStack.push({ type: 'pointMove', featureIndex, pointIndex, from, to });
+// Records a completed (possibly group) point drag as one undoable op.
+export function recordPointMoves(group: PointMember[]): void {
+	const moves: PointSubMove[] = [];
+	for (const m of group) {
+		const to = getPointCoord(m.featureIndex, m.pointIndex);
+		if (!to) continue;
+		if (m.orig[0] === to[0] && m.orig[1] === to[1]) continue;
+		moves.push({ featureIndex: m.featureIndex, pointIndex: m.pointIndex, from: m.orig, to });
+	}
+	if (moves.length === 0) return;
+	undoStack.push({ type: 'pointMove', moves });
 	redoStack.length = 0;
 }
 
@@ -220,6 +231,11 @@ export function isVertexSelected(arcIndex: number, vertexIndex: number): boolean
 }
 export function selectVertex(arcIndex: number, vertexIndex: number): void {
 	vertexSelection = new Set([vKey(arcIndex, vertexIndex)]);
+	editSession.version++;
+}
+// Replaces the selection with the given vertices (used by marquee selection).
+export function setVertexSelection(verts: VertexPos[]): void {
+	vertexSelection = new Set(verts.map((v) => vKey(v.arcIndex, v.vertexIndex)));
 	editSession.version++;
 }
 export function toggleVertex(arcIndex: number, vertexIndex: number): void {
@@ -334,7 +350,7 @@ export function undoEdit(): void {
 	if (!op) return;
 	if (op.type === 'move') for (const m of op.moves) applyMove(m.targets, m.from);
 	else if (op.type === 'insert') unspliceVertex(op.arcIndex, op.atIndex);
-	else if (op.type === 'pointMove') applyPointCoord(op.featureIndex, op.pointIndex, op.from);
+	else if (op.type === 'pointMove') for (const m of op.moves) applyPointCoord(m.featureIndex, m.pointIndex, m.from);
 	else {
 		// Delete undo — re-insert ascending so each lands at its original index.
 		for (const r of [...op.removed].sort((a, b) => a.atIndex - b.atIndex)) {
@@ -353,7 +369,7 @@ export function redoEdit(): void {
 	if (!op) return;
 	if (op.type === 'move') for (const m of op.moves) applyMove(m.targets, m.to);
 	else if (op.type === 'insert') spliceVertex(op.arcIndex, op.atIndex, op.coord);
-	else if (op.type === 'pointMove') applyPointCoord(op.featureIndex, op.pointIndex, op.to);
+	else if (op.type === 'pointMove') for (const m of op.moves) applyPointCoord(m.featureIndex, m.pointIndex, m.to);
 	else {
 		// Delete redo — remove descending so indices stay valid.
 		for (const r of [...op.removed].sort((a, b) => b.atIndex - a.atIndex)) {

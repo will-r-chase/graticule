@@ -12,7 +12,7 @@
 	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
 	import { layerSelection, clearLayerSelection, selectLayer, toggleLayerSelection, enterLayer, exitLayer, setHoveredLayer } from '$lib/stores/layerSelection.svelte';
 	import { hoveredFeature } from '$lib/stores/hoveredFeature.svelte';
-	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, getPointCoord, movePoint, recordPointMove, type DragMember } from '$lib/stores/editSession.svelte';
+	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, getPointCoord, translatePoints, recordPointMoves, setVertexSelection, type DragMember, type PointMember } from '$lib/stores/editSession.svelte';
 	import { featureArcIndices } from '$lib/utils/topology';
 	import { buildBezierArcs, arcRingToPath } from '$lib/utils/bezier';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -64,6 +64,7 @@
 	// Drag tracking — plain vars, no reactivity needed.
 	let isDragging = $state(false); // $state so canvas cursor class updates
 	let spacePanning = $state(false); // Space held in select mode → temporary pan
+	let metaHeld = $state(false);     // Cmd/Ctrl held → marquee mode in edit (no marker/feature cursor)
 	let lastPointerX = 0;
 	let lastPointerY = 0;
 
@@ -351,11 +352,12 @@
 		from: [number, number];
 		insert?: { arcIndex: number; atIndex: number };
 	} | null>(null);
-	// Point-feature drag (points store coords directly, not in arcs, so they're separate).
-	let pointDrag = $state<{ featureIndex: number; pointIndex: number; from: [number, number] } | null>(null);
-	// Currently hovered / selected point (for marker styling). Keyed "featureIndex:pointIndex".
+	// Point-feature (group) drag — points store coords directly, not in arcs. `from` is the
+	// grabbed point's origin; the delta vs the cursor drives the group translation.
+	let pointDrag = $state<{ group: PointMember[]; from: [number, number] } | null>(null);
+	// Currently hovered point + the selected point set (for marker styling). Keyed "fi:pi".
 	let hoveredPoint = $state<string | null>(null);
-	let selectedPoint = $state<string | null>(null);
+	let selectedPoints = $state<Set<string>>(new Set());
 	const ptKey = (fi: number, pi: number) => `${fi}:${pi}`;
 	// Currently hovered arc vertex, keyed "arcIndex:vertexIndex" (drives the marker hover state).
 	let hoveredVertexKey = $state<string | null>(null);
@@ -824,6 +826,47 @@
 		selectFeature(hit.layerId, hit.featureIndex, false);
 	}
 
+	// Marquee selection while editing: selects the edited feature's vertices within the box
+	// (lines/polygons), or every point of the layer within the box (point layers).
+	function updateEditMarqueeSelection() {
+		const draft = getDraft();
+		if (!draft || !projection || !marqueeStart || !marqueeCurrent || editSession.activeLayerId === null) return;
+		const x1 = Math.min(marqueeStart.x, marqueeCurrent.x);
+		const y1 = Math.min(marqueeStart.y, marqueeCurrent.y);
+		const x2 = Math.max(marqueeStart.x, marqueeCurrent.x);
+		const y2 = Math.max(marqueeStart.y, marqueeCurrent.y);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const anyDraft = draft as any;
+		const geometries = anyDraft.objects[Object.keys(anyDraft.objects)[0]].geometries as { type?: string; coordinates?: number[] | number[][] }[];
+		const inBox = (c: number[]): boolean => {
+			const p = projection!(c as [number, number]);
+			if (!p) return false;
+			const sx = p[0] * mapScale + tx, sy = p[1] * mapScale + ty;
+			return sx >= x1 && sx <= x2 && sy >= y1 && sy <= y2;
+		};
+
+		const targetGeom = geometries[editSession.featureIndex];
+		if (targetGeom && (targetGeom.type === 'Point' || targetGeom.type === 'MultiPoint')) {
+			const sel = new Set<string>();
+			for (let fi = 0; fi < geometries.length; fi++) {
+				const g = geometries[fi];
+				if (!g || (g.type !== 'Point' && g.type !== 'MultiPoint')) continue;
+				const coords: number[][] = g.type === 'Point' ? [g.coordinates as number[]] : g.coordinates as number[][];
+				for (let pi = 0; pi < coords.length; pi++) if (inBox(coords[pi])) sel.add(`${fi}:${pi}`);
+			}
+			selectedPoints = sel;
+		} else {
+			const arcs = anyDraft.arcs as number[][][];
+			const verts: { arcIndex: number; vertexIndex: number }[] = [];
+			for (const ai of featureArcIndices(draft, editSession.featureIndex)) {
+				const arc = arcs[ai];
+				if (!arc) continue;
+				for (let vi = 0; vi < arc.length; vi++) if (inBox(arc[vi])) verts.push({ arcIndex: ai, vertexIndex: vi });
+			}
+			setVertexSelection(verts);
+		}
+	}
+
 	function updateMarqueeSelection(addToExisting: boolean) {
 		if (!marqueeStart || !marqueeCurrent || !projection) return;
 
@@ -922,9 +965,23 @@
 			// Point feature — grab the point itself (points aren't stored in arcs).
 			const pHit = hitPoint(e.clientX, e.clientY);
 			if (pHit) {
+				const key = ptKey(pHit.featureIndex, pHit.pointIndex);
+				if (e.shiftKey) {
+					// Shift = toggle this point's selection; no drag.
+					const next = new Set(selectedPoints);
+					if (next.has(key)) next.delete(key); else next.add(key);
+					selectedPoints = next;
+					return;
+				}
+				// Select on mousedown, keeping an existing multi-selection so a drag moves
+				// the whole group.
+				if (!selectedPoints.has(key)) selectedPoints = new Set([key]);
+				const group: PointMember[] = [...selectedPoints].map((k) => {
+					const [fi, pi] = k.split(':').map(Number);
+					return { featureIndex: fi, pointIndex: pi, orig: getPointCoord(fi, pi) ?? [0, 0] };
+				});
 				const from = getPointCoord(pHit.featureIndex, pHit.pointIndex);
-				selectedPoint = ptKey(pHit.featureIndex, pHit.pointIndex);
-				pointDrag = { ...pHit, from: from ?? [0, 0] };
+				pointDrag = { group, from: from ?? [0, 0] };
 				(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
 				return;
 			}
@@ -960,9 +1017,20 @@
 				(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
 				return;
 			}
+			// Cmd/Ctrl + drag on empty space starts a marquee that selects vertices/points
+			// (Shift is reserved for toggling individual vertices/points).
+			if ((e.metaKey || e.ctrlKey) && containerEl) {
+				const containerRect = containerEl.getBoundingClientRect();
+				marqueePtrStartX = e.clientX;
+				marqueePtrStartY = e.clientY;
+				marqueeStart = { x: e.clientX - containerRect.left, y: e.clientY - containerRect.top };
+				marqueeCurrent = { ...marqueeStart };
+				(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+				return;
+			}
 			// Clicked feature body or empty space — clear the vertex/point selection.
 			clearVertexSelection();
-			selectedPoint = null;
+			selectedPoints = new Set();
 		}
 
 		if (toolState.active === 'pan' || spacePanning) {
@@ -1001,10 +1069,11 @@
 	}
 
 	function handlePointerMove(e: PointerEvent) {
+		metaHeld = e.metaKey || e.ctrlKey; // keep in sync even if a keyup was missed
 		// Dragging a point feature — move the point under the cursor.
 		if (pointDrag) {
 			const geo = screenToGeo(e.clientX, e.clientY);
-			if (geo) movePoint(pointDrag.featureIndex, pointDrag.pointIndex, geo[0], geo[1]);
+			if (geo) translatePoints(pointDrag.group, geo[0] - pointDrag.from[0], geo[1] - pointDrag.from[1]);
 			return;
 		}
 
@@ -1040,7 +1109,8 @@
 		if (isMarqueeDragging && containerEl) {
 			const containerRect = containerEl.getBoundingClientRect();
 			marqueeCurrent = { x: e.clientX - containerRect.left, y: e.clientY - containerRect.top };
-			updateMarqueeSelection(e.shiftKey);
+			if (toolState.active === 'edit') updateEditMarqueeSelection();
+			else updateMarqueeSelection(e.shiftKey);
 			return;
 		}
 
@@ -1081,6 +1151,15 @@
 		// features directly), so highlight whatever feature is under the cursor.
 		if (toolState.active === 'edit' && !isDragging && hitCanvas && canvasEl) {
 			if (editSession.activeLayerId !== null) {
+				if (e.metaKey || e.ctrlKey) {
+					// Cmd/Ctrl held → marquee mode: no marker or feature hover feedback.
+					hoveredFeature.value = null;
+					hoveredPoint = null;
+					hoveredVertexKey = null;
+					overVertex = false;
+					insertHover = null;
+					overInsertGhost = false;
+				} else {
 				// No-select zone: don't highlight neighbours while the cursor is near the
 				// feature being edited.
 				const pHover = hitPoint(e.clientX, e.clientY);
@@ -1102,6 +1181,7 @@
 					overInsertGhost = Math.hypot(gx - (e.clientX - rect.left), gy - (e.clientY - rect.top)) <= GHOST_HOVER_RADIUS;
 				} else {
 					overInsertGhost = false;
+				}
 				}
 			} else {
 				hoveredFeature.value = getHitAtPoint(e.clientX, e.clientY);
@@ -1142,7 +1222,7 @@
 	function handlePointerUp() {
 		// End of a point drag — record it for undo and swallow the trailing click.
 		if (pointDrag) {
-			recordPointMove(pointDrag.featureIndex, pointDrag.pointIndex, pointDrag.from);
+			recordPointMoves(pointDrag.group);
 			pointDrag = null;
 			suppressNextClick = true;
 			return;
@@ -1725,6 +1805,7 @@
 	// Global keyboard shortcuts.
 	$effect(() => {
 		function handleKeyUp(e: KeyboardEvent) {
+			metaHeld = e.metaKey || e.ctrlKey;
 			if (e.key === ' ') {
 				spacePanning = false;
 				if (isDragging) { isDragging = false; }
@@ -1732,6 +1813,7 @@
 		}
 
 		function handleKeyDown(e: KeyboardEvent) {
+			metaHeld = e.metaKey || e.ctrlKey;
 			// Don't intercept when focus is in a text field.
 			const tag = (e.target as Element | null)?.tagName;
 			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -1814,7 +1896,7 @@
 	// Reset point hover/selection whenever the edit session starts, ends, or changes layer.
 	$effect(() => {
 		void editSession.activeLayerId;
-		selectedPoint = null;
+		selectedPoints = new Set();
 		hoveredPoint = null;
 		hoveredVertexKey = null;
 	});
@@ -2592,7 +2674,7 @@
 						const sy = p[1] * mapScale + ty;
 						if (sx < -M || sx > width + M || sy < -M || sy > height + M) continue;
 						const key = `${fi}:${pi}`;
-						drawMarker(ctx, sx, sy, key === selectedPoint, key === hoveredPoint, accent);
+						drawMarker(ctx, sx, sy, selectedPoints.has(key), key === hoveredPoint, accent);
 					}
 				}
 
@@ -2679,8 +2761,8 @@
 			class:dragging={isDragging}
 			class:select-mode={toolState.active === 'select' && !spacePanning}
 			class:edit-mode={toolState.active === 'edit' && !spacePanning}
-			class:vertex-grab={toolState.active === 'edit' && overVertex && !vertexDrag && !spacePanning}
-			class:insert-ghost-hover={toolState.active === 'edit' && overInsertGhost && !vertexDrag && !spacePanning}
+			class:vertex-grab={toolState.active === 'edit' && overVertex && !vertexDrag && !spacePanning && !metaHeld}
+			class:insert-ghost-hover={toolState.active === 'edit' && overInsertGhost && !vertexDrag && !spacePanning && !metaHeld}
 			class:vertex-grabbing={vertexDrag !== null || pointDrag !== null}
 			class:space-pan={spacePanning}
 			class:feature-hover={(toolState.active === 'select' || toolState.active === 'edit') && !spacePanning && hoveredFeature.value !== null}
@@ -2774,7 +2856,7 @@
 	}
 
 	canvas.vertex-grab {
-		cursor: grab;
+		cursor: pointer;
 	}
 
 	canvas.insert-ghost-hover {
