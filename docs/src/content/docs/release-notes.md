@@ -2,6 +2,61 @@
 title: Release Notes
 ---
 
+## June 20, 2026
+
+**Vertex Editing**
+
+This release introduces the Edit tool for reshaping features by moving their vertices directly on the map, alongside layer panel and SVG export improvements and a round of bug fixes.
+
+### New Features
+
+#### Vertex Editing
+
+The new Edit tool lets you reshape features by moving their vertices directly on the map.
+
+- Choose the Edit tool from the toolbar (**E**), then double-click a feature — or select it and click **Edit** in the action bar — to start editing its vertices.
+- Drag a vertex to move it, or click a vertex to select it. Shift-click to select multiple vertices, or **Cmd/Ctrl-drag** to create a marquee around several vertices at once, then drag the group to move them as one.
+- You can also nudge the selection with the **arrow keys** one pixel at a time, or ten pixels at a time while holding `Shift`.
+- Hover an edge and click the marker that appears in the middle to add a vertex.
+- Remove unwanted vertices with **Delete** or the Delete button.
+- Press **Enter** to finish editing or **Esc** to cancel, matching the Done and Cancel buttons in the editing bar. If you double click away while editing a feature it will commit your edits and exit the editing state.
+- Editing a simplified or smoothed layer will prompt you to "bake" your settings into a new layer first, so you can edit the feature while maintaining Graticule's non-destructive principle.
+
+### Improvements
+
+#### Layer Panel
+
+- Layer swatches now reflect the geometry type of each layer: polygon layers show a filled square, line layers show a diagonal line, and point layers show a circle.
+- The style swatch now opens the Style tab; the settings button opens the Simplify tab—you can still swap between them at any time.
+
+#### SVG Export
+
+- Each layer now exports as its own named group, matching the layer name in the panel. Features export as individual paths rather than a single compound path per layer. Paths are named from each feature's `name` or `label` property when available.
+- Layer stacking order now matches the app. Previously, layers could appear in the wrong order in the exported file.
+
+### Bug Fixes
+
+#### Features Table
+
+- Opening the features table for a large dataset (tens of thousands of rows) no longer freezes or crashes the app.
+
+#### Layer Renaming
+
+- Double-clicking a layer name to rename it now selects all text immediately, so you can start typing without clearing the field manually.
+- Fixed several bugs where clicking in the layers panel while editing a name had unexpected behavior.
+
+#### Layer Panel
+
+- Deleting a layer from its **...** menu now clears the selection.
+- Closing the style accordion by clicking away from a layer now collapses the panel.
+
+#### Albers USA Projection
+
+- Selecting the Albers USA projection no longer crashes the app.
+- Bezier smoothing on Albers USA now renders correctly.
+
+---
+
 ## June 15, 2026
 
 **Layer Selection, Geoprocessing & Data Table**

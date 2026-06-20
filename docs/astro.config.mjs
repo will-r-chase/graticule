@@ -49,6 +49,7 @@ export default defineConfig({
 					label: 'Features',
 					items: [
 						{ label: 'Working with Features', slug: 'features/working-with-features' },
+						{ label: 'Editing Features', slug: 'features/editing-features' },
 						{ label: 'Features Table', slug: 'features/features-table' },
 					],
 				},
