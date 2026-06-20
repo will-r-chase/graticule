@@ -484,6 +484,46 @@
 		return { targets: vertexDragTargets(arcIndex, vertexIndex), orig };
 	}
 
+	// Arrow-key nudge: shift the current vertex/point selection by a screen-pixel offset.
+	// The pixel offset is converted to a geographic delta at the reference coordinate (via
+	// project → offset → invert) so the on-screen movement is consistent at any zoom, and
+	// reuses the same translate/record path as a drag, so each press is one undoable step.
+	function nudgeSelection(dx: number, dy: number): void {
+		if (!projection) return;
+
+		// Pixel offset at refGeo → geographic delta.
+		function geoDelta(refGeo: [number, number]): [number, number] | null {
+			const p = projection!(refGeo);
+			if (!p) return null;
+			const moved = projection!.invert?.([p[0] + dx / mapScale, p[1] + dy / mapScale]);
+			if (!moved) return null;
+			return [moved[0] - refGeo[0], moved[1] - refGeo[1]];
+		}
+
+		// Point layers move selected points; line/polygon layers move selected vertices.
+		if (selectedPoints.size > 0) {
+			const group: PointMember[] = [...selectedPoints].map((k) => {
+				const [fi, pi] = k.split(':').map(Number);
+				return { featureIndex: fi, pointIndex: pi, orig: getPointCoord(fi, pi) ?? [0, 0] };
+			});
+			const d = geoDelta(group[0].orig);
+			if (!d) return;
+			translatePoints(group, d[0], d[1]);
+			recordPointMoves(group);
+			return;
+		}
+
+		const group = getSelectedVertices()
+			.map((v) => dragMemberFor(v.arcIndex, v.vertexIndex))
+			.filter((m): m is DragMember => m !== null);
+		if (group.length === 0) return;
+		const d = geoDelta(group[0].orig);
+		if (!d) return;
+		translateGroup(group, d[0], d[1]);
+		recordMoves(group);
+		rebuildNodeMap();
+	}
+
 	// Marker decimation. While zoomed out, the targeted feature's markers are thinned to
 	// every Nth vertex (kept ~MARKER_TARGET_SPACING px apart) so a detailed feature stays
 	// fast and isn't an unusable blur. Once vertices are naturally that far apart on screen
@@ -1835,6 +1875,21 @@
 			if ((e.key === 'Delete' || e.key === 'Backspace') && editSession.activeLayerId) {
 				e.preventDefault();
 				deleteSelectedVertices();
+				return;
+			}
+
+			// During a session, arrow keys nudge the selected vertices/points — 1px, or
+			// 10px with Shift (screen-pixel steps, consistent at any zoom).
+			if (editSession.activeLayerId &&
+				(e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+				e.preventDefault();
+				const step = e.shiftKey ? 10 : 1;
+				let dx = 0, dy = 0;
+				if (e.key === 'ArrowUp') dy = -step;
+				else if (e.key === 'ArrowDown') dy = step;
+				else if (e.key === 'ArrowLeft') dx = -step;
+				else dx = step;
+				nudgeSelection(dx, dy);
 				return;
 			}
 
