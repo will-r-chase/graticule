@@ -12,7 +12,7 @@
 	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
 	import { layerSelection, clearLayerSelection, selectLayer, toggleLayerSelection, enterLayer, exitLayer, setHoveredLayer } from '$lib/stores/layerSelection.svelte';
 	import { hoveredFeature } from '$lib/stores/hoveredFeature.svelte';
-	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, getPointCoord, translatePoints, recordPointMoves, setVertexSelection, type DragMember, type PointMember } from '$lib/stores/editSession.svelte';
+	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, cancelEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, getPointCoord, translatePoints, recordPointMoves, setVertexSelection, type DragMember, type PointMember } from '$lib/stores/editSession.svelte';
 	import { featureArcIndices } from '$lib/utils/topology';
 	import { buildBezierArcs, arcRingToPath } from '$lib/utils/bezier';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -1818,13 +1818,13 @@
 			const tag = (e.target as Element | null)?.tagName;
 			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
-			// Esc backs out of the bake dialog, then out of an active edit session.
+			// Esc backs out of the bake dialog, then cancels an edit session (discards edits).
 			if (e.key === 'Escape') {
 				if (editSession.pendingBake) { cancelBake(); return; }
-				if (editSession.activeLayerId) { exitEditing(); return; }
+				if (editSession.activeLayerId) { cancelEditing(); return; }
 			}
 
-			// Enter confirms the bake dialog, then commits an active edit session.
+			// Enter confirms the bake dialog, then commits an edit session (done).
 			if (e.key === 'Enter') {
 				if (editSession.pendingBake) { confirmBake(); return; }
 				if (editSession.activeLayerId) { exitEditing(); return; }

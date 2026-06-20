@@ -37,7 +37,7 @@
 		class="bar-btn"
 		onclick={cancelEditing}
 		aria-label="Discard edits"
-		use:tooltip={{ text: 'Discard edits', placement: 'up' }}
+		use:tooltip={{ text: 'Discard edits', shortcut: 'Esc', placement: 'up' }}
 	>
 		<X size={16} weight="regular" />
 		<span>Cancel</span>
@@ -46,7 +46,7 @@
 		class="bar-btn"
 		onclick={exitEditing}
 		aria-label="Done editing"
-		use:tooltip={{ text: 'Commit edits', shortcut: 'Esc', placement: 'up' }}
+		use:tooltip={{ text: 'Commit edits', shortcut: 'Enter', placement: 'up' }}
 	>
 		<Check size={16} weight="regular" />
 		<span>Done</span>
