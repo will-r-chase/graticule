@@ -403,6 +403,18 @@
 	let insertHover = $state<{ arcIndex: number; atIndex: number; geo: [number, number] } | null>(null);
 	// Whether the cursor is directly over the ghost point (active state — click to insert).
 	let overInsertGhost = $state(false);
+
+	// The insert ghost's position (insertHover.geo) is captured from the draft at hover time
+	// and only refreshed on pointermove. A draft mutation (e.g. deleting a vertex) bumps
+	// editSession.version but leaves insertHover pointing at the now-stale pre-edit segment, so
+	// the ghost can render on the old line. Drop it whenever the draft changes — it reappears
+	// fresh on the next pointermove via hitEdge. Skip while an insert-drag is in flight so we
+	// don't cancel the active insertion.
+	$effect(() => {
+		void editSession.version;
+		if (untrack(() => vertexDrag?.insert)) return;
+		insertHover = null;
+	});
 	const EDGE_HIT_RADIUS = 8;   // px — how close to a segment shows the ghost
 	const GHOST_HOVER_RADIUS = 7; // px — how close to the ghost point activates it
 
