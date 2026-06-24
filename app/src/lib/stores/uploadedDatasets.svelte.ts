@@ -14,9 +14,6 @@ export function addUploadedDataset(name: string, topology: Topology): UploadedDa
 	return dataset;
 }
 
-export function registerDataset(id: string, topology: Topology): void {
-	uploadedDatasets.push({ id, name: '', topology, internal: true });
-}
 
 export function pruneUploadedDatasets(activeDatasetIds: Set<string>): void {
 	const pruned = uploadedDatasets.filter((u) => activeDatasetIds.has(u.id));

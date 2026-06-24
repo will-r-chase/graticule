@@ -6,7 +6,7 @@ import { topologyToAbsolute } from '$lib/utils/topology';
 import { workerChaikin } from '$lib/workers/geoWorker';
 import { workerSimplify } from '$lib/workers/simplifyWorker';
 import { showToast } from './toast.svelte';
-import { registerDataset } from './uploadedDatasets.svelte';
+import { uploadedDatasets } from './uploadedDatasets.svelte';
 
 const DISPLAY_VERTEX_THRESHOLD = 500_000;
 const DISPLAY_SIMP_TOLERANCE = 90;
@@ -19,19 +19,23 @@ let layers = $state<Layer[]>([]);
 // proxy. Accessing large topology/GeoJSON through a reactive proxy causes Svelte
 // to call deep_read() — traversing every coordinate — on each reactive update.
 //
-// rawTopologyData:        original topology as fetched/converted (never mutated).
-// simplifiedTopologyData: post-Mapshaper, pre-Chaikin. Internal pipeline cache —
-//                         no consumer outside layers.svelte.ts should read this.
+// rawTopologyData:        original topology as fetched/converted. Keyed by layer.geometryId
+//                         (NOT layer.id) — immutable, versioned source of truth. A geometry
+//                         op mints a new geometryId; existing entries are never overwritten.
+// simplifiedTopologyData: post-Mapshaper, pre-Chaikin. Internal pipeline cache, keyed by
+//                         layer.id — no consumer outside layers.svelte.ts should read this.
 // workingTopologyData:    post-Chaikin (or same reference as simplified if Chaikin
-//                         is disabled). This is what all renderers and exporters use.
+//                         is disabled), keyed by layer.id. What all renderers/exporters use.
 // layer.hasTopology signals when workingTopologyData is ready to render.
 const rawTopologyData = new Map<string, Topology>();
 const simplifiedTopologyData = new Map<string, Topology>();
 const workingTopologyData = new Map<string, Topology>();
 
-// Generates a simple unique ID for each layer instance.
+// Generates a unique ID. Used for layer.id, datasetId, and geometryId — the last is
+// correctness-critical (a collision would restore the wrong geometry on undo), so we use
+// a proper UUID rather than a short Math.random string.
 function generateId(): string {
-	return Math.random().toString(36).slice(2, 9);
+	return crypto.randomUUID();
 }
 
 // Default processing settings — all effects disabled, matching experiment page defaults.
@@ -88,9 +92,10 @@ const CHAIKIN_KEYS = new Set<keyof LayerProcessing>([
 // Reads rawTopologyData, writes simplifiedTopologyData.
 // applyDefaults: on first load, auto-simplifies large datasets.
 async function runSimplificationStage(id: string, applyDefaults: boolean): Promise<void> {
-	const rawTopo = rawTopologyData.get(id);
 	const layer = layers.find((l) => l.id === id);
-	if (!rawTopo || !layer) return;
+	if (!layer) return;
+	const rawTopo = rawTopologyData.get(layer.geometryId);
+	if (!rawTopo) return;
 
 	// Yield to the event loop so Svelte can flush layer.loading = true before
 	// JSON.stringify(topo) blocks the thread.
@@ -209,15 +214,17 @@ export function updateLayerProcessing(id: string, patch: Partial<LayerProcessing
 // Fetches a single TopoJSON file and populates the given layer.
 // onComplete fires after data is set — used by addLayer to know when to push
 // a history snapshot (once all sub-layers have loaded).
-function fetchTopoJSON(id: string, url: string, onComplete?: () => void): void {
+function fetchTopoJSON(id: string, url: string, onComplete?: () => void, applyDefaults = true): void {
 	fetch(url)
 		.then((r) => {
 			if (!r.ok) throw new Error(`HTTP ${r.status}`);
 			return r.json() as Promise<Topology>;
 		})
 		.then((topology) => {
-			rawTopologyData.set(id, topology);
-			return runLayerPipeline(id);
+			const layer = layers.find((l) => l.id === id);
+			if (!layer) return;
+			rawTopologyData.set(layer.geometryId, topology);
+			return runLayerPipeline(id, applyDefaults);
 		})
 		.then(() => {
 			onComplete?.();
@@ -249,6 +256,8 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 
 			layers.unshift({
 				id,
+				geometryId: generateId(),
+				geometryEdited: false,
 				datasetId: dataset.id,
 				name: `${baseName} — ${subLayer.name}`,
 				visible: true,
@@ -270,6 +279,8 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 
 		layers.unshift({
 			id,
+			geometryId: generateId(),
+			geometryEdited: false,
 			datasetId: dataset.id,
 			name,
 			visible: true,
@@ -288,7 +299,9 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 				return r.json() as Promise<Topology>;
 			})
 			.then((topology) => {
-				rawTopologyData.set(id, topology);
+				const layer = layers.find((l) => l.id === id);
+				if (!layer) return;
+				rawTopologyData.set(layer.geometryId, topology);
 				return runLayerPipeline(id);
 			})
 			.then(() => {
@@ -302,11 +315,14 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 
 export function addUploadedLayer(name: string, topology: Topology, uploadId: string, applyDefaults = true, onComplete?: () => void, style?: LayerStyle): void {
 	const id = generateId();
+	const geometryId = generateId();
 	// Strip any Svelte reactive Proxy wrapper before the topology enters the pipeline.
 	// Proxies can't be structured-cloned, which causes postMessage to the geo worker to fail.
 	const plainTopology = $state.snapshot(topology) as unknown as Topology;
 	layers.unshift({
 		id,
+		geometryId,
+		geometryEdited: false,
 		datasetId: uploadId,
 		name,
 		visible: true,
@@ -318,7 +334,7 @@ export function addUploadedLayer(name: string, topology: Topology, uploadId: str
 		geometryTypes: [],
 		bezierCacheKey: 0,
 	});
-	rawTopologyData.set(id, plainTopology);
+	rawTopologyData.set(geometryId, plainTopology);
 	runLayerPipeline(id, applyDefaults).then(() => onComplete?.());
 }
 
@@ -329,9 +345,14 @@ export function duplicateLayer(id: string): void {
 	const newId = generateId();
 
 	// Deep-copy style and processing so changes to the duplicate don't affect the original.
+	// True copy-on-write: the duplicate SHARES the source's geometryId (raw is immutable —
+	// editing either layer mints a fresh geometryId via replaceLayerGeometry, so they never
+	// alias once one diverges). The live-set GC keeps the shared raw alive as long as either
+	// layer (or a snapshot) references it.
 	const newLayer: Layer = {
 		...source,
 		id: newId,
+		geometryId: source.geometryId,
 		name: `${source.name} copy`,
 		// Reset transient state.
 		loading: false,
@@ -340,10 +361,8 @@ export function duplicateLayer(id: string): void {
 		processing: JSON.parse(JSON.stringify(source.processing)),
 	};
 
-	// Copy all topology caches so the duplicate is immediately renderable and can
-	// re-run the pipeline from raw data if the user changes processing settings.
-	const raw = rawTopologyData.get(id);
-	if (raw) rawTopologyData.set(newId, raw);
+	// Copy the derived caches (keyed by layer.id) so the duplicate is immediately renderable;
+	// raw is shared, not copied. geometryEdited is inherited via the spread above.
 	const simplified = simplifiedTopologyData.get(id);
 	if (simplified) simplifiedTopologyData.set(newId, simplified);
 	const working = workingTopologyData.get(id);
@@ -379,6 +398,70 @@ export function updateLayerStyle(id: string, patch: Partial<LayerStyle>): void {
 	if (layer) Object.assign(layer.style, patch);
 }
 
+// Replaces a layer's geometry while keeping its stable identity (layer.id). Mints a NEW
+// geometryId and writes raw under it — it NEVER overwrites an existing entry — so undo can
+// re-derive the pre-op geometry from the old geometryId, which stays alive. This is the
+// single funnel that every in-place geometry op should route through. Sync only: the raw
+// must already be in hand. History is the caller's job (pass onComplete → pushSnapshot).
+export function replaceLayerGeometry(
+	layerId: string,
+	newRaw: Topology,
+	opts?: { applyDefaults?: boolean; geometryEdited?: boolean },
+	onComplete?: () => void,
+): void {
+	const layer = layers.find((l) => l.id === layerId);
+	if (!layer) return;
+
+	// Strip any Svelte reactive Proxy so the topology can be structured-cloned to the worker.
+	const plain = $state.snapshot(newRaw) as unknown as Topology;
+	const geometryId = generateId();
+	// Immutability invariant: a fresh geometryId must never collide with an existing raw
+	// entry. If it does, ids are being reused and undo correctness is broken — fail loud.
+	if (rawTopologyData.has(geometryId)) {
+		throw new Error(`replaceLayerGeometry: geometryId ${geometryId} already exists — id reuse breaks undo`);
+	}
+	rawTopologyData.set(geometryId, plain);
+	layer.geometryId = geometryId;
+	// Default: the new geometry is a derived/edited result (must inline on save). A datasource
+	// swap overrides this to false — the geometry matches a real, re-linkable source.
+	layer.geometryEdited = opts?.geometryEdited ?? true;
+	layer.hasTopology = false;
+	layer.loading = true;
+	layer.error = null;
+	runLayerPipeline(layerId, opts?.applyDefaults ?? false).then(() => onComplete?.());
+}
+
+// Repoints an existing layer at a different dataset: swaps its raw topology and re-runs
+// the pipeline with applyDefaults=false so the layer's style/processing survive the switch.
+// The dataset may be a remote catalog entry (fetched by URL) or an in-memory uploaded one.
+// Multi-layer catalog datasets aren't switchable in place (they map to several layers).
+export function setLayerDatasource(layerId: string, datasetId: string, onComplete?: () => void): void {
+	const layer = layers.find((l) => l.id === layerId);
+	if (!layer) return;
+
+	const catalogDataset = catalog.datasets.find((d) => d.id === datasetId);
+	const uploaded = uploadedDatasets.find((u) => u.id === datasetId);
+	if (!catalogDataset && !uploaded) return;
+
+	layer.datasetId = datasetId;
+
+	if (uploaded) {
+		// Sync raw in hand → funnel mints a new geometryId, old raw stays for undo.
+		// geometryEdited:false — geometry matches the re-linkable uploaded dataset.
+		replaceLayerGeometry(layerId, uploaded.topology, { applyDefaults: false, geometryEdited: false }, onComplete);
+	} else if (catalogDataset) {
+		// Async fetch: mint a fresh geometryId up front so the resolved write lands on a new
+		// key (old raw preserved for undo). fetchTopoJSON writes under layer.geometryId.
+		layer.geometryId = generateId();
+		// Geometry matches the catalog source → re-fetchable, not inlined on save.
+		layer.geometryEdited = false;
+		layer.hasTopology = false;
+		layer.loading = true;
+		layer.error = null;
+		fetchTopoJSON(layerId, `${catalog.baseURL}/${catalogDataset.filePath}`, onComplete, false);
+	}
+}
+
 export function renameLayer(id: string, name: string): void {
 	const layer = layers.find((l) => l.id === id);
 	if (layer) layer.name = name.trim() || layer.name;
@@ -387,6 +470,16 @@ export function renameLayer(id: string, name: string): void {
 export function reorderLayers(newOrder: Layer[]): void {
 	// Replace contents in place to keep the reactive reference intact.
 	layers.splice(0, layers.length, ...newOrder);
+}
+
+// Drops raw geometry versions no longer referenced by any live layer or history snapshot.
+// rawTopologyData is append-only at runtime — every geometry op mints a new geometryId and
+// never overwrites an existing entry — so without this it grows unbounded across edits.
+// The caller (history) supplies the full live set: current layers ∪ every stacked snapshot.
+export function pruneRawTopology(liveGeometryIds: Set<string>): void {
+	for (const gid of [...rawTopologyData.keys()]) {
+		if (!liveGeometryIds.has(gid)) rawTopologyData.delete(gid);
+	}
 }
 
 export function clearLayers(): void {
@@ -448,11 +541,16 @@ function insertLayerAt(
 	processing?: LayerProcessing,
 ): void {
 	const id = generateId();
+	const geometryId = generateId();
+	// Derived layers get a unique datasetId purely as a stable provenance label; their
+	// geometry lives in rawTopologyData (by geometryId) and persists inline (geometryEdited),
+	// so there's no separate dataset to register.
 	const datasetId = generateId();
 	const plainTopology = $state.snapshot(topology) as unknown as Topology;
-	registerDataset(datasetId, plainTopology);
 	layers.splice(index, 0, {
 		id,
+		geometryId,
+		geometryEdited: true,
 		datasetId,
 		name,
 		visible: true,
@@ -464,7 +562,7 @@ function insertLayerAt(
 		geometryTypes: [],
 		bezierCacheKey: 0,
 	});
-	rawTopologyData.set(id, plainTopology);
+	rawTopologyData.set(geometryId, plainTopology);
 	runLayerPipeline(id, style === null).then(() => onComplete?.());
 }
 
@@ -496,12 +594,15 @@ export function bakeLayerForEdit(sourceId: string, onReady: (newId: string) => v
 	// source layer's cached geometry.
 	const baked = topologyToAbsolute(working);
 	const id = generateId();
+	const geometryId = generateId();
+	// datasetId is a provenance label only; the baked geometry lives in rawTopologyData.
 	const datasetId = generateId();
-	registerDataset(datasetId, baked);
 
 	const index = layers.findIndex((l) => l.id === sourceId);
 	layers.splice(index, 0, {
 		id,
+		geometryId,
+		geometryEdited: true,
 		datasetId,
 		name: `${source.name} (edited)`,
 		visible: true,
@@ -513,22 +614,19 @@ export function bakeLayerForEdit(sourceId: string, onReady: (newId: string) => v
 		geometryTypes: [],
 		bezierCacheKey: 0,
 	});
-	rawTopologyData.set(id, baked);
+	rawTopologyData.set(geometryId, baked);
 	runLayerPipeline(id, false).then(() => onReady(id));
 }
 
-// Commits an edited draft as a NEW layer replacing the one being edited: removes the
-// source (its raw stays in the caches so undo can re-derive the pre-edit geometry) and
-// inserts a fresh layer with the draft as raw at the same z-index, name, and style. The
-// new id is what keeps vertex editing undoable.
+// Commits an edited draft as the layer's new geometry. Swaps geometry in place (same
+// layer.id → no flash; the pre-edit raw stays alive under the previous geometryId so undo
+// re-derives it). Editing bakes simplification/Chaikin into the vertices, but bezier stays
+// a live render, so processing keeps bezier and resets the rest.
 export function commitEditedLayer(sourceId: string, draftTopo: Topology, onComplete?: () => void): void {
-	const source = layers.find((l) => l.id === sourceId);
-	if (!source) { onComplete?.(); return; }
-	const index = layers.findIndex((l) => l.id === sourceId);
-	const { name, style } = source;
-	const processing = processingForEdit(source);
-	removeLayer(sourceId);
-	insertLayerAt(name, draftTopo, index, style, onComplete, processing);
+	const layer = layers.find((l) => l.id === sourceId);
+	if (!layer) { onComplete?.(); return; }
+	layer.processing = processingForEdit(layer);
+	replaceLayerGeometry(sourceId, draftTopo, { applyDefaults: false }, onComplete);
 }
 
 export function dissolveLayer(layerId: string, field: string | null, onComplete?: () => void): void {
@@ -536,15 +634,19 @@ export function dissolveLayer(layerId: string, field: string | null, onComplete?
 	const topo = workingTopologyData.get(layerId);
 	if (!layer || !topo) return;
 
-	const index = layers.findIndex(l => l.id === layerId);
 	const inputFiles = { 'input.topojson': JSON.stringify(topo) };
 	const cmd = `-i input.topojson -dissolve${field ? ` ${field}` : ''} -o output.topojson format=topojson`;
 
 	runMapshaper(cmd, inputFiles).then(output => {
 		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
-		removeLayer(layerId);
-		insertLayerAt(layer.name, result, index, layer.style, onComplete);
+		// The dissolve ran on already-processed working geometry, so simplification/smoothing
+		// is baked into the result. Reset processing to defaults so the pipeline doesn't apply
+		// it again, then swap geometry in place: same layer.id keeps selection / table / edit
+		// session valid and avoids an accordion remount, while the old raw stays alive (under
+		// the previous geometryId) so undo can re-derive the pre-dissolve geometry.
+		layer.processing = defaultProcessing();
+		replaceLayerGeometry(layerId, result, { applyDefaults: false }, onComplete);
 	});
 }
 
@@ -553,15 +655,16 @@ export function explodeLayer(layerId: string, onComplete?: () => void): void {
 	const topo = workingTopologyData.get(layerId);
 	if (!layer || !topo) return;
 
-	const index = layers.findIndex(l => l.id === layerId);
 	const inputFiles = { 'input.topojson': JSON.stringify(topo) };
 	const cmd = `-i input.topojson -explode -o output.topojson format=topojson`;
 
 	runMapshaper(cmd, inputFiles).then(output => {
 		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
-		removeLayer(layerId);
-		insertLayerAt(layer.name, result, index, layer.style, onComplete);
+		// In-place geometry swap (same layer.id → no remount/flash, old raw kept for undo).
+		// Result is built from already-processed working geometry, so reset processing.
+		layer.processing = defaultProcessing();
+		replaceLayerGeometry(layerId, result, { applyDefaults: false }, onComplete);
 	});
 }
 
@@ -574,7 +677,6 @@ export function clipByPolygon(targetIds: string[], maskId: string, onComplete?: 
 			id,
 			layer: layers.find(l => l.id === id),
 			topo: workingTopologyData.get(id),
-			index: layers.findIndex(l => l.id === id),
 		}))
 		.filter((t): t is typeof t & { layer: Layer; topo: Topology } => !!(t.layer && t.topo));
 
@@ -597,8 +699,11 @@ export function clipByPolygon(targetIds: string[], maskId: string, onComplete?: 
 		let remaining = valid.length;
 		const afterEach = () => { if (--remaining === 0) onComplete?.(); };
 		for (const r of valid) {
-			removeLayer(r.t.id);
-			insertLayerAt(`${r.t.layer.name} (clipped)`, r.result, r.t.index, r.t.layer.style, afterEach);
+			// Swap geometry in place (same id → no flash, old raw kept for undo); reset
+			// processing since the clip ran on already-processed working geometry.
+			r.t.layer.processing = defaultProcessing();
+			r.t.layer.name = `${r.t.layer.name} (clipped)`;
+			replaceLayerGeometry(r.t.id, r.result, { applyDefaults: false }, afterEach);
 		}
 	});
 }
@@ -628,7 +733,6 @@ export function clipByBbox(layerIds: string[], bbox: [number, number, number, nu
 			id,
 			layer: layers.find(l => l.id === id),
 			topo: workingTopologyData.get(id),
-			index: layers.findIndex(l => l.id === id),
 		}))
 		.filter((t): t is typeof t & { layer: Layer; topo: Topology } => !!(t.layer && t.topo));
 
@@ -653,8 +757,10 @@ export function clipByBbox(layerIds: string[], bbox: [number, number, number, nu
 		let remaining = valid.length;
 		const afterEach = () => { if (--remaining === 0) onComplete?.(); };
 		for (const r of valid) {
-			removeLayer(r.t.id);
-			insertLayerAt(`${r.t.layer.name} (clipped)`, r.result, r.t.index, r.t.layer.style, afterEach);
+			// In-place swap (same id → no flash, old raw kept for undo); reset processing.
+			r.t.layer.processing = defaultProcessing();
+			r.t.layer.name = `${r.t.layer.name} (clipped)`;
+			replaceLayerGeometry(r.t.id, r.result, { applyDefaults: false }, afterEach);
 		}
 	});
 }
@@ -665,7 +771,6 @@ export function differenceLayers(targetId: string, maskId: string, onComplete?: 
 	const maskTopo = workingTopologyData.get(maskId);
 	if (!targetLayer || !targetTopo || !maskTopo) return;
 
-	const index = layers.findIndex(l => l.id === targetId);
 	const inputFiles = {
 		'layer0.topojson': JSON.stringify(withRenamedObject(targetTopo, 'layer0')),
 		'layer1.topojson': JSON.stringify(withRenamedObject(maskTopo, 'layer1')),
@@ -675,8 +780,11 @@ export function differenceLayers(targetId: string, maskId: string, onComplete?: 
 	runMapshaper(cmd, inputFiles).then(output => {
 		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
-		removeLayer(targetId);
-		insertLayerAt(`${targetLayer.name} (subtracted)`, result, index, targetLayer.style, onComplete);
+		// In-place swap on the target (same id → no flash, old raw kept for undo); reset
+		// processing since the erase ran on already-processed working geometry.
+		targetLayer.processing = defaultProcessing();
+		targetLayer.name = `${targetLayer.name} (subtracted)`;
+		replaceLayerGeometry(targetId, result, { applyDefaults: false }, onComplete);
 	});
 }
 
@@ -685,15 +793,16 @@ export function mosaicLayer(layerId: string, onComplete?: () => void): void {
 	const topo = workingTopologyData.get(layerId);
 	if (!layer || !topo) return;
 
-	const index = layers.findIndex(l => l.id === layerId);
 	const inputFiles = { 'input.topojson': JSON.stringify(topo) };
 	const cmd = `-i input.topojson -mosaic -o output.topojson format=topojson`;
 
 	runMapshaper(cmd, inputFiles).then(output => {
 		if (!output) return;
 		const result = JSON.parse(output['output.topojson']) as Topology;
-		removeLayer(layerId);
-		insertLayerAt(`${layer.name} (mosaic)`, result, index, layer.style, onComplete);
+		// In-place swap (same id → no flash, old raw kept for undo); reset processing.
+		layer.processing = defaultProcessing();
+		layer.name = `${layer.name} (mosaic)`;
+		replaceLayerGeometry(layerId, result, { applyDefaults: false }, onComplete);
 	});
 }
 
@@ -779,13 +888,12 @@ export function deleteSelectedFeatures(
 	onComplete?: () => void,
 ): void {
 	const layer = layers.find((l) => l.id === layerId);
-	const rawTopo = rawTopologyData.get(layerId);
-	if (!layer || !rawTopo) return;
+	if (!layer) return;
+	const rawTopo = rawTopologyData.get(layer.geometryId);
+	if (!rawTopo) return;
 
-	const index = layers.findIndex((l) => l.id === layerId);
-
-	// Clone raw and drop the selected geometries. We filter raw (not working) so
-	// the new layer's preserved processing re-derives the same simplification.
+	// Clone raw and drop the selected geometries. We filter raw (not working) so the layer's
+	// preserved processing re-derives the same simplification on the reduced geometry.
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const newTopo = JSON.parse(JSON.stringify(rawTopo)) as typeof rawTopo;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -794,11 +902,10 @@ export function deleteSelectedFeatures(
 	anyTopo.objects[objectName].geometries = anyTopo.objects[objectName].geometries
 		.filter((_: unknown, i: number) => !featureIndices.has(i));
 
-	// Model delete like the other geometry ops: drop the old layer (its raw stays
-	// in the Maps so undo can restore it) and insert a new layer id holding the
-	// reduced geometry, preserving the original style and processing.
-	removeLayer(layerId);
-	insertLayerAt(layer.name, newTopo, index, layer.style, onComplete, layer.processing);
+	// Swap geometry in place (same layer.id → no flash; the pre-delete raw stays alive under
+	// the previous geometryId so undo restores it). Unlike the other ops, processing is NOT
+	// reset — the reduced geometry is still raw, so the same simplification should re-apply.
+	replaceLayerGeometry(layerId, newTopo, { applyDefaults: false }, onComplete);
 }
 
 function geometryFamily(type: string): string {

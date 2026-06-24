@@ -63,6 +63,14 @@ export interface LayerStyle {
 
 export interface Layer {
 	id: string;
+	// Stable identity. All UI and derived caches (simplified/working topology) key off this.
+	// geometryId is the version key for the immutable raw geometry store — a geometry op
+	// mints a NEW geometryId while keeping id, so identity stays put across edits.
+	geometryId: string;
+	// True once the layer's geometry has been replaced (op or edit) so it no longer matches
+	// its original source. Drives persistence: unedited catalog/upload layers re-fetch or
+	// re-link by datasetId; edited/derived layers inline their raw geometry into the project.
+	geometryEdited: boolean;
 	datasetId: string;
 	name: string;
 	visible: boolean;

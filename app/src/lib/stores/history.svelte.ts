@@ -1,4 +1,4 @@
-import { layers, runLayerPipeline } from './layers.svelte';
+import { layers, runLayerPipeline, pruneRawTopology } from './layers.svelte';
 import { pruneUploadedDatasets } from './uploadedDatasets.svelte';
 import { projection } from './projection.svelte';
 import { canvasStyles } from './canvasStyles.svelte';
@@ -12,6 +12,8 @@ const MAX_HISTORY = 50;
 
 interface SnapshotLayer {
 	id: string;
+	geometryId: string;
+	geometryEdited: boolean;
 	datasetId: string;
 	name: string;
 	visible: boolean;
@@ -38,6 +40,8 @@ function capture(): Snapshot {
 	return {
 		layers: layers.map((l) => ({
 			id: l.id,
+			geometryId: l.geometryId,
+			geometryEdited: l.geometryEdited,
 			datasetId: l.datasetId,
 			name: l.name,
 			visible: l.visible,
@@ -54,23 +58,50 @@ function capture(): Snapshot {
 	};
 }
 
+// Bezier is a live render from working geometry (rebuilt by the path cache on bezierCacheKey
+// change), not part of the topology pipeline — so bezier-only changes never need a re-derive.
+const BEZIER_KEYS = [
+	'bezierEnabled', 'bezierCurveType', 'bezierTension', 'bezierAlpha', 'bezierContinuity', 'bezierBias',
+] as const;
+
+// Signature of the pipeline-affecting (simplification + Chaikin) processing fields. Two
+// layers with the same geometryId and the same signature already share working geometry.
+function pipelineSig(p: LayerProcessing): string {
+	const o: Record<string, unknown> = { ...p };
+	for (const k of BEZIER_KEYS) delete o[k];
+	return JSON.stringify(o);
+}
+
 function restore(snapshot: Snapshot): void {
-	// Splice layers in place to keep the reactive reference intact.
-	// processing is spread explicitly so later Object.assign calls in
-	// updateLayerProcessing don't mutate the snapshot through a shared reference.
-	// hasTopology is forced to false so the pathCache effect drops the stale
-	// entry; runLayerPipeline below will set it back to true once the working
-	// topology is rebuilt from the restored processing settings.
+	// A restored layer can keep its on-screen geometry — no hasTopology blank, no pipeline
+	// re-run — when it still exists with the same geometry version and the same pipeline
+	// processing. This makes undo/redo of pure metadata (and bezier-only) changes instant
+	// instead of re-deriving every layer. Geometry-affecting changes still re-derive.
+	const currentById = new Map(layers.map((l) => [l.id, l]));
+	const plans = snapshot.layers.map((sl) => {
+		const cur = currentById.get(sl.id);
+		const keepGeometry =
+			!!cur &&
+			cur.hasTopology &&
+			cur.geometryId === sl.geometryId &&
+			pipelineSig(cur.processing) === pipelineSig(sl.processing);
+		return { sl, keepGeometry };
+	});
+
+	// Splice layers in place to keep the reactive reference intact. processing is spread
+	// explicitly so later Object.assign calls in updateLayerProcessing don't mutate the
+	// snapshot through a shared reference. For re-derived layers hasTopology is forced false
+	// so the pathCache drops the stale entry; runLayerPipeline below restores it.
 	layers.splice(
 		0,
 		layers.length,
-		...snapshot.layers.map((sl) => ({
+		...plans.map(({ sl, keepGeometry }) => ({
 			...sl,
 			style: { ...sl.style },
 			processing: { ...sl.processing },
 			geometryTypes: [...sl.geometryTypes],
-			hasTopology: false,
-			loading: sl.hasTopology,
+			hasTopology: keepGeometry,
+			loading: keepGeometry ? false : sl.hasTopology,
 			bezierCacheKey: sl.bezierCacheKey ?? 0,
 		}))
 	);
@@ -78,10 +109,9 @@ function restore(snapshot: Snapshot): void {
 	canvasStyles.background.hex = snapshot.bgHex;
 	canvasStyles.background.alpha = snapshot.bgAlpha;
 
-	// Re-run the pipeline for every layer that had data in the snapshot so
-	// workingTopologyData reflects the restored processing settings.
-	for (const sl of snapshot.layers) {
-		if (sl.hasTopology) {
+	// Re-derive only the layers whose geometry actually changed (and that had data).
+	for (const { sl, keepGeometry } of plans) {
+		if (!keepGeometry && sl.hasTopology) {
 			runLayerPipeline(sl.id, false);
 		}
 	}
@@ -103,6 +133,15 @@ export function historyVersion() { return version; }
 // Public API
 // ---------------------------------------------------------------------------
 
+// Every geometryId referenced by a live layer or any stacked snapshot. Raw geometry outside
+// this set is orphaned and can be freed — see pruneRawTopology.
+function liveGeometryIds(): Set<string> {
+	const ids = new Set<string>();
+	for (const l of layers) ids.add(l.geometryId);
+	for (const snap of stack) for (const sl of snap.layers) ids.add(sl.geometryId);
+	return ids;
+}
+
 // Call this AFTER each committed action with the resulting state.
 // Clears the redo tail, deduplicates, and caps the stack at MAX_HISTORY.
 export function pushSnapshot(): void {
@@ -113,17 +152,22 @@ export function pushSnapshot(): void {
 		stack.splice(pointer + 1);
 	}
 
-	// Deduplicate — skip if nothing actually changed.
-	if (pointer >= 0 && JSON.stringify(snap) === JSON.stringify(stack[pointer])) return;
+	// Deduplicate — skip pushing if nothing actually changed (but the redo tail was still
+	// cleared above, so we always GC below).
+	const isDuplicate = pointer >= 0 && JSON.stringify(snap) === JSON.stringify(stack[pointer]);
+	if (!isDuplicate) {
+		stack.push(snap);
 
-	stack.push(snap);
+		// Keep the stack capped, dropping the oldest entries first.
+		if (stack.length > MAX_HISTORY) {
+			stack.splice(0, stack.length - MAX_HISTORY);
+		}
 
-	// Keep the stack capped, dropping the oldest entries first.
-	if (stack.length > MAX_HISTORY) {
-		stack.splice(0, stack.length - MAX_HISTORY);
+		pointer = stack.length - 1;
 	}
 
-	pointer = stack.length - 1;
+	// Dropping the redo tail and/or capping the stack can orphan raw geometry versions.
+	pruneRawTopology(liveGeometryIds());
 }
 
 export function undo(): void {
@@ -160,4 +204,6 @@ export function redo(): void {
 export function clearHistory(): void {
 	stack.splice(0, stack.length);
 	pointer = -1;
+	// No snapshots left — keep only raw still referenced by current layers.
+	pruneRawTopology(liveGeometryIds());
 }

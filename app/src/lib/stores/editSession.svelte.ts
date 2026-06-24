@@ -468,10 +468,41 @@ export function exitEditing(): void {
 	const layerId = editSession.activeLayerId;
 	const wasEdited = editSession.edited;
 	const committedDraft = draft;
-	clearSession();
 	if (layerId && wasEdited && committedDraft) {
-		commitEditedLayer(layerId, committedDraft, () => pushSnapshot());
+		// Keep the session (and its draft overlay) rendering until the committed geometry is
+		// fully on screen. Otherwise we'd clear the draft and render the stale pre-edit path
+		// cache during the async rebuild — a brief flash of the un-edited geometry.
+		commitEditedLayer(layerId, committedDraft, () => {
+			clearSessionWhenPathsReady(layerId);
+			pushSnapshot();
+		});
+	} else {
+		clearSession();
 	}
+}
+
+// After a commit, the pipeline re-derives working geometry, then the canvas worker rebuilds
+// the path cache; layer.loading flips false only once those paths are actually in the cache.
+// Hold the draft overlay until then so the swap is seamless, with a timeout safety net so a
+// layer whose paths never settle can't strand us in edit mode.
+function clearSessionWhenPathsReady(layerId: string): void {
+	const layer = layers.find((l) => l.id === layerId);
+	if (!layer || !layer.loading) { clearSession(); return; }
+
+	let disposed = false;
+	function finish(): void {
+		if (disposed) return;
+		disposed = true;
+		clearTimeout(timer);
+		dispose();
+		clearSession();
+	}
+	const timer = setTimeout(finish, 1000);
+	const dispose = $effect.root(() => {
+		$effect(() => {
+			if (!layer!.loading) finish();
+		});
+	});
 }
 
 // Discards the in-session vertex edits without committing — the layer reverts to its
