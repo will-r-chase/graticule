@@ -313,6 +313,37 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 	}
 }
 
+// Creates an empty layer with no datasource — the user picks one afterwards via the Data tab.
+// No geometry, no pipeline run; datasetId is '' until a source is set. Returns the new id so
+// the caller can select it, open its Data tab, and start renaming.
+export function addEmptyLayer(): string {
+	const id = generateId();
+	// Name "Layer N" where N is one past the highest existing "Layer N" — never duplicates a
+	// visible name, even after deletes.
+	const usedNumbers = layers
+		.map((l) => /^Layer (\d+)$/.exec(l.name))
+		.filter((m): m is RegExpExecArray => m !== null)
+		.map((m) => parseInt(m[1], 10));
+	const n = usedNumbers.length > 0 ? Math.max(...usedNumbers) + 1 : 1;
+
+	layers.unshift({
+		id,
+		geometryId: generateId(),
+		geometryEdited: false,
+		datasetId: '',
+		name: `Layer ${n}`,
+		visible: true,
+		loading: false,
+		error: null,
+		hasTopology: false,
+		style: defaultStyle(),
+		processing: defaultProcessing(),
+		geometryTypes: [],
+		bezierCacheKey: 0,
+	});
+	return id;
+}
+
 export function addUploadedLayer(name: string, topology: Topology, uploadId: string, applyDefaults = true, onComplete?: () => void, style?: LayerStyle): void {
 	const id = generateId();
 	const geometryId = generateId();
@@ -443,12 +474,17 @@ export function setLayerDatasource(layerId: string, datasetId: string, onComplet
 	const uploaded = uploadedDatasets.find((u) => u.id === datasetId);
 	if (!catalogDataset && !uploaded) return;
 
+	// A fresh empty layer (no source yet) gets geometry-aware style defaults applied for its
+	// new type, like a normal add. A real switch on an already-sourced layer preserves the
+	// user's existing style/processing (the point of the Data-tab feature).
+	const applyDefaults = layer.datasetId === '';
+
 	layer.datasetId = datasetId;
 
 	if (uploaded) {
 		// Sync raw in hand → funnel mints a new geometryId, old raw stays for undo.
 		// geometryEdited:false — geometry matches the re-linkable uploaded dataset.
-		replaceLayerGeometry(layerId, uploaded.topology, { applyDefaults: false, geometryEdited: false }, onComplete);
+		replaceLayerGeometry(layerId, uploaded.topology, { applyDefaults, geometryEdited: false }, onComplete);
 	} else if (catalogDataset) {
 		// Async fetch: mint a fresh geometryId up front so the resolved write lands on a new
 		// key (old raw preserved for undo). fetchTopoJSON writes under layer.geometryId.
@@ -458,7 +494,7 @@ export function setLayerDatasource(layerId: string, datasetId: string, onComplet
 		layer.hasTopology = false;
 		layer.loading = true;
 		layer.error = null;
-		fetchTopoJSON(layerId, `${catalog.baseURL}/${catalogDataset.filePath}`, onComplete, false);
+		fetchTopoJSON(layerId, `${catalog.baseURL}/${catalogDataset.filePath}`, onComplete, applyDefaults);
 	}
 }
 

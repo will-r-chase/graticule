@@ -5,6 +5,7 @@
 		id: string;
 		label: string;
 		group?: string;
+		italic?: boolean;
 	}
 
 	let {
@@ -12,11 +13,15 @@
 		value = $bindable(''),
 		placeholder = 'Search...',
 		direction = 'down',
+		disabled = false,
+		onchange,
 	}: {
 		options: Option[];
 		value: string;
 		placeholder?: string;
 		direction?: 'up' | 'down';
+		disabled?: boolean;
+		onchange?: (id: string) => void;
 	} = $props();
 
 	let open = $state(false);
@@ -24,11 +29,27 @@
 	let highlightedIndex = $state(-1);
 
 	let containerEl = $state<HTMLDivElement | null>(null);
+	let triggerEl = $state<HTMLDivElement | null>(null);
 	let inputEl = $state<HTMLInputElement | null>(null);
 	let listEl = $state<HTMLUListElement | null>(null);
 
+	// The dropdown renders position:fixed (computed from the trigger rect) so it escapes any
+	// ancestor `overflow: hidden` — e.g. the layer accordion that clips its rounded corners.
+	let menuStyle = $state('');
+	$effect(() => {
+		if (!open || !triggerEl) return;
+		const rect = triggerEl.getBoundingClientRect();
+		const gap = 4;
+		if (direction === 'up') {
+			menuStyle = `bottom: ${window.innerHeight - rect.top + gap}px; left: ${rect.left}px; width: ${rect.width}px;`;
+		} else {
+			menuStyle = `top: ${rect.bottom + gap}px; left: ${rect.left}px; width: ${rect.width}px;`;
+		}
+	});
+
 	// Label of the currently selected option, shown when the dropdown is closed.
 	let selectedLabel = $derived(options.find((o) => o.id === value)?.label ?? '');
+	let selectedItalic = $derived(options.find((o) => o.id === value)?.italic ?? false);
 
 	// Options filtered by the current search string.
 	let filteredOptions = $derived(
@@ -74,9 +95,11 @@
 		open = false;
 		search = '';
 		highlightedIndex = -1;
+		onchange?.(option.id);
 	}
 
 	function handleInputClick() {
+		if (disabled) return;
 		open = true;
 		search = '';
 		highlightedIndex = -1;
@@ -111,15 +134,17 @@
 </script>
 
 <div class="combobox" bind:this={containerEl}>
-	<div class="trigger" onclick={handleInputClick}>
+	<div class="trigger" class:disabled bind:this={triggerEl} onclick={handleInputClick}>
 		<input
-			class="mono-regular"
+			class="body-regular"
+			class:italic={!open && selectedItalic}
 			bind:this={inputEl}
 			type="text"
 			value={open ? search : selectedLabel}
 			oninput={handleInput}
 			onkeydown={handleKeydown}
 			{placeholder}
+			{disabled}
 			role="combobox"
 			aria-expanded={open}
 			aria-autocomplete="list"
@@ -134,7 +159,7 @@
 	</div>
 
 	{#if open}
-		<ul class="dropdown" class:up={direction === 'up'} bind:this={listEl} role="listbox">
+		<ul class="dropdown" style={menuStyle} bind:this={listEl} role="listbox">
 			{#if filteredOptions.length === 0}
 				<li class="empty mono-small">No results</li>
 			{:else}
@@ -149,6 +174,7 @@
 							aria-selected={option.id === value}
 							data-index={flatIndex}
 							class="body-regular"
+							class:italic={option.italic}
 							class:highlighted={flatIndex === highlightedIndex}
 							class:selected={option.id === value}
 							onclick={() => select(option)}
@@ -187,6 +213,15 @@
 		outline-offset: -1px;
 	}
 
+	.trigger.disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.trigger.disabled input {
+		cursor: not-allowed;
+	}
+
 	input {
 		flex: 1;
 		height: 100%;
@@ -221,15 +256,7 @@
 	}
 
 	.dropdown {
-		position: absolute;
-		top: calc(100% + var(--space-xs));
-		left: 0;
-		right: 0;
-	}
-
-	.dropdown.up {
-		top: auto;
-		bottom: calc(100% + var(--space-xs));
+		position: fixed;
 		max-height: 280px;
 		overflow-y: auto;
 		background-color: var(--color-surface-primary);
@@ -277,5 +304,9 @@
 	.empty {
 		padding: var(--space-m);
 		color: var(--color-text-tertiary);
+	}
+
+	.italic {
+		font-style: italic;
 	}
 </style>

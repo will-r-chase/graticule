@@ -2,15 +2,15 @@
 	import { setContext } from 'svelte';
 	import { dragHandleZone, DRAGGED_ELEMENT_ID } from 'svelte-dnd-action';
 	import type { Layer } from '$lib/types';
-	import { layers, reorderLayers, layerDrag } from '$lib/stores/layers.svelte';
-	import { layerSelection, clearLayerSelection } from '$lib/stores/layerSelection.svelte';
+	import { layers, reorderLayers, layerDrag, addEmptyLayer } from '$lib/stores/layers.svelte';
+	import { layerSelection, clearLayerSelection, selectLayer, startLayerEdit } from '$lib/stores/layerSelection.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import LayerItem from './LayerItem.svelte';
 	import FeaturesPanel from './FeaturesPanel.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
 	import { featuresTable, openFeaturesTable, closeFeaturesTable } from '$lib/stores/featuresTable.svelte';
 	import { stylePanel } from '$lib/stores/stylePanel.svelte';
-	import { Table } from 'phosphor-svelte';
+	import { Table, Plus } from 'phosphor-svelte';
 
 	let layerListEl = $state<HTMLDivElement | null>(null);
 	let hasBottomScroll = $state(false);
@@ -34,6 +34,16 @@
 		};
 	});
 
+	// Create an empty layer, select it, open its Data tab, and start renaming with the
+	// default name highlighted so the user can immediately rename and pick a source.
+	function createEmptyLayer(): void {
+		const id = addEmptyLayer();
+		selectLayer(id);
+		stylePanel.openWithDataTab(id);
+		startLayerEdit(id);
+		pushSnapshot();
+	}
+
 	function toggleTable(): void {
 		if (featuresTable.open) {
 			closeFeaturesTable();
@@ -54,6 +64,7 @@
 	setContext('stylePanel', {
 		get openId() { return stylePanel.openId; },
 		toggle(id: string) { stylePanel.toggle(id); },
+		consumePendingDataTab(id: string) { return stylePanel.consumePendingDataTab(id); },
 		get pickerOpen() { return pickerOpen; },
 		setPickerOpen(open: boolean) { pickerOpen = open; },
 	});
@@ -113,8 +124,16 @@
 
 <div class="layers-panel">
 	<div class="layers-section" onclick={clearLayerSelection}>
-		<div class="panel-header">
+		<div class="panel-header layers-header">
 			<h3>Layers</h3>
+			<button
+				class="icon-btn"
+				title="New layer"
+				aria-label="New layer"
+				onclick={(e) => { e.stopPropagation(); createEmptyLayer(); }}
+			>
+				<Plus size={16} />
+			</button>
 		</div>
 
 		{#if layers.length === 0}
@@ -193,7 +212,8 @@
 		flex-shrink: 0;
 	}
 
-	.features-header {
+	.features-header,
+	.layers-header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;

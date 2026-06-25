@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getContext } from 'svelte';
+	import { getContext, tick } from 'svelte';
 	import { Eye, EyeSlash, DotsThree, SlidersHorizontal, CircleNotch, CopySimple, PencilSimple, Trash, Table } from 'phosphor-svelte';
 	import { dragHandle } from 'svelte-dnd-action';
 	import DropdownMenu from '$lib/components/ui/DropdownMenu.svelte';
@@ -11,12 +11,14 @@
 	import { openFeaturesTable } from '$lib/stores/featuresTable.svelte';
 	import LayerStylePanel from './LayerStylePanel.svelte';
 	import LayerProcessingPanel from './LayerProcessingPanel.svelte';
+	import LayerDataPanel from './LayerDataPanel.svelte';
 
 	let { layer }: { layer: Layer } = $props();
 
 	interface StylePanelCtx {
 		readonly openId: string | null;
 		toggle(id: string): void;
+		consumePendingDataTab(id: string): boolean;
 	}
 	const styleCtx = getContext<StylePanelCtx>('stylePanel');
 	let styleOpen = $derived(styleCtx.openId === layer.id);
@@ -43,7 +45,10 @@
 		}
 	}
 
-	let activeTab = $state<'style' | 'simplification'>('style');
+	// A freshly-created empty layer opens straight to the Data tab (consumed once on mount).
+	let activeTab = $state<'style' | 'simplification' | 'data'>(
+		styleCtx.consumePendingDataTab(layer.id) ? 'data' : 'style'
+	);
 	let editing = $derived(layerSelection.editingId === layer.id);
 
 	let showSpinner = $state(false);
@@ -67,12 +72,15 @@
 		if (!isSelected && styleOpen) styleCtx.toggle(layer.id);
 	});
 
-	// Focus the input and select all text once when it first mounts.
+	// On entering edit mode, seed the draft with the current name and select all text — so a
+	// programmatic start (e.g. a freshly-created layer) behaves like a double-click rename:
+	// the default name is shown, highlighted, ready to overwrite. tick() lets the bound value
+	// reach the input before we select it.
 	$effect(() => {
-		if (editing && inputEl) {
-			inputEl.focus();
-			inputEl.select();
-		}
+		if (!editing || !inputEl) return;
+		draft = layer.name;
+		const el = inputEl;
+		tick().then(() => { el.focus(); el.select(); });
 	});
 
 	// Commit the edit when a pointerdown fires outside the input.
@@ -293,12 +301,19 @@
 					class:active={activeTab === 'simplification'}
 					onclick={() => activeTab = 'simplification'}
 				>Simplify</button>
+				<button
+					class="tab-btn body-regular"
+					class:active={activeTab === 'data'}
+					onclick={() => activeTab = 'data'}
+				>Data</button>
 			</div>
 			{#key historyVersion()}
 				{#if activeTab === 'style'}
 					<LayerStylePanel {layer} onclose={() => { pushSnapshot(); styleCtx.toggle(layer.id); }} />
-				{:else}
+				{:else if activeTab === 'simplification'}
 					<LayerProcessingPanel {layer} />
+				{:else}
+					<LayerDataPanel {layer} />
 				{/if}
 			{/key}
 		</div>
