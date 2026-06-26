@@ -14,7 +14,7 @@
 	import { hoveredFeature } from '$lib/stores/hoveredFeature.svelte';
 	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, cancelEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, getPointCoord, translatePoints, recordPointMoves, setVertexSelection, type DragMember, type PointMember } from '$lib/stores/editSession.svelte';
 	import { featureArcIndices } from '$lib/utils/topology';
-	import { drawSession, getDrawPoints, placePoint, cancelDraw, commitDraw, resetDrawTarget, cancelPicking } from '$lib/stores/drawSession.svelte';
+	import { drawSession, getCommitted, getActivePath, placeVertex, finishActive, finishActiveFromDoubleClick, enterDraw, escapeDraw, commitDraw, resetDrawTarget, cancelPicking, setDrawDensifier } from '$lib/stores/drawSession.svelte';
 	import { buildBezierArcs, arcRingToPath } from '$lib/utils/bezier';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
@@ -66,6 +66,9 @@
 	// Drag tracking — plain vars, no reactivity needed.
 	let isDragging = $state(false); // $state so canvas cursor class updates
 	let spacePanning = $state(false); // Space held in select mode → temporary pan
+	// Cursor position (CSS px, canvas-relative) while drawing a line/polygon, for the
+	// rubber-band preview from the last placed vertex. Null when not applicable.
+	let drawHover = $state<{ x: number; y: number } | null>(null);
 	let metaHeld = $state(false);     // Cmd/Ctrl held → marquee mode in edit (no marker/feature cursor)
 	let lastPointerX = 0;
 	let lastPointerY = 0;
@@ -450,6 +453,39 @@
 		return projection.invert?.([px, py]) ?? null;
 	}
 
+	// Densifies a lon/lat polyline so each edge stays straight on the CURRENT projection.
+	// Projection space is affine to screen, so lerping between the projected endpoints traces
+	// the screen-straight line; inverting the samples gives lon/lat points that re-trace it.
+	// Endpoints are kept exact (the originals); only interiors are sampled. Registered with the
+	// draw session so the commit can bake straight edges in (the WYSIWYG behaviour).
+	function densifyForCommit(coords: readonly [number, number][]): [number, number][] {
+		if (!projection || coords.length < 2) return coords.map((c) => [c[0], c[1]]);
+		const inv = projection.invert;
+		const out: [number, number][] = [];
+		for (let i = 0; i < coords.length - 1; i++) {
+			const a = coords[i];
+			const b = coords[i + 1];
+			out.push([a[0], a[1]]);
+			const pa = projection(a as [number, number]);
+			const pb = projection(b as [number, number]);
+			if (pa && pb && inv) {
+				const dx = pb[0] - pa[0];
+				const dy = pb[1] - pa[1];
+				const screenLen = Math.hypot(dx, dy) * mapScale;
+				const k = Math.min(64, Math.max(1, Math.round(screenLen / 8)));
+				for (let s = 1; s < k; s++) {
+					const t = s / k;
+					const g = inv([pa[0] + dx * t, pa[1] + dy * t]);
+					if (g) out.push([g[0], g[1]]);
+				}
+			}
+		}
+		const lastC = coords[coords.length - 1];
+		out.push([lastC[0], lastC[1]]);
+		return out;
+	}
+	setDrawDensifier(densifyForCommit);
+
 	// Nearest draft vertex of the targeted feature within VERTEX_HIT_RADIUS, or null.
 	function hitVertex(clientX: number, clientY: number): { arcIndex: number; vertexIndex: number } | null {
 		const draft = getDraft();
@@ -798,9 +834,32 @@
 
 		if (toolState.active === 'draw') {
 			if (spacePanning) return; // space-pan in progress — don't place
-			if (drawSession.picking) return; // picker armed — canvas clicks don't place points
+			if (drawSession.picking) return; // picker armed — canvas clicks don't place vertices
+			// Clicking on an endpoint of the active path finishes it — an alternative to
+			// double-click. A polygon closes on its FIRST vertex (where the closing edge lands);
+			// a line finishes on its LAST (terminal) vertex. Both endpoints work for polygons.
+			if (drawSession.drawType !== 'point' && drawSession.activeCount > 0 && projection && canvasEl) {
+				const active = getActivePath();
+				const proj = projection;
+				const rect = canvasEl.getBoundingClientRect();
+				const cx = e.clientX - rect.left;
+				const cy = e.clientY - rect.top;
+				const near = (coord: readonly [number, number]): boolean => {
+					const p = proj(coord as [number, number]);
+					if (!p) return false;
+					return Math.hypot(p[0] * mapScale + tx - cx, p[1] * mapScale + ty - cy) <= 8;
+				};
+				const hitClose =
+					drawSession.drawType === 'polygon'
+						? near(active[0]) || near(active[active.length - 1])
+						: near(active[active.length - 1]);
+				if (hitClose) {
+					finishActive(); // no-op if below the min vertex count
+					return;
+				}
+			}
 			const geo = screenToGeo(e.clientX, e.clientY);
-			if (geo) placePoint(geo[0], geo[1]); // null = clicked off-globe; ignore
+			if (geo) placeVertex(geo[0], geo[1]); // null = clicked off-globe; ignore
 			return;
 		}
 
@@ -863,6 +922,12 @@
 	}
 
 	function handleDblClick(e: MouseEvent) {
+		if (toolState.active === 'draw') {
+			// Finish the active line/polygon (drops the duplicate vertex the dblclick's second
+			// click placed). The draw tool stays active to start the next feature.
+			finishActiveFromDoubleClick();
+			return;
+		}
 		if (toolState.active === 'edit') {
 			const editHit = getHitAtPoint(e.clientX, e.clientY);
 			if (editSession.activeLayerId) {
@@ -1132,6 +1197,15 @@
 
 	function handlePointerMove(e: PointerEvent) {
 		metaHeld = e.metaKey || e.ctrlKey; // keep in sync even if a keyup was missed
+
+		// Rubber-band preview: track the cursor only while a line/polygon is mid-draw, so we
+		// don't repaint the whole canvas on every mouse move in point mode or when idle.
+		if (toolState.active === 'draw' && drawSession.drawType !== 'point' && drawSession.activeCount > 0 && !drawSession.picking && canvasEl) {
+			const rect = canvasEl.getBoundingClientRect();
+			drawHover = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+		} else if (drawHover !== null) {
+			drawHover = null;
+		}
 		// Dragging a point feature — move the point under the cursor.
 		if (pointDrag) {
 			const geo = screenToGeo(e.clientX, e.clientY);
@@ -1884,18 +1958,19 @@
 			if (e.key === 'Escape') {
 				if (editSession.pendingBake) { cancelBake(); return; }
 				if (editSession.activeLayerId) { cancelEditing(); return; }
-				// While drawing: Esc first disarms the "pick a layer" mode, then discards the
-				// uncommitted session.
+				// While drawing: Esc first disarms the "pick a layer" mode, then cancels the
+				// active path, then discards the rest of the session (two-stage).
 				if (toolState.active === 'draw' && drawSession.picking) { cancelPicking(); return; }
-				if (toolState.active === 'draw' && drawSession.count > 0) { cancelDraw(); return; }
+				if (toolState.active === 'draw' && escapeDraw()) return;
 			}
 
 			// Enter confirms the bake dialog, then commits an edit session (done).
 			if (e.key === 'Enter') {
 				if (editSession.pendingBake) { confirmBake(); return; }
 				if (editSession.activeLayerId) { exitEditing(); return; }
-				// While drawing, Enter commits the session to a layer; the draw tool stays active.
-				if (toolState.active === 'draw' && drawSession.count > 0) { commitDraw(); return; }
+				// While drawing, Enter finishes the active line/polygon (stay drawing), or
+				// commits the session when nothing is active. The draw tool stays active.
+				if (toolState.active === 'draw' && (drawSession.committedCount > 0 || drawSession.activeCount > 0)) { enterDraw(); return; }
 			}
 
 			// During a session, Delete/Backspace removes the selected vertices (and takes
@@ -2819,22 +2894,93 @@
 			}
 		}
 
-		// Draw tool: render the in-progress ghost points (CSS-pixel space, constant size).
+		// Draw tool: render committed ghost features + the active path + rubber-band preview,
+		// all in CSS-pixel space at constant size.
 		void drawSession.version; // subscribe so placements/undo repaint
+		void drawHover;            // subscribe so the rubber-band follows the cursor
 		if (toolState.active === 'draw' && projection) {
-			const pts = getDrawPoints();
-			if (pts.length > 0) {
-				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-				const accent = accentColor || '#2563eb';
-				const M = 6; // viewport cull margin
-				for (const coord of pts) {
-					const p = projection(coord as [number, number]);
-					if (!p) continue;
-					const sx = p[0] * mapScale + tx;
-					const sy = p[1] * mapScale + ty;
-					if (sx < -M || sx > width + M || sy < -M || sy > height + M) continue;
-					drawMarker(ctx, sx, sy, false, false, accent);
+			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+			const accent = accentColor || '#2563eb';
+			const M = 6; // viewport cull margin
+			const proj = projection;
+			const toScreen = (coord: readonly [number, number]): [number, number] | null => {
+				const p = proj(coord as [number, number]);
+				return p ? [p[0] * mapScale + tx, p[1] * mapScale + ty] : null;
+			};
+			const onScreen = (s: [number, number]) => !(s[0] < -M || s[0] > width + M || s[1] < -M || s[1] > height + M);
+
+			// Strokes a polyline through coords; optionally closes the ring and fills it faintly.
+			const strokePath = (coords: readonly [number, number][], close: boolean, fill: boolean) => {
+				ctx.beginPath();
+				let started = false;
+				for (const c of coords) {
+					const s = toScreen(c);
+					if (!s) continue;
+					if (!started) { ctx.moveTo(s[0], s[1]); started = true; } else ctx.lineTo(s[0], s[1]);
 				}
+				if (!started) return;
+				if (close) ctx.closePath();
+				if (fill) { ctx.save(); ctx.globalAlpha = 0.13; ctx.fillStyle = accent; ctx.fill(); ctx.restore(); }
+				ctx.strokeStyle = accent;
+				ctx.lineWidth = 1.5;
+				ctx.stroke();
+			};
+
+			// highlightLast draws the most recently placed vertex in the selected (filled) style.
+			const markers = (coords: readonly [number, number][], highlightLast = false) => {
+				for (let i = 0; i < coords.length; i++) {
+					const s = toScreen(coords[i]);
+					if (s && onScreen(s)) drawMarker(ctx, s[0], s[1], highlightLast && i === coords.length - 1, false, accent);
+				}
+			};
+
+			// Committed (finished-this-session) features — clean stroke/fill, no vertex handles.
+			for (const f of getCommitted()) {
+				if (f.type === 'Point') {
+					const s = toScreen(f.coords[0]);
+					if (s && onScreen(s)) drawMarker(ctx, s[0], s[1], false, false, accent);
+				} else if (f.type === 'LineString') {
+					strokePath(f.coords, false, false);
+				} else {
+					strokePath(f.coords, true, true);
+				}
+			}
+
+			// Active path being drawn (line/polygon), plus the rubber-band to the cursor.
+			const active = getActivePath();
+			if (active.length > 0) {
+				strokePath(active, false, false);
+				const last = toScreen(active[active.length - 1]);
+				if (drawHover && last) {
+					// Current-position line: last placed vertex → cursor (solid accent).
+					ctx.save();
+					ctx.strokeStyle = accent;
+					ctx.lineWidth = 1.5;
+					ctx.setLineDash([4, 4]);
+					ctx.beginPath();
+					ctx.moveTo(last[0], last[1]);
+					ctx.lineTo(drawHover.x, drawHover.y);
+					ctx.stroke();
+					ctx.restore();
+					// Polygon closing-edge hint: cursor → first vertex, drawn fainter to
+					// distinguish it from the line you're actively extending.
+					if (drawSession.drawType === 'polygon' && active.length >= 2) {
+						const first = toScreen(active[0]);
+						if (first) {
+							ctx.save();
+							ctx.globalAlpha = 0.35;
+							ctx.strokeStyle = accent;
+							ctx.lineWidth = 1.5;
+							ctx.setLineDash([4, 4]);
+							ctx.beginPath();
+							ctx.moveTo(drawHover.x, drawHover.y);
+							ctx.lineTo(first[0], first[1]);
+							ctx.stroke();
+							ctx.restore();
+						}
+					}
+				}
+				markers(active, true);
 			}
 		}
 

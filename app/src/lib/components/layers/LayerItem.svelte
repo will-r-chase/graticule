@@ -9,7 +9,7 @@
 	import { layers } from '$lib/stores/layers.svelte';
 	import { pushSnapshot, historyVersion } from '$lib/stores/history.svelte';
 	import { openFeaturesTable } from '$lib/stores/featuresTable.svelte';
-	import { drawSession, pickLayer, canDrawToLayer } from '$lib/stores/drawSession.svelte';
+	import { drawSession, pickLayer } from '$lib/stores/drawSession.svelte';
 	import LayerStylePanel from './LayerStylePanel.svelte';
 	import LayerProcessingPanel from './LayerProcessingPanel.svelte';
 	import LayerDataPanel from './LayerDataPanel.svelte';
@@ -37,12 +37,10 @@
 	let anyEntered = $derived(layerSelection.enteredId !== null);
 
 	let isDrawTarget = $derived(drawSession.targetLayerId === layer.id);
-	// During the draw picker, rows whose type doesn't match what's being drawn are non-targets.
-	let pickDisabled = $derived(drawSession.picking && !canDrawToLayer(layer));
 
 	function handleRowClick(e: MouseEvent) {
 		// While the draw "pick a layer" mode is armed, a row click sets the draw target
-		// instead of doing normal selection. Incompatible rows are inert (pickLayer guards).
+		// (any layer is allowed — the draw type adopts the picked layer's type).
 		if (drawSession.picking) {
 			pickLayer(layer.id);
 			return;
@@ -179,7 +177,7 @@
 </script>
 
 <div class="layer-item-wrapper" class:open={styleOpen} onclick={(e) => e.stopPropagation()}>
-	<div class="layer-item" class:selected={!anyEntered && (styleOpen || isSelected)} class:menu-open={menuOpen} class:canvas-hovered={isCanvasHovered && !isSelected && !styleOpen} class:dimmed={anyEntered && !isEntered} class:layer-hidden={!layer.visible} class:draw-picking={drawSession.picking && !pickDisabled} class:draw-pick-disabled={pickDisabled} class:draw-target={isDrawTarget} tabindex="-1" use:rowDragHandle={!editing} onclick={handleRowClick} onmouseenter={() => setHoveredLayer(layer.id)} onmouseleave={() => setHoveredLayer(null)} onpointerdown={(e) => { if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopImmediatePropagation(); }}>
+	<div class="layer-item" class:selected={!anyEntered && (styleOpen || isSelected)} class:menu-open={menuOpen} class:canvas-hovered={isCanvasHovered && !isSelected && !styleOpen} class:dimmed={anyEntered && !isEntered} class:layer-hidden={!layer.visible} class:draw-picking={drawSession.picking} class:draw-target={isDrawTarget} tabindex="-1" use:rowDragHandle={!editing} onclick={handleRowClick} onmouseenter={() => setHoveredLayer(layer.id)} onmouseleave={() => setHoveredLayer(null)} onpointerdown={(e) => { if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopImmediatePropagation(); }}>
 		{#if showSpinner}
 			<div class="style-spinner" aria-label="Loading">
 				<CircleNotch size={14} color="var(--color-text-tertiary)" />
@@ -416,12 +414,6 @@
 
 	.layer-item.draw-picking:hover {
 		background-color: var(--color-accent-subtle);
-	}
-
-	/* Incompatible rows during picking — can't be a target for the current draw type. */
-	.layer-item.draw-pick-disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
 	}
 
 	/* The current draw target gets an accent ring + a crosshair badge by its name. */

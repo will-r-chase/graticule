@@ -9,7 +9,7 @@
 	import { undo, redo, canUndo, canRedo, pushSnapshot } from '$lib/stores/history.svelte';
 	import { editSession, undoEdit, redoEdit } from '$lib/stores/editSession.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
-	import { drawSession, undoLastPoint } from '$lib/stores/drawSession.svelte';
+	import { drawSession, undoLastVertex } from '$lib/stores/drawSession.svelte';
 	import { selection, clearSelection } from '$lib/stores/selection.svelte';
 	import { layerSelection, clearLayerSelection, exitLayer } from '$lib/stores/layerSelection.svelte';
 	import { layers, toggleVisibility, duplicateLayer, removeLayer, reorderLayers, addUploadedLayer } from '$lib/stores/layers.svelte';
@@ -99,10 +99,10 @@
 			if (editSession.activeLayerId) {
 				if (e.shiftKey) redoEdit();
 				else            undoEdit();
-			} else if (toolState.active === 'draw' && drawSession.count > 0) {
-				// While drawing, Cmd+Z removes the last placed point (session-local), leaving
+			} else if (toolState.active === 'draw' && (drawSession.committedCount > 0 || drawSession.activeCount > 0)) {
+				// While drawing, Cmd+Z removes the last placed vertex (session-local), leaving
 				// global history untouched until the session commits.
-				if (!e.shiftKey) undoLastPoint();
+				if (!e.shiftKey) undoLastVertex();
 			} else if (e.shiftKey) { if (canRedo()) redo(); }
 			else                   { if (canUndo()) undo(); }
 		}

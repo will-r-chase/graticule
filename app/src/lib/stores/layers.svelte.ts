@@ -1,4 +1,5 @@
 import type { Topology } from 'topojson-specification';
+import { geoArea } from 'd3-geo';
 import type { Layer, LayerStyle, LayerProcessing, Dataset } from '$lib/types';
 import { catalog } from './catalog.svelte';
 import { countTopoPoints } from '$lib/utils/chaikin';
@@ -498,13 +499,20 @@ export function setLayerDatasource(layerId: string, datasetId: string, onComplet
 	}
 }
 
-// Commits drawn points to a layer. With a null target, creates a new empty layer first.
-// Appends Point geometries (null-filled to the existing schema) to the layer's current
-// geometry and routes through replaceLayerGeometry so the result is undoable + flash-free.
-// Returns the layer id the points landed in. History is the caller's job (pass onComplete).
-export function commitDrawnPoints(
+// A drawn feature in absolute coords. coords holds the open vertex list: one point for a
+// Point, the polyline for a LineString, the open ring for a Polygon (closing edge implicit).
+export interface DrawnFeature {
+	type: 'Point' | 'LineString' | 'Polygon';
+	coords: [number, number][];
+}
+
+// Commits drawn features to a layer. With a null target, creates a new empty layer first.
+// Points store coordinates directly; lines/polygons each append a new arc and reference it.
+// New features null-fill to the existing schema. Routes through replaceLayerGeometry so the
+// result is undoable + flash-free. Returns the layer id. History is the caller's job.
+export function commitDrawnFeatures(
 	targetLayerId: string | null,
-	points: readonly [number, number][],
+	features: readonly DrawnFeature[],
 	onComplete?: () => void,
 ): string {
 	const layerId = targetLayerId ?? addEmptyLayer();
@@ -518,13 +526,17 @@ export function commitDrawnPoints(
 	let topo: any;
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	let geometries: any[];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let arcs: any[];
 	if (working) {
 		topo = topologyToAbsolute(working);
 		const objName = Object.keys(topo.objects)[0];
 		geometries = topo.objects[objName].geometries;
+		arcs = topo.arcs;
 	} else {
 		geometries = [];
-		topo = { type: 'Topology', arcs: [], objects: { data: { type: 'GeometryCollection', geometries } } };
+		arcs = [];
+		topo = { type: 'Topology', arcs, objects: { data: { type: 'GeometryCollection', geometries } } };
 	}
 
 	// New features null-fill to the union of existing property keys, keeping the table schema stable.
@@ -536,12 +548,35 @@ export function commitDrawnPoints(
 		return o;
 	};
 
-	for (const [lon, lat] of points) {
-		geometries.push({ type: 'Point', coordinates: [lon, lat], properties: nullProps() });
+	// Appends a coordinate ring as a new arc, returning its index.
+	const addArc = (ring: readonly [number, number][]): number => {
+		arcs.push(ring.map((c) => [c[0], c[1]]));
+		return arcs.length - 1;
+	};
+
+	for (const f of features) {
+		const properties = nullProps();
+		if (f.type === 'Point') {
+			geometries.push({ type: 'Point', coordinates: [f.coords[0][0], f.coords[0][1]], properties });
+		} else if (f.type === 'LineString') {
+			geometries.push({ type: 'LineString', arcs: [addArc(f.coords)], properties });
+		} else {
+			// Close the ring (TopoJSON polygon rings are closed) if it isn't already.
+			const ring: [number, number][] = [...f.coords];
+			const first = ring[0];
+			const last = ring[ring.length - 1];
+			if (first[0] !== last[0] || first[1] !== last[1]) ring.push([first[0], first[1]]);
+			// Orient so the ring describes its interior (the smaller region): if d3's spherical
+			// area says it covers more than a hemisphere, it's wound the wrong way — reverse.
+			// geoArea is projection-independent, unlike a planar shoelace which mis-signs large
+			// polygons and makes d3 fill the complement (a hole + filled surroundings).
+			if (geoArea({ type: 'Polygon', coordinates: [ring] }) > 2 * Math.PI) ring.reverse();
+			geometries.push({ type: 'Polygon', arcs: [[addArc(ring)]], properties });
+		}
 	}
 
 	// applyDefaults only when the layer had no geometry — a first draw picks geometry-aware
-	// style defaults; appending to an existing point layer preserves the user's style.
+	// style defaults; appending to an existing layer preserves the user's style.
 	replaceLayerGeometry(layerId, topo as Topology, { applyDefaults: wasEmpty, geometryEdited: true }, onComplete);
 	return layerId;
 }

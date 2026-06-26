@@ -1,8 +1,14 @@
 <script lang="ts">
-	import { Crosshair, Plus, Check, X } from 'phosphor-svelte';
-	import { drawSession, setDrawTarget, startPicking, cancelPicking, commitDraw, cancelDraw } from '$lib/stores/drawSession.svelte';
+	import { Crosshair, Plus, Check, X, Circle, LineSegment, Polygon } from 'phosphor-svelte';
+	import { drawSession, setDrawTarget, setDrawType, lockedDrawType, startPicking, cancelPicking, commitDraw, discardDraw, type DrawType } from '$lib/stores/drawSession.svelte';
 	import { layers } from '$lib/stores/layers.svelte';
 	import { tooltip } from '$lib/actions/tooltip';
+
+	const TYPES: { type: DrawType; label: string }[] = [
+		{ type: 'polygon', label: 'Polygon' },
+		{ type: 'line', label: 'Line' },
+		{ type: 'point', label: 'Point' },
+	];
 
 	const targetName = $derived(
 		drawSession.targetLayerId
@@ -11,7 +17,9 @@
 	);
 
 	const statusText = $derived(targetName ? `Drawing to ${targetName}` : 'Drawing to new layer');
-	const hasPoints = $derived(drawSession.count > 0);
+	const hasDrawing = $derived(drawSession.committedCount > 0 || drawSession.activeCount > 0);
+	// Once committed to a layer type (or a session is underway), the type can't be swapped.
+	const locked = $derived(lockedDrawType());
 </script>
 
 <div class="draw-bar">
@@ -28,7 +36,22 @@
 			<span>Cancel</span>
 		</button>
 	{:else}
-		<span class="status status--strong">{statusText}</span>
+		<div class="seg">
+			{#each TYPES as { type, label }}
+				<button
+					class="seg-btn"
+					class:active={drawSession.drawType === type}
+					disabled={locked !== null && locked !== type}
+					onclick={() => setDrawType(type)}
+					aria-label="Draw {label.toLowerCase()}s"
+					use:tooltip={{ text: label, placement: 'up' }}
+				>
+					{#if type === 'point'}<Circle size={15} weight="fill" />
+					{:else if type === 'line'}<LineSegment size={16} />
+					{:else}<Polygon size={16} />{/if}
+				</button>
+			{/each}
+		</div>
 		<div class="bar-divider"></div>
 		<button
 			class="bar-btn"
@@ -50,22 +73,23 @@
 				<span>New layer</span>
 			</button>
 		{/if}
-		{#if hasPoints}
-			<div class="bar-divider"></div>
+		<div class="bar-divider"></div>
+		<span class="status status--strong">{statusText}</span>
+		{#if hasDrawing}
 			<button
 				class="bar-btn"
 				onclick={commitDraw}
 				aria-label="Finish drawing"
-				use:tooltip={{ text: 'Commit the drawn points', shortcut: 'Enter', placement: 'up' }}
+				use:tooltip={{ text: 'Commit the drawn geometry', shortcut: 'Enter', placement: 'up' }}
 			>
 				<Check size={16} weight="regular" />
 				<span>Done</span>
 			</button>
 			<button
 				class="bar-btn"
-				onclick={cancelDraw}
-				aria-label="Discard drawn points"
-				use:tooltip={{ text: 'Discard the drawn points', shortcut: 'Esc', placement: 'up' }}
+				onclick={discardDraw}
+				aria-label="Discard drawn geometry"
+				use:tooltip={{ text: 'Discard the drawn geometry', shortcut: 'Esc', placement: 'up' }}
 			>
 				<X size={14} weight="regular" />
 				<span>Cancel</span>
@@ -87,6 +111,38 @@
 		white-space: nowrap;
 	}
 
+	.seg {
+		display: flex;
+		flex-direction: row;
+		align-self: stretch;
+	}
+
+	.seg-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		border: none;
+		background: transparent;
+		color: var(--color-icon-primary);
+		cursor: pointer;
+		padding: 0;
+	}
+
+	.seg-btn:hover:not(.active):not(:disabled) {
+		background: var(--color-surface-secondary);
+	}
+
+	.seg-btn.active {
+		background: var(--color-accent);
+		color: #ffffff;
+	}
+
+	.seg-btn:disabled {
+		opacity: 0.3;
+		cursor: not-allowed;
+	}
+
 	.status {
 		padding: 0 12px;
 		font-family: var(--font-mono);
@@ -97,7 +153,7 @@
 	}
 
 	.status--strong {
-		font-weight: 700;
+		font-style: italic;
 		color: var(--color-text-primary);
 	}
 
