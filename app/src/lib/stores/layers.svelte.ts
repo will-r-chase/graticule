@@ -498,6 +498,54 @@ export function setLayerDatasource(layerId: string, datasetId: string, onComplet
 	}
 }
 
+// Commits drawn points to a layer. With a null target, creates a new empty layer first.
+// Appends Point geometries (null-filled to the existing schema) to the layer's current
+// geometry and routes through replaceLayerGeometry so the result is undoable + flash-free.
+// Returns the layer id the points landed in. History is the caller's job (pass onComplete).
+export function commitDrawnPoints(
+	targetLayerId: string | null,
+	points: readonly [number, number][],
+	onComplete?: () => void,
+): string {
+	const layerId = targetLayerId ?? addEmptyLayer();
+	const layer = layers.find((l) => l.id === layerId);
+	const wasEmpty = !layer?.hasTopology;
+
+	// Base geometry: the layer's current on-screen topology (absolute-decoded so we can append
+	// directly), or a fresh empty GeometryCollection when the layer has no geometry yet.
+	const working = workingTopologyData.get(layerId);
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let topo: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let geometries: any[];
+	if (working) {
+		topo = topologyToAbsolute(working);
+		const objName = Object.keys(topo.objects)[0];
+		geometries = topo.objects[objName].geometries;
+	} else {
+		geometries = [];
+		topo = { type: 'Topology', arcs: [], objects: { data: { type: 'GeometryCollection', geometries } } };
+	}
+
+	// New features null-fill to the union of existing property keys, keeping the table schema stable.
+	const keys = new Set<string>();
+	for (const g of geometries) for (const k in (g.properties ?? {})) keys.add(k);
+	const nullProps = (): Record<string, null> => {
+		const o: Record<string, null> = {};
+		for (const k of keys) o[k] = null;
+		return o;
+	};
+
+	for (const [lon, lat] of points) {
+		geometries.push({ type: 'Point', coordinates: [lon, lat], properties: nullProps() });
+	}
+
+	// applyDefaults only when the layer had no geometry — a first draw picks geometry-aware
+	// style defaults; appending to an existing point layer preserves the user's style.
+	replaceLayerGeometry(layerId, topo as Topology, { applyDefaults: wasEmpty, geometryEdited: true }, onComplete);
+	return layerId;
+}
+
 export function renameLayer(id: string, name: string): void {
 	const layer = layers.find((l) => l.id === id);
 	if (layer) layer.name = name.trim() || layer.name;

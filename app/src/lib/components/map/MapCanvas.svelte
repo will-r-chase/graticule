@@ -14,6 +14,7 @@
 	import { hoveredFeature } from '$lib/stores/hoveredFeature.svelte';
 	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, cancelEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, getPointCoord, translatePoints, recordPointMoves, setVertexSelection, type DragMember, type PointMember } from '$lib/stores/editSession.svelte';
 	import { featureArcIndices } from '$lib/utils/topology';
+	import { drawSession, getDrawPoints, placePoint, cancelDraw, commitDraw, resetDrawTarget, cancelPicking } from '$lib/stores/drawSession.svelte';
 	import { buildBezierArcs, arcRingToPath } from '$lib/utils/bezier';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
@@ -25,6 +26,7 @@
 	import Toaster from '$lib/components/ui/Toaster.svelte';
 	import MapToolbar from '$lib/components/map/MapToolbar.svelte';
 	import SelectionBar from '$lib/components/map/SelectionBar.svelte';
+	import DrawBar from '$lib/components/map/DrawBar.svelte';
 	import EditSessionBar from '$lib/components/map/EditSessionBar.svelte';
 	import LayerActionBar from '$lib/components/map/LayerActionBar.svelte';
 	import ConfirmModal from '$lib/components/ui/ConfirmModal.svelte';
@@ -793,6 +795,14 @@
 		if (suppressNextClick) { suppressNextClick = false; return; }
 		if (clipBbox.open && clipBbox.mode === 'bbox') return;
 		if (toolState.active === 'pan') return;
+
+		if (toolState.active === 'draw') {
+			if (spacePanning) return; // space-pan in progress — don't place
+			if (drawSession.picking) return; // picker armed — canvas clicks don't place points
+			const geo = screenToGeo(e.clientX, e.clientY);
+			if (geo) placePoint(geo[0], geo[1]); // null = clicked off-globe; ignore
+			return;
+		}
 
 		if (toolState.active === 'edit') {
 			const editHit = getHitAtPoint(e.clientX, e.clientY);
@@ -1874,12 +1884,18 @@
 			if (e.key === 'Escape') {
 				if (editSession.pendingBake) { cancelBake(); return; }
 				if (editSession.activeLayerId) { cancelEditing(); return; }
+				// While drawing: Esc first disarms the "pick a layer" mode, then discards the
+				// uncommitted session.
+				if (toolState.active === 'draw' && drawSession.picking) { cancelPicking(); return; }
+				if (toolState.active === 'draw' && drawSession.count > 0) { cancelDraw(); return; }
 			}
 
 			// Enter confirms the bake dialog, then commits an edit session (done).
 			if (e.key === 'Enter') {
 				if (editSession.pendingBake) { confirmBake(); return; }
 				if (editSession.activeLayerId) { exitEditing(); return; }
+				// While drawing, Enter commits the session to a layer; the draw tool stays active.
+				if (toolState.active === 'draw' && drawSession.count > 0) { commitDraw(); return; }
 			}
 
 			// During a session, Delete/Backspace removes the selected vertices (and takes
@@ -1905,7 +1921,7 @@
 				return;
 			}
 
-			if (e.key === ' ' && (toolState.active === 'select' || toolState.active === 'edit')) {
+			if (e.key === ' ' && (toolState.active === 'select' || toolState.active === 'edit' || toolState.active === 'draw')) {
 				e.preventDefault(); // prevent page scroll
 				spacePanning = true;
 				return;
@@ -1920,6 +1936,9 @@
 			} else if (e.key === 'e' || e.key === 'E') {
 				exitLayer();
 				toolState.active = 'edit';
+			} else if (e.key === 'd' || e.key === 'D') {
+				exitLayer();
+				toolState.active = 'draw';
 			} else if ((e.key === 'Delete' || e.key === 'Backspace') && selection.features.size > 0) {
 				e.preventDefault();
 				const snapshot = new Map([...selection.features.entries()].map(([k, v]) => [k, new Set(v)]));
@@ -1957,6 +1976,24 @@
 		if (toolState.active !== 'edit') {
 			if (editSession.pendingBake) cancelBake();
 			if (editSession.activeLayerId) exitEditing();
+		}
+	});
+
+	// Entering the draw tool clears layer/feature selection — the draw target is its own
+	// explicit state (set via the draw action bar), deliberately decoupled from selection.
+	$effect(() => {
+		if (toolState.active === 'draw') {
+			clearSelection();
+			clearLayerSelection();
+		}
+	});
+
+	// Leaving the draw tool commits any in-progress session (no-op if empty), then resets the
+	// draw target so a later re-entry starts on a fresh new layer.
+	$effect(() => {
+		if (toolState.active !== 'draw') {
+			commitDraw();
+			resetDrawTarget();
 		}
 	});
 
@@ -2782,6 +2819,25 @@
 			}
 		}
 
+		// Draw tool: render the in-progress ghost points (CSS-pixel space, constant size).
+		void drawSession.version; // subscribe so placements/undo repaint
+		if (toolState.active === 'draw' && projection) {
+			const pts = getDrawPoints();
+			if (pts.length > 0) {
+				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+				const accent = accentColor || '#2563eb';
+				const M = 6; // viewport cull margin
+				for (const coord of pts) {
+					const p = projection(coord as [number, number]);
+					if (!p) continue;
+					const sx = p[0] * mapScale + tx;
+					const sy = p[1] * mapScale + ty;
+					if (sx < -M || sx > width + M || sy < -M || sy > height + M) continue;
+					drawMarker(ctx, sx, sy, false, false, accent);
+				}
+			}
+		}
+
 	});
 </script>
 
@@ -2791,6 +2847,8 @@
 			<LayerActionBar {getViewportBbox} />
 			{#if editSession.activeLayerId}
 				<EditSessionBar />
+			{:else if toolState.active === 'draw'}
+				<DrawBar />
 			{:else}
 				<SelectionBar />
 			{/if}
@@ -2828,6 +2886,7 @@
 			class:dragging={isDragging}
 			class:select-mode={toolState.active === 'select' && !spacePanning}
 			class:edit-mode={toolState.active === 'edit' && !spacePanning}
+			class:draw-mode={toolState.active === 'draw' && !spacePanning}
 			class:vertex-grab={toolState.active === 'edit' && overVertex && !vertexDrag && !spacePanning && !metaHeld}
 			class:insert-ghost-hover={toolState.active === 'edit' && overInsertGhost && !vertexDrag && !spacePanning && !metaHeld}
 			class:vertex-grabbing={vertexDrag !== null || pointDrag !== null}
@@ -2920,6 +2979,10 @@
 
 	canvas.edit-mode {
 		cursor: default;
+	}
+
+	canvas.draw-mode {
+		cursor: crosshair;
 	}
 
 	canvas.vertex-grab {
