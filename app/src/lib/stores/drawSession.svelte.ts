@@ -13,6 +13,10 @@
 
 import { layers, commitDrawnFeatures, type DrawnFeature } from './layers.svelte';
 import { pushSnapshot } from './history.svelte';
+import { showToast } from './toast.svelte';
+import { ringSelfIntersects } from '$lib/utils/selfIntersect';
+
+const SELF_INTERSECT_MSG = 'Polygons cannot cross over themselves, use Cmd+Z to undo the self-intersection.';
 
 export type { DrawnFeature };
 export type DrawType = 'point' | 'line' | 'polygon';
@@ -86,11 +90,21 @@ export function lockedDrawType(): DrawType | null {
 	return null;
 }
 
+// Whether the active polygon, closed as it would commit, crosses itself. Only meaningful for
+// polygons (a self-crossing line is valid geometry). Used for the live warning + commit block.
+export function activeSelfIntersects(): boolean {
+	return drawSession.drawType === 'polygon' && activePath.length >= 4 && ringSelfIntersects(activePath);
+}
+
 // Finishes the active line/polygon into a committed feature if it has enough vertices.
-// Returns true if it finished one. No-op for points.
+// Returns true if it finished one. Refuses (with a toast) to close a self-intersecting polygon.
 export function finishActive(): boolean {
 	if (drawSession.drawType === 'point') return false;
 	if (activePath.length < minVertices()) return false;
+	if (activeSelfIntersects()) {
+		showToast(SELF_INTERSECT_MSG);
+		return false;
+	}
 	committed.push({
 		type: drawSession.drawType === 'polygon' ? 'Polygon' : 'LineString',
 		coords: [...activePath],
@@ -111,14 +125,17 @@ function flushOrDiscardActive(): void {
 }
 
 // Places a vertex. Points commit immediately into the session; line/polygon vertices extend
-// the active path.
+// the active path. Warns the moment a placement turns the polygon self-intersecting.
 export function placeVertex(lon: number, lat: number): void {
 	if (drawSession.drawType === 'point') {
 		committed.push({ type: 'Point', coords: [[lon, lat]] });
-	} else {
-		activePath.push([lon, lat]);
+		bump();
+		return;
 	}
+	const before = activeSelfIntersects();
+	activePath.push([lon, lat]);
 	bump();
+	if (!before && activeSelfIntersects()) showToast(SELF_INTERSECT_MSG);
 }
 
 // Double-click finish: the two clicks of the dblclick each placed a vertex, so drop the
@@ -132,6 +149,9 @@ export function finishActiveFromDoubleClick(): boolean {
 // Enter: finish the active path if one is in progress (stay drawing), else commit the session.
 // Symmetric with Esc. For points (no active path) this always commits.
 export function enterDraw(): void {
+	// A self-intersecting active polygon blocks both finishing and committing (finishActive
+	// already toasted); don't fall through to commit.
+	if (activeSelfIntersects()) { showToast(SELF_INTERSECT_MSG); return; }
 	if (finishActive()) return;
 	commitDraw();
 }
@@ -182,7 +202,15 @@ export function discardDraw(): void {
 // Commits the session (finishing any valid active path first) to the target layer, or a new
 // layer when the target is null. Pushes one history snapshot once the pipeline settles. The
 // session resets immediately; the draw tool stays active. No-op when nothing was drawn.
-export function commitDraw(): void {
+//
+// A self-intersecting active polygon is never committed: a Done/Enter commit is BLOCKED (with
+// a toast) so the user fixes it; a commit forced by leaving the tool (leaving=true) silently
+// drops the invalid active polygon and commits the rest.
+export function commitDraw(leaving = false): void {
+	if (activeSelfIntersects()) {
+		if (leaving) { activePath = []; bump(); }
+		else { showToast(SELF_INTERSECT_MSG); return; }
+	}
 	flushOrDiscardActive();
 	if (committed.length === 0) return;
 	const feats = committed;

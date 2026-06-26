@@ -14,7 +14,7 @@
 	import { hoveredFeature } from '$lib/stores/hoveredFeature.svelte';
 	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, cancelEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, getPointCoord, translatePoints, recordPointMoves, setVertexSelection, type DragMember, type PointMember } from '$lib/stores/editSession.svelte';
 	import { featureArcIndices } from '$lib/utils/topology';
-	import { drawSession, getCommitted, getActivePath, placeVertex, finishActive, finishActiveFromDoubleClick, enterDraw, escapeDraw, commitDraw, resetDrawTarget, cancelPicking, setDrawDensifier } from '$lib/stores/drawSession.svelte';
+	import { drawSession, getCommitted, getActivePath, placeVertex, finishActive, finishActiveFromDoubleClick, enterDraw, escapeDraw, commitDraw, resetDrawTarget, cancelPicking, setDrawDensifier, activeSelfIntersects } from '$lib/stores/drawSession.svelte';
 	import { buildBezierArcs, arcRingToPath } from '$lib/utils/bezier';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { projection as projectionStore } from '$lib/stores/projection.svelte';
@@ -2067,7 +2067,7 @@
 	// draw target so a later re-entry starts on a fresh new layer.
 	$effect(() => {
 		if (toolState.active !== 'draw') {
-			commitDraw();
+			commitDraw(true); // forced by leaving — drops an invalid active polygon, commits the rest
 			resetDrawTarget();
 		}
 	});
@@ -2551,6 +2551,7 @@
 		// with the design system without hardcoding values.
 		const highlightCss    = getComputedStyle(canvasEl!);
 		const accentColor     = highlightCss.getPropertyValue('--color-accent').trim();
+		const errorColor      = highlightCss.getPropertyValue('--color-error').trim();
 		const surfaceSecColor = highlightCss.getPropertyValue('--color-surface-secondary').trim();
 		const borderColor     = highlightCss.getPropertyValue('--color-border').trim();
 		const textColor       = highlightCss.getPropertyValue('--color-text-primary').trim();
@@ -2910,7 +2911,7 @@
 			const onScreen = (s: [number, number]) => !(s[0] < -M || s[0] > width + M || s[1] < -M || s[1] > height + M);
 
 			// Strokes a polyline through coords; optionally closes the ring and fills it faintly.
-			const strokePath = (coords: readonly [number, number][], close: boolean, fill: boolean) => {
+			const strokePath = (coords: readonly [number, number][], close: boolean, fill: boolean, color = accent) => {
 				ctx.beginPath();
 				let started = false;
 				for (const c of coords) {
@@ -2920,17 +2921,17 @@
 				}
 				if (!started) return;
 				if (close) ctx.closePath();
-				if (fill) { ctx.save(); ctx.globalAlpha = 0.13; ctx.fillStyle = accent; ctx.fill(); ctx.restore(); }
-				ctx.strokeStyle = accent;
+				if (fill) { ctx.save(); ctx.globalAlpha = 0.13; ctx.fillStyle = color; ctx.fill(); ctx.restore(); }
+				ctx.strokeStyle = color;
 				ctx.lineWidth = 1.5;
 				ctx.stroke();
 			};
 
 			// highlightLast draws the most recently placed vertex in the selected (filled) style.
-			const markers = (coords: readonly [number, number][], highlightLast = false) => {
+			const markers = (coords: readonly [number, number][], highlightLast = false, color = accent) => {
 				for (let i = 0; i < coords.length; i++) {
 					const s = toScreen(coords[i]);
-					if (s && onScreen(s)) drawMarker(ctx, s[0], s[1], highlightLast && i === coords.length - 1, false, accent);
+					if (s && onScreen(s)) drawMarker(ctx, s[0], s[1], highlightLast && i === coords.length - 1, false, color);
 				}
 			};
 
@@ -2947,14 +2948,16 @@
 			}
 
 			// Active path being drawn (line/polygon), plus the rubber-band to the cursor.
+			// A self-intersecting polygon is drawn in a warning colour — it can't be committed.
 			const active = getActivePath();
 			if (active.length > 0) {
-				strokePath(active, false, false);
+				const activeColor = activeSelfIntersects() ? (errorColor || '#dc2626') : accent;
+				strokePath(active, false, false, activeColor);
 				const last = toScreen(active[active.length - 1]);
 				if (drawHover && last) {
-					// Current-position line: last placed vertex → cursor (solid accent).
+					// Current-position line: last placed vertex → cursor.
 					ctx.save();
-					ctx.strokeStyle = accent;
+					ctx.strokeStyle = activeColor;
 					ctx.lineWidth = 1.5;
 					ctx.setLineDash([4, 4]);
 					ctx.beginPath();
@@ -2969,7 +2972,7 @@
 						if (first) {
 							ctx.save();
 							ctx.globalAlpha = 0.35;
-							ctx.strokeStyle = accent;
+							ctx.strokeStyle = activeColor;
 							ctx.lineWidth = 1.5;
 							ctx.setLineDash([4, 4]);
 							ctx.beginPath();
@@ -2980,7 +2983,7 @@
 						}
 					}
 				}
-				markers(active, true);
+				markers(active, true, activeColor);
 			}
 		}
 

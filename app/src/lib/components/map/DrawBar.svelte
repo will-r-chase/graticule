@@ -78,7 +78,7 @@
 		{#if hasDrawing}
 			<button
 				class="bar-btn"
-				onclick={commitDraw}
+				onclick={() => commitDraw()}
 				aria-label="Finish drawing"
 				use:tooltip={{ text: 'Commit the drawn geometry', shortcut: 'Enter', placement: 'up' }}
 			>
