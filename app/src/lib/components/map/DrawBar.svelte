@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Crosshair, Plus, Check, X, Circle, LineSegment, Polygon } from 'phosphor-svelte';
-	import { drawSession, setDrawTarget, setDrawType, lockedDrawType, startPicking, cancelPicking, commitDraw, discardDraw, type DrawType } from '$lib/stores/drawSession.svelte';
+	import { Crosshair, Plus, Check, X, Circle, LineSegment, Polygon, Magnet } from 'phosphor-svelte';
+	import { drawSession, setDrawTarget, setDrawType, lockedDrawType, startPicking, cancelPicking, commitDraw, discardDraw, toggleSnapping, type DrawType } from '$lib/stores/drawSession.svelte';
 	import { layers } from '$lib/stores/layers.svelte';
 	import { tooltip } from '$lib/actions/tooltip';
 
@@ -52,6 +52,16 @@
 				</button>
 			{/each}
 		</div>
+		<div class="bar-divider"></div>
+		<button
+			class="bar-btn bar-btn--icon"
+			class:active={drawSession.snapping}
+			onclick={toggleSnapping}
+			aria-label="Toggle snapping to existing vertices"
+			use:tooltip={{ text: drawSession.snapping ? 'Snapping on' : 'Snap to vertices', placement: 'up' }}
+		>
+			<Magnet size={16} weight="regular" />
+		</button>
 		<div class="bar-divider"></div>
 		<button
 			class="bar-btn"
@@ -180,6 +190,21 @@
 
 	.bar-btn:hover {
 		background: var(--color-surface-secondary);
+	}
+
+	.bar-btn--icon {
+		padding: 0;
+		width: 36px;
+		justify-content: center;
+	}
+
+	.bar-btn.active {
+		background: var(--color-accent);
+		color: #ffffff;
+	}
+
+	.bar-btn.active :global(svg) {
+		color: #ffffff;
 	}
 
 	.bar-btn[aria-disabled='true'] {

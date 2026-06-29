@@ -25,6 +25,23 @@ function segmentsCross(p1: Pt, p2: Pt, p3: Pt, p4: Pt): boolean {
 	);
 }
 
+// Whether the OPEN polyline through `pts` crosses itself — i.e. the drawn edges intersect
+// each other, ignoring any closing edge. This is the "hard" intersection that can't be undone
+// by continuing to draw, so it's what live feedback should flag. (A simple open path may still
+// close into a self-intersecting polygon; ringSelfIntersects gates that at finish time.)
+export function openPathSelfIntersects(pts: readonly Pt[]): boolean {
+	const n = pts.length;
+	if (n < 4) return false; // need two non-adjacent edges
+	for (let i = 0; i < n - 1; i++) {
+		const a1 = pts[i];
+		const a2 = pts[i + 1];
+		for (let j = i + 2; j < n - 1; j++) {
+			if (segmentsCross(a1, a2, pts[j], pts[j + 1])) return true;
+		}
+	}
+	return false;
+}
+
 // Whether the closed ring through `pts` (open list; edge n-1→0 is implicit) crosses itself.
 export function ringSelfIntersects(pts: readonly Pt[]): boolean {
 	const n = pts.length;

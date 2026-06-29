@@ -13,7 +13,7 @@
 	import { layerSelection, clearLayerSelection, selectLayer, toggleLayerSelection, enterLayer, exitLayer, setHoveredLayer } from '$lib/stores/layerSelection.svelte';
 	import { hoveredFeature } from '$lib/stores/hoveredFeature.svelte';
 	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, cancelEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, getPointCoord, translatePoints, recordPointMoves, setVertexSelection, type DragMember, type PointMember } from '$lib/stores/editSession.svelte';
-	import { featureArcIndices } from '$lib/utils/topology';
+	import { featureArcIndices, topologyToAbsolute } from '$lib/utils/topology';
 	import { drawSession, getCommitted, getActivePath, placeVertex, finishActive, finishActiveFromDoubleClick, enterDraw, escapeDraw, commitDraw, resetDrawTarget, cancelPicking, setDrawDensifier, activeSelfIntersects } from '$lib/stores/drawSession.svelte';
 	import { buildBezierArcs, arcRingToPath } from '$lib/utils/bezier';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -508,6 +508,91 @@
 		return { x: lx + Math.cos(ang) * dist, y: ly + Math.sin(ang) * dist };
 	}
 
+	// --- Vertex snapping ------------------------------------------------------
+	// When snapping is on, a placed vertex snaps to the nearest existing vertex (visible layers
+	// + own in-progress geometry) within SNAP_PX on screen, taking its EXACT coordinate (so it's
+	// perfectly coincident — the hook for shared borders). Visible-layer vertices are indexed in
+	// a grid hash keyed by BASE-projection space, which is stable under pan/zoom (those are
+	// affine); the grid rebuilds only when the visible-layer set or the projection changes. Own
+	// vertices are few, so they're brute-forced each query.
+	const SNAP_PX = 10;
+	interface SnapVertex { x: number; y: number; lon: number; lat: number } // x,y = base-projection
+	let snapGrid: Map<string, SnapVertex[]> | null = null;
+	let snapCell = 1;
+	let snapSig = '';
+
+	function snapSignature(): string {
+		const vis = layers.filter((l) => l.visible && l.hasTopology).map((l) => `${l.id}:${l.geometryId}`).join('|');
+		return `${vis}#${projectionStore.id}#${projectionStore.rotate.join(',')}`;
+	}
+
+	function rebuildSnapGrid(): void {
+		const grid = new Map<string, SnapVertex[]>();
+		snapCell = Math.max(SNAP_PX / mapScale, 1e-9);
+		const add = (lon: number, lat: number) => {
+			const p = projection!([lon, lat] as [number, number]);
+			if (!p) return; // off-globe — not snappable
+			const v: SnapVertex = { x: p[0], y: p[1], lon, lat };
+			const key = `${Math.floor(p[0] / snapCell)},${Math.floor(p[1] / snapCell)}`;
+			const bucket = grid.get(key);
+			if (bucket) bucket.push(v); else grid.set(key, [v]);
+		};
+		for (const l of layers) {
+			if (!l.visible || !l.hasTopology) continue;
+			const working = workingTopologyData.get(l.id);
+			if (!working) continue;
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			const abs = topologyToAbsolute(working) as any;
+			for (const arc of abs.arcs as number[][][]) for (const p of arc) add(p[0], p[1]);
+			const objName = Object.keys(abs.objects)[0];
+			for (const g of abs.objects[objName].geometries ?? []) {
+				if (g.type === 'Point') add(g.coordinates[0], g.coordinates[1]);
+				else if (g.type === 'MultiPoint') for (const c of g.coordinates) add(c[0], c[1]);
+			}
+		}
+		snapGrid = grid;
+		snapSig = snapSignature();
+	}
+
+	// Nearest snap target (base-projection coords + geo) to a canvas-space cursor, or null.
+	function resolveSnap(cx: number, cy: number): SnapVertex | null {
+		if (!drawSession.snapping || shiftHeld || !projection) return null;
+		if (snapGrid === null || snapSig !== snapSignature()) rebuildSnapGrid();
+		const bx = (cx - tx) / mapScale;
+		const by = (cy - ty) / mapScale;
+		const tolBase = SNAP_PX / mapScale;
+		let best: SnapVertex | null = null;
+		let bestD2 = tolBase * tolBase;
+
+		if (snapGrid) {
+			const range = Math.max(1, Math.ceil(tolBase / snapCell));
+			const c0 = Math.floor(bx / snapCell);
+			const r0 = Math.floor(by / snapCell);
+			for (let dc = -range; dc <= range; dc++) {
+				for (let dr = -range; dr <= range; dr++) {
+					const bucket = snapGrid.get(`${c0 + dc},${r0 + dr}`);
+					if (!bucket) continue;
+					for (const v of bucket) {
+						const d2 = (v.x - bx) ** 2 + (v.y - by) ** 2;
+						if (d2 < bestD2) { bestD2 = d2; best = v; }
+					}
+				}
+			}
+		}
+
+		// Own in-progress vertices (few) — brute force; skip the active path's last vertex (pivot).
+		const active = getActivePath();
+		const checkOwn = (c: readonly [number, number]) => {
+			const p = projection!(c as [number, number]);
+			if (!p) return;
+			const d2 = (p[0] - bx) ** 2 + (p[1] - by) ** 2;
+			if (d2 < bestD2) { bestD2 = d2; best = { x: p[0], y: p[1], lon: c[0], lat: c[1] }; }
+		};
+		for (const f of getCommitted()) for (const c of f.coords) checkOwn(c);
+		for (let i = 0; i < active.length - 1; i++) checkOwn(active[i]);
+		return best;
+	}
+
 	// Nearest draft vertex of the targeted feature within VERTEX_HIT_RADIUS, or null.
 	function hitVertex(clientX: number, clientY: number): { arcIndex: number; vertexIndex: number } | null {
 		const draft = getDraft();
@@ -880,12 +965,16 @@
 					return;
 				}
 			}
-			// Place at the cursor, or at the angle-snapped point when Shift is held.
+			// Place at the cursor; Shift angle-snaps (takes precedence), else snap to a vertex.
 			let geo: [number, number] | null;
 			if (projection && canvasEl && shiftHeld) {
 				const rect = canvasEl.getBoundingClientRect();
 				const sp = angleSnap({ x: e.clientX - rect.left, y: e.clientY - rect.top });
 				geo = projection.invert?.([(sp.x - tx) / mapScale, (sp.y - ty) / mapScale]) ?? null;
+			} else if (canvasEl) {
+				const rect = canvasEl.getBoundingClientRect();
+				const snap = resolveSnap(e.clientX - rect.left, e.clientY - rect.top);
+				geo = snap ? [snap.lon, snap.lat] : screenToGeo(e.clientX, e.clientY);
 			} else {
 				geo = screenToGeo(e.clientX, e.clientY);
 			}
@@ -1229,10 +1318,13 @@
 		metaHeld = e.metaKey || e.ctrlKey; // keep in sync even if a keyup was missed
 		shiftHeld = e.shiftKey;
 
-		// Rubber-band preview: track the cursor only while a line/polygon is mid-draw, so we
-		// don't repaint the whole canvas on every mouse move in point mode or when idle.
-		if (toolState.active === 'draw' && drawSession.drawType !== 'point' && drawSession.activeCount > 0 && !drawSession.picking && canvasEl) {
-			const rect = canvasEl.getBoundingClientRect();
+		// Track the cursor while a line/polygon is mid-draw (for the rubber-band) or whenever
+		// snapping is on (for the snap ring) — but not otherwise, so we don't repaint the whole
+		// canvas on every mouse move when there's nothing to preview.
+		const trackHover = toolState.active === 'draw' && !drawSession.picking && canvasEl &&
+			(drawSession.snapping || (drawSession.drawType !== 'point' && drawSession.activeCount > 0));
+		if (trackHover) {
+			const rect = canvasEl!.getBoundingClientRect();
 			drawHover = { x: e.clientX - rect.left, y: e.clientY - rect.top };
 		} else if (drawHover !== null) {
 			drawHover = null;
@@ -2943,6 +3035,11 @@
 			};
 			const onScreen = (s: [number, number]) => !(s[0] < -M || s[0] > width + M || s[1] < -M || s[1] > height + M);
 
+			// Snap target under the cursor (suspended while Shift angle-snaps). Its screen point
+			// is reused as the preview endpoint, and a ring highlights it.
+			const snapTarget = drawHover && !shiftHeld ? resolveSnap(drawHover.x, drawHover.y) : null;
+			const snapScreen: [number, number] | null = snapTarget ? [snapTarget.x * mapScale + tx, snapTarget.y * mapScale + ty] : null;
+
 			// Strokes a polyline through coords; optionally closes the ring and fills it faintly.
 			const strokePath = (coords: readonly [number, number][], close: boolean, fill: boolean, color = accent) => {
 				ctx.beginPath();
@@ -2987,8 +3084,10 @@
 				const activeColor = activeSelfIntersects() ? (errorColor || '#dc2626') : accent;
 				strokePath(active, false, false, activeColor);
 				const last = toScreen(active[active.length - 1]);
-				// Snap the preview endpoint to 15° when Shift is held, matching placement.
-				const hoverPt = drawHover ? angleSnap(drawHover) : null;
+				// Preview endpoint: Shift angle-snaps (precedence), else a vertex snap, else cursor.
+				const hoverPt = drawHover
+					? (shiftHeld ? angleSnap(drawHover) : snapScreen ? { x: snapScreen[0], y: snapScreen[1] } : drawHover)
+					: null;
 				if (hoverPt && last) {
 					// Current-position line: last placed vertex → cursor.
 					ctx.save();
@@ -3019,6 +3118,17 @@
 					}
 				}
 				markers(active, true, activeColor);
+			}
+
+			// Snap-target ring — drawn last so it sits on top, for any draw type / vertex count.
+			if (snapScreen) {
+				ctx.save();
+				ctx.strokeStyle = accent;
+				ctx.lineWidth = 1.5;
+				ctx.beginPath();
+				ctx.arc(snapScreen[0], snapScreen[1], 6, 0, Math.PI * 2);
+				ctx.stroke();
+				ctx.restore();
 			}
 		}
 

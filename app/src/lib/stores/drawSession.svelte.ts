@@ -14,7 +14,7 @@
 import { layers, commitDrawnFeatures, type DrawnFeature } from './layers.svelte';
 import { pushSnapshot } from './history.svelte';
 import { showToast } from './toast.svelte';
-import { ringSelfIntersects } from '$lib/utils/selfIntersect';
+import { ringSelfIntersects, openPathSelfIntersects } from '$lib/utils/selfIntersect';
 
 const SELF_INTERSECT_MSG = 'Polygons cannot cross over themselves, use Cmd+Z to undo the self-intersection.';
 
@@ -36,6 +36,11 @@ let committed: DrawnFeature[] = [];
 // The line/polygon being drawn (open vertex list — the polygon's closing edge is implicit).
 let activePath: [number, number][] = [];
 
+// Session-local redo stack (Cmd+Shift+Z): items popped by undo, in LIFO order. Any new forward
+// or destructive edit clears it. A vertex restores to the active path; a feature to committed.
+type Undone = { kind: 'vertex'; coord: [number, number] } | { kind: 'feature'; feature: DrawnFeature };
+let redoStack: Undone[] = [];
+
 export const drawSession = $state<{
 	// Bumped on every mutation so MapCanvas repaints from the (non-reactive) geometry.
 	version: number;
@@ -48,7 +53,15 @@ export const drawSession = $state<{
 	targetLayerId: string | null;
 	// True while the "target layer" picker is armed.
 	picking: boolean;
-}>({ version: 0, drawType: 'polygon', committedCount: 0, activeCount: 0, targetLayerId: null, picking: false });
+	// Snap placed vertices to existing vertices (visible layers + own geometry). Off by default.
+	snapping: boolean;
+	// Number of session-local redo steps available (Cmd+Shift+Z).
+	redoCount: number;
+}>({ version: 0, drawType: 'polygon', committedCount: 0, activeCount: 0, targetLayerId: null, picking: false, snapping: false, redoCount: 0 });
+
+export function toggleSnapping(): void {
+	drawSession.snapping = !drawSession.snapping;
+}
 
 export function getCommitted(): readonly DrawnFeature[] {
 	return committed;
@@ -60,7 +73,13 @@ export function getActivePath(): readonly [number, number][] {
 function bump(): void {
 	drawSession.committedCount = committed.length;
 	drawSession.activeCount = activePath.length;
+	drawSession.redoCount = redoStack.length;
 	drawSession.version++;
+}
+
+// A new forward/destructive edit invalidates the redo stack.
+function clearRedo(): void {
+	redoStack.length = 0;
 }
 
 // Minimum vertices for the active path to form a valid feature of the current type.
@@ -90,9 +109,18 @@ export function lockedDrawType(): DrawType | null {
 	return null;
 }
 
-// Whether the active polygon, closed as it would commit, crosses itself. Only meaningful for
-// polygons (a self-crossing line is valid geometry). Used for the live warning + commit block.
+// LIVE warning test: whether the active polygon's DRAWN edges already cross each other (a hard
+// intersection that continuing to draw can't fix). Ignores the provisional closing edge, so a
+// zigzag that will still close cleanly isn't flagged prematurely. Drives the red highlight +
+// place-time toast. Only meaningful for polygons (a self-crossing line is valid geometry).
 export function activeSelfIntersects(): boolean {
+	return drawSession.drawType === 'polygon' && activePath.length >= 4 && openPathSelfIntersects(activePath);
+}
+
+// FINISH gate: whether closing the active polygon (adding the last→first edge) would make it
+// self-intersect. Used to block finishing/committing an invalid polygon — stricter than the
+// live test, which deliberately ignores the closing edge.
+function wouldCloseSelfIntersecting(): boolean {
 	return drawSession.drawType === 'polygon' && activePath.length >= 4 && ringSelfIntersects(activePath);
 }
 
@@ -101,10 +129,11 @@ export function activeSelfIntersects(): boolean {
 export function finishActive(): boolean {
 	if (drawSession.drawType === 'point') return false;
 	if (activePath.length < minVertices()) return false;
-	if (activeSelfIntersects()) {
+	if (wouldCloseSelfIntersecting()) {
 		showToast(SELF_INTERSECT_MSG);
 		return false;
 	}
+	clearRedo();
 	committed.push({
 		type: drawSession.drawType === 'polygon' ? 'Polygon' : 'LineString',
 		coords: [...activePath],
@@ -127,6 +156,7 @@ function flushOrDiscardActive(): void {
 // Places a vertex. Points commit immediately into the session; line/polygon vertices extend
 // the active path. Warns the moment a placement turns the polygon self-intersecting.
 export function placeVertex(lon: number, lat: number): void {
+	clearRedo();
 	if (drawSession.drawType === 'point') {
 		committed.push({ type: 'Point', coords: [[lon, lat]] });
 		bump();
@@ -149,9 +179,9 @@ export function finishActiveFromDoubleClick(): boolean {
 // Enter: finish the active path if one is in progress (stay drawing), else commit the session.
 // Symmetric with Esc. For points (no active path) this always commits.
 export function enterDraw(): void {
-	// A self-intersecting active polygon blocks both finishing and committing (finishActive
-	// already toasted); don't fall through to commit.
-	if (activeSelfIntersects()) { showToast(SELF_INTERSECT_MSG); return; }
+	// A polygon that would close self-intersecting blocks both finishing and committing;
+	// don't fall through to commit.
+	if (wouldCloseSelfIntersecting()) { showToast(SELF_INTERSECT_MSG); return; }
 	if (finishActive()) return;
 	commitDraw();
 }
@@ -162,16 +192,29 @@ export function setDrawType(t: DrawType): void {
 	if (drawSession.drawType === t) return;
 	const locked = lockedDrawType();
 	if (locked !== null && locked !== t) return;
+	clearRedo();
 	flushOrDiscardActive();
 	drawSession.drawType = t;
 	bump();
 }
 
 // Cmd+Z: remove the last placed vertex of the active path, else the last committed feature.
+// The removed item is pushed onto the redo stack so Cmd+Shift+Z can restore it.
 export function undoLastVertex(): void {
-	if (activePath.length > 0) activePath.pop();
-	else if (committed.length > 0) committed.pop();
-	else return;
+	if (activePath.length > 0) {
+		redoStack.push({ kind: 'vertex', coord: activePath.pop()! });
+	} else if (committed.length > 0) {
+		redoStack.push({ kind: 'feature', feature: committed.pop()! });
+	} else return;
+	bump();
+}
+
+// Cmd+Shift+Z: restore the most recently undone vertex/feature.
+export function redoLastVertex(): void {
+	const item = redoStack.pop();
+	if (!item) return;
+	if (item.kind === 'vertex') activePath.push(item.coord);
+	else committed.push(item.feature);
 	bump();
 }
 
@@ -179,11 +222,13 @@ export function undoLastVertex(): void {
 // Returns true if it consumed something.
 export function escapeDraw(): boolean {
 	if (activePath.length > 0) {
+		clearRedo();
 		activePath = [];
 		bump();
 		return true;
 	}
 	if (committed.length > 0) {
+		clearRedo();
 		committed = [];
 		bump();
 		return true;
@@ -194,6 +239,7 @@ export function escapeDraw(): boolean {
 // Cancel button: discard everything uncommitted.
 export function discardDraw(): void {
 	if (committed.length === 0 && activePath.length === 0) return;
+	clearRedo();
 	committed = [];
 	activePath = [];
 	bump();
@@ -207,12 +253,13 @@ export function discardDraw(): void {
 // a toast) so the user fixes it; a commit forced by leaving the tool (leaving=true) silently
 // drops the invalid active polygon and commits the rest.
 export function commitDraw(leaving = false): void {
-	if (activeSelfIntersects()) {
+	if (wouldCloseSelfIntersecting()) {
 		if (leaving) { activePath = []; bump(); }
 		else { showToast(SELF_INTERSECT_MSG); return; }
 	}
 	flushOrDiscardActive();
 	if (committed.length === 0) return;
+	clearRedo();
 	const feats = committed;
 	committed = [];
 	activePath = [];
@@ -259,6 +306,7 @@ export function pickLayer(layerId: string): void {
 	if (!layer) return;
 	const t = drawTypeOf(layer.geometryTypes);
 	if (t && t !== drawSession.drawType) {
+		clearRedo();
 		committed = [];
 		activePath = [];
 		drawSession.drawType = t;

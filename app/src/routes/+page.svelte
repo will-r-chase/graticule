@@ -9,7 +9,7 @@
 	import { undo, redo, canUndo, canRedo, pushSnapshot } from '$lib/stores/history.svelte';
 	import { editSession, undoEdit, redoEdit } from '$lib/stores/editSession.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
-	import { drawSession, undoLastVertex } from '$lib/stores/drawSession.svelte';
+	import { drawSession, undoLastVertex, redoLastVertex } from '$lib/stores/drawSession.svelte';
 	import { selection, clearSelection } from '$lib/stores/selection.svelte';
 	import { layerSelection, clearLayerSelection, exitLayer } from '$lib/stores/layerSelection.svelte';
 	import { layers, toggleVisibility, duplicateLayer, removeLayer, reorderLayers, addUploadedLayer } from '$lib/stores/layers.svelte';
@@ -99,10 +99,16 @@
 			if (editSession.activeLayerId) {
 				if (e.shiftKey) redoEdit();
 				else            undoEdit();
-			} else if (toolState.active === 'draw' && (drawSession.committedCount > 0 || drawSession.activeCount > 0)) {
-				// While drawing, Cmd+Z removes the last placed vertex (session-local), leaving
-				// global history untouched until the session commits.
-				if (!e.shiftKey) undoLastVertex();
+			} else if (toolState.active === 'draw') {
+				// While drawing, Cmd+Z / Cmd+Shift+Z drive the session-local vertex undo/redo,
+				// falling through to global history only once the draw stack is exhausted.
+				if (e.shiftKey) {
+					if (drawSession.redoCount > 0) redoLastVertex();
+					else if (canRedo()) redo();
+				} else {
+					if (drawSession.committedCount > 0 || drawSession.activeCount > 0) undoLastVertex();
+					else if (canUndo()) undo();
+				}
 			} else if (e.shiftKey) { if (canRedo()) redo(); }
 			else                   { if (canUndo()) undo(); }
 		}
