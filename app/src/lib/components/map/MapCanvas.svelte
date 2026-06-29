@@ -70,6 +70,7 @@
 	// rubber-band preview from the last placed vertex. Null when not applicable.
 	let drawHover = $state<{ x: number; y: number } | null>(null);
 	let metaHeld = $state(false);     // Cmd/Ctrl held → marquee mode in edit (no marker/feature cursor)
+	let shiftHeld = $state(false);    // Shift held → angle-snap the active draw edge to 15° steps
 	let lastPointerX = 0;
 	let lastPointerY = 0;
 
@@ -486,6 +487,27 @@
 	}
 	setDrawDensifier(densifyForCommit);
 
+	// Angle snapping: with Shift held while drawing a line/polygon, locks the edge from the last
+	// placed vertex to the given canvas-space point onto the nearest 15° step. Snapping in screen
+	// space keeps it visually regular (right angles, regular polygons). Returns the point
+	// unchanged when snapping doesn't apply (no Shift, point mode, or no previous vertex).
+	function angleSnap(target: { x: number; y: number }): { x: number; y: number } {
+		if (!shiftHeld || drawSession.drawType === 'point' || !projection) return target;
+		const active = getActivePath();
+		if (active.length === 0) return target;
+		const p = projection(active[active.length - 1] as [number, number]);
+		if (!p) return target;
+		const lx = p[0] * mapScale + tx;
+		const ly = p[1] * mapScale + ty;
+		const dx = target.x - lx;
+		const dy = target.y - ly;
+		const dist = Math.hypot(dx, dy);
+		if (dist < 1e-6) return target;
+		const step = Math.PI / 12; // 15°
+		const ang = Math.round(Math.atan2(dy, dx) / step) * step;
+		return { x: lx + Math.cos(ang) * dist, y: ly + Math.sin(ang) * dist };
+	}
+
 	// Nearest draft vertex of the targeted feature within VERTEX_HIT_RADIUS, or null.
 	function hitVertex(clientX: number, clientY: number): { arcIndex: number; vertexIndex: number } | null {
 		const draft = getDraft();
@@ -858,7 +880,15 @@
 					return;
 				}
 			}
-			const geo = screenToGeo(e.clientX, e.clientY);
+			// Place at the cursor, or at the angle-snapped point when Shift is held.
+			let geo: [number, number] | null;
+			if (projection && canvasEl && shiftHeld) {
+				const rect = canvasEl.getBoundingClientRect();
+				const sp = angleSnap({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+				geo = projection.invert?.([(sp.x - tx) / mapScale, (sp.y - ty) / mapScale]) ?? null;
+			} else {
+				geo = screenToGeo(e.clientX, e.clientY);
+			}
 			if (geo) placeVertex(geo[0], geo[1]); // null = clicked off-globe; ignore
 			return;
 		}
@@ -1197,6 +1227,7 @@
 
 	function handlePointerMove(e: PointerEvent) {
 		metaHeld = e.metaKey || e.ctrlKey; // keep in sync even if a keyup was missed
+		shiftHeld = e.shiftKey;
 
 		// Rubber-band preview: track the cursor only while a line/polygon is mid-draw, so we
 		// don't repaint the whole canvas on every mouse move in point mode or when idle.
@@ -1942,6 +1973,7 @@
 	$effect(() => {
 		function handleKeyUp(e: KeyboardEvent) {
 			metaHeld = e.metaKey || e.ctrlKey;
+			shiftHeld = e.shiftKey;
 			if (e.key === ' ') {
 				spacePanning = false;
 				if (isDragging) { isDragging = false; }
@@ -1950,6 +1982,7 @@
 
 		function handleKeyDown(e: KeyboardEvent) {
 			metaHeld = e.metaKey || e.ctrlKey;
+			shiftHeld = e.shiftKey;
 			// Don't intercept when focus is in a text field.
 			const tag = (e.target as Element | null)?.tagName;
 			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
@@ -2954,7 +2987,9 @@
 				const activeColor = activeSelfIntersects() ? (errorColor || '#dc2626') : accent;
 				strokePath(active, false, false, activeColor);
 				const last = toScreen(active[active.length - 1]);
-				if (drawHover && last) {
+				// Snap the preview endpoint to 15° when Shift is held, matching placement.
+				const hoverPt = drawHover ? angleSnap(drawHover) : null;
+				if (hoverPt && last) {
 					// Current-position line: last placed vertex → cursor.
 					ctx.save();
 					ctx.strokeStyle = activeColor;
@@ -2962,7 +2997,7 @@
 					ctx.setLineDash([4, 4]);
 					ctx.beginPath();
 					ctx.moveTo(last[0], last[1]);
-					ctx.lineTo(drawHover.x, drawHover.y);
+					ctx.lineTo(hoverPt.x, hoverPt.y);
 					ctx.stroke();
 					ctx.restore();
 					// Polygon closing-edge hint: cursor → first vertex, drawn fainter to
@@ -2976,7 +3011,7 @@
 							ctx.lineWidth = 1.5;
 							ctx.setLineDash([4, 4]);
 							ctx.beginPath();
-							ctx.moveTo(drawHover.x, drawHover.y);
+							ctx.moveTo(hoverPt.x, hoverPt.y);
 							ctx.lineTo(first[0], first[1]);
 							ctx.stroke();
 							ctx.restore();
