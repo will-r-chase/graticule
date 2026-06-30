@@ -7,7 +7,12 @@ A layer is the rendered form of a dataset that you can style or perform operatio
 
 ## Adding layers
 
-Click a data from the catalog or upload a file to add it as a layer. New layers appear at the top of the stack.
+There are two ways to add a layer.
+
+- **From a data source** — click a dataset in the catalog or upload a file, and Graticule adds it as a layer.
+- **As a blank layer** — click the **+** button at the top of the Layers panel to create a layer with no data source. A blank layer opens straight to its **Data** tab, where you can assign a source — any uploaded file or single-layer catalog dataset. You can also leave it source-less and give it geometry by [drawing into it](/canvas-modes/drawing/).
+
+You can change a layer's source at any time from the **Data** tab, and the layer re-renders from the new data while keeping its style. Layers whose geometry you have edited or derived from an operation show as a **Derived dataset**; selecting one of the original sources again restores its clean, unedited geometry.
 
 ## Layer order
 
@@ -37,18 +42,9 @@ The history stack goes back 50 steps.
 
 ---
 
-## Interaction modes
-
-The map canvas has two modes, **Pan** and **Select**, which can be set using the floating toolbar on the canvas.
-
-- **Pan mode** (`V`) — drag to pan or rotate the map. This is the default.
-- **Select mode** (`S`) — click, shift-click, or drag to select layers and features.
-
-Press `V` or `S` to switch modes. In select mode, hold `Space` to temporarily pan without switching modes.
-
 ## Selecting layers
 
-Layers can be selected directly from the layers panel by clicking them or on the canvas while in select mode.
+Layers can be selected directly from the layers panel by clicking them, or on the canvas while in [Select mode](/canvas-modes/overview/#select-mode).
 
 - **Click** a layer to select it. **Shift+click** to range-select, **Cmd+click** to toggle individual layers in or out.
 - Selected layers are highlighted on the canvas with visual feedback tuned to geometry type: bounding box strokes for all types, fill tint and outline thickening for polygons, stroke tint for lines, and halos for points.

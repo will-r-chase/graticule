@@ -46,6 +46,13 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Canvas Modes',
+					items: [
+						{ label: 'Overview', slug: 'canvas-modes/overview' },
+						{ label: 'Drawing', slug: 'canvas-modes/drawing' },
+					],
+				},
+				{
 					label: 'Features',
 					items: [
 						{ label: 'Working with Features', slug: 'features/working-with-features' },

@@ -17,7 +17,8 @@ description: A reference of all keyboard shortcuts in Graticule.
 | `V`            | Switch to Pan mode                            |
 | `S`            | Switch to Select mode                         |
 | `E`            | Switch to Edit mode                           |
-| `Space` (hold) | Temporarily pan while in Select or Edit mode  |
+| `D`            | Switch to Draw mode                           |
+| `Space` (hold) | Temporarily pan while in Select, Edit, or Draw mode |
 
 ## Selection
 
@@ -52,3 +53,13 @@ description: A reference of all keyboard shortcuts in Graticule.
 | `Delete` / `Backspace` | Delete selected vertices                   |
 | `Arrow keys`           | Nudge selected vertices by 1px             |
 | `Shift` + `Arrow keys` | Nudge selected vertices by 10px            |
+
+## While drawing
+
+| Shortcut        | Action                                              |
+| --------------- | --------------------------------------------------- |
+| `Enter`         | Finish the current shape, then commit the session   |
+| `Escape`        | Cancel the current shape, then clear the session    |
+| `Cmd+Z`         | Remove the last placed vertex                       |
+| `Cmd+Shift+Z`   | Restore the last removed vertex                      |
+| `Shift` (hold)  | Snap the current edge to the nearest 15°            |

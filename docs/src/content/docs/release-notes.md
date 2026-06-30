@@ -2,6 +2,35 @@
 title: Release Notes
 ---
 
+## June 29, 2026
+
+**Drawing**
+
+This release introduces the Draw tool for creating your own features directly on the map, along with a new Data tab for switching a layer's source and a button for creating empty layers.
+
+### New Features
+
+#### Drawing
+
+You can now draw your own features directly on the map.
+
+- Pick the Draw tool from the toolbar (**D**), then choose a geometry type from the bar at the bottom: **polygon**, **line**, or **point**.
+- For points, each click drops a point. For lines and polygons, click to place each vertex and double-click to finish the shape. Finished shapes stay on the map while you keep drawing more.
+- Press **Enter** to finish the current shape, or **Esc** to cancel it — press **Esc** again to clear everything you have drawn this session.
+- Press **Cmd/Ctrl-Z** to remove the last vertex you placed, and **Cmd/Ctrl-Shift-Z** to put it back.
+- Hold **Shift** while drawing to lock each edge to the nearest 15° step, so you can draw right angles and regular shapes cleanly.
+- Turn on the magnet button to snap each vertex to existing vertices, whether on visible layers or on the shape you are drawing.
+- While you draw a polygon, Graticule highlights any edges that cross and stops you from finishing a shape that crosses itself.
+- New shapes go to a new layer by default. Choose **Target layer** to draw into an existing layer instead, or **New layer** to switch back. Click **Done** to commit your work.
+
+#### Layer Data
+
+- The new **Data** tab within the layer settings shows a layer's data source and lets you switch it to another uploaded or catalog dataset.
+- Layers you have edited show as a **Derived dataset**; selecting an original source again restores its clean geometry.
+- The new **+** button at the top of the Layers panel creates an empty layer for which you can select a data source.
+
+---
+
 ## June 20, 2026
 
 **Vertex Editing**
