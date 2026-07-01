@@ -4,8 +4,16 @@ import { feature } from 'topojson-client';
 import type { Topology } from 'topojson-specification';
 import type { WorkerRequest, WorkerResponse, PathCommand, SerializedChunk } from './types';
 import { applyChaikinToTopology } from '../utils/chaikin';
+import { applyBezierToTopology } from '../utils/bezierTopology';
 import { buildBezierArcs, arcRingToPath } from '../utils/bezier';
 import type { PathRecorder } from '../utils/bezier';
+
+// Spike flag: when true, bezier smoothing runs in geographic space
+// (applyBezierToTopology) and renders through the standard d3.geoPath pipeline,
+// which handles antimeridian/hemisphere/viewport clipping correctly. When false,
+// the original screen-space pipeline (buildBezierArcs + arcRingToPath) runs.
+// Kept as a flag for A/B comparison during evaluation.
+const GEO_SPACE_BEZIER: boolean = true;
 
 const allProjections = { ...d3, ...d3gp } as Record<string, unknown>;
 
@@ -84,11 +92,20 @@ function handleBuildPaths(msg: Extract<WorkerRequest, { type: 'BUILD_PATHS' }>):
 	const proj = buildProjection(projId, width, height, rotate);
 	if (!proj) return [];
 
+	// Geo-space bezier: smooth the topology's arcs in geographic space, then fall
+	// through to the standard per-feature d3.geoPath pipeline below — no special
+	// path building needed.
+	let renderTopo = topo;
+	if (processing.bezierEnabled && GEO_SPACE_BEZIER) {
+		const { bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias } = processing;
+		renderTopo = applyBezierToTopology(topo, bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias);
+	}
+
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const anyTopo = topo as any;
+	const anyTopo = renderTopo as any;
 	const objectName = Object.keys(anyTopo.objects)[0];
 
-	if (processing.bezierEnabled) {
+	if (processing.bezierEnabled && !GEO_SPACE_BEZIER) {
 		const { bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias } = processing;
 		const bezierArcs = buildBezierArcs(topo as Topology, proj, bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias, width, height);
 		const recorder = new CommandRecorder();
@@ -110,7 +127,7 @@ function handleBuildPaths(msg: Extract<WorkerRequest, { type: 'BUILD_PATHS' }>):
 	}
 
 	// Build one path entry per feature (non-point geometry only).
-	const data = feature(topo as Topology, anyTopo.objects[objectName]) as {
+	const data = feature(renderTopo as Topology, anyTopo.objects[objectName]) as {
 		type?: string;
 		features?: { geometry?: { type?: string } }[];
 	};
