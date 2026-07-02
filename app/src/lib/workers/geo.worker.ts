@@ -5,7 +5,7 @@ import type { Topology } from 'topojson-specification';
 import type { WorkerRequest, WorkerResponse, PathCommand, SerializedChunk } from './types';
 import { applyChaikinToTopology } from '../utils/chaikin';
 import { applyBezierToTopology } from '../utils/bezierTopology';
-import { buildBezierArcs, arcRingToPath } from '../utils/bezier';
+import { buildBezierArcs, arcRingToPath, ringStats } from '../utils/bezier';
 import type { PathRecorder } from '../utils/bezier';
 
 // Spike flag: when true, bezier smoothing runs in geographic space
@@ -13,7 +13,7 @@ import type { PathRecorder } from '../utils/bezier';
 // which handles antimeridian/hemisphere/viewport clipping correctly. When false,
 // the original screen-space pipeline (buildBezierArcs + arcRingToPath) runs.
 // Kept as a flag for A/B comparison during evaluation.
-const GEO_SPACE_BEZIER: boolean = true;
+const GEO_SPACE_BEZIER: boolean = false;
 
 const allProjections = { ...d3, ...d3gp } as Record<string, unknown>;
 
@@ -107,15 +107,16 @@ function handleBuildPaths(msg: Extract<WorkerRequest, { type: 'BUILD_PATHS' }>):
 
 	if (processing.bezierEnabled && !GEO_SPACE_BEZIER) {
 		const { bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias } = processing;
-		const bezierArcs = buildBezierArcs(topo as Topology, proj, bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias, width, height);
+		const { bezierArcs, geoArcs } = buildBezierArcs(topo as Topology, proj, bezierCurveType, bezierTension, bezierAlpha, bezierContinuity, bezierBias, width, height);
+		ringStats.reset();
 		const recorder = new CommandRecorder();
 		for (const objName of Object.keys(anyTopo.objects)) {
 			for (const geom of anyTopo.objects[objName].geometries) {
 				const vp: [number, number] = [width, height];
 				if (geom.type === 'Polygon') {
-					for (const ring of geom.arcs) arcRingToPath(ring, bezierArcs, recorder, true, proj, vp);
+					for (const ring of geom.arcs) arcRingToPath(ring, bezierArcs, recorder, true, proj, vp, geoArcs);
 				} else if (geom.type === 'MultiPolygon') {
-					for (const poly of geom.arcs) for (const ring of poly) arcRingToPath(ring, bezierArcs, recorder, true, proj, vp);
+					for (const poly of geom.arcs) for (const ring of poly) arcRingToPath(ring, bezierArcs, recorder, true, proj, vp, geoArcs);
 				} else if (geom.type === 'LineString') {
 					arcRingToPath(geom.arcs, bezierArcs, recorder, false);
 				} else if (geom.type === 'MultiLineString') {
@@ -123,6 +124,7 @@ function handleBuildPaths(msg: Extract<WorkerRequest, { type: 'BUILD_PATHS' }>):
 				}
 			}
 		}
+		ringStats.report(`${id} ${projId}`);
 		return [{ commands: recorder.commands, bbox: [-Infinity, -Infinity, Infinity, Infinity] }];
 	}
 

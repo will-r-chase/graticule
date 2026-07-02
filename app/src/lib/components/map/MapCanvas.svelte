@@ -747,7 +747,7 @@
 		].join('|');
 		if (editBezierPath && editBezierKey === key) return editBezierPath;
 		try {
-			const bezierArcs = buildBezierArcs(
+			const { bezierArcs, geoArcs } = buildBezierArcs(
 				draft, proj, processing.bezierCurveType, processing.bezierTension,
 				processing.bezierAlpha, processing.bezierContinuity, processing.bezierBias, width, height,
 			);
@@ -756,9 +756,9 @@
 			const objName = Object.keys(draft.objects)[0];
 			for (const geom of draft.objects[objName].geometries) {
 				if (geom.type === 'Polygon') {
-					for (const ring of geom.arcs) arcRingToPath(ring, bezierArcs, path, true, proj, vp);
+					for (const ring of geom.arcs) arcRingToPath(ring, bezierArcs, path, true, proj, vp, geoArcs);
 				} else if (geom.type === 'MultiPolygon') {
-					for (const poly of geom.arcs) for (const ring of poly) arcRingToPath(ring, bezierArcs, path, true, proj, vp);
+					for (const poly of geom.arcs) for (const ring of poly) arcRingToPath(ring, bezierArcs, path, true, proj, vp, geoArcs);
 				} else if (geom.type === 'LineString') {
 					arcRingToPath(geom.arcs, bezierArcs, path, false);
 				} else if (geom.type === 'MultiLineString') {
