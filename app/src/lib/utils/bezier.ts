@@ -1,7 +1,7 @@
 import * as d3 from 'd3-geo';
 import type { Topology } from 'topojson-specification';
 import type { BezierCurveType } from '$lib/types';
-import { rejoinRing, makeAntimeridianBoundary } from './rejoin';
+import { rejoinRing, ringGeoCoords, makeAntimeridianBoundary, makeHemisphereBoundary } from './rejoin';
 
 export type BezierSegment = {
 	cp1x: number;
@@ -25,7 +25,18 @@ export type BezierSegment = {
 	vpH?: number;
 };
 
-export type BezierArc = { sx: number; sy: number; segs: BezierSegment[] };
+export type BezierArc = {
+	sx: number;
+	sy: number;
+	segs: BezierSegment[];
+	// D3 clipped the entire arc away — the ring passes outside the clip region here.
+	empty?: boolean;
+	// The arc's first/last original vertices were clipped away, so visible geometry
+	// begins/ends at a horizon crossing instead of the arc endpoint. Set only for
+	// small-circle (hemisphere) clips — the antimeridian clip splits but never removes.
+	trimmedStart?: boolean;
+	trimmedEnd?: boolean;
+};
 
 // Re-exported for convenience — defined in types.ts.
 export type { BezierCurveType };
@@ -117,42 +128,21 @@ export function buildBezierArcs(
 	// Approximate canvas width/height from the projection's translate (fitSize sets it to [w/2, h/2]).
 	const projWidth  = proj.translate()[0] * 2;
 	const projHeight = proj.translate()[1] * 2;
-	// Points that project beyond this distance are treated as invalid.
-	// Orthographic already returns null for back-hemisphere points; this threshold
-	// catches azimuthal and conic projections that return extreme (but non-null)
-	// coordinates for out-of-domain points.
-	const MAX_COORD = Math.max(projWidth, projHeight) * 3;
 
-	// For projections that have a small-circle preclip (e.g. orthographic at 90°,
-	// gnomonic at ~60°), the direct proj(point) call does NOT apply d3's stream-based
-	// preclip — it just runs the raw projection math.  For orthographic in particular,
-	// back-hemisphere points return valid but wrong screen coordinates that land *inside*
-	// the sphere circle, causing ghost features and evenodd fill artifacts.  We manually
-	// replicate the preclip by checking geoDistance against the clip angle.
-	//
-	// Conic projections return clipAngle = 0 (meaning "use antimeridian clip, no small
-	// circle") — applying geoDistance at 0° would filter every point.  Wide-angle
-	// projections (stereographic 142°, azimuthal equal-area ~180°) are also excluded;
-	// their out-of-clip points project to extreme coordinates caught by MAX_COORD.
-	// geoAlbersUsa has no clipAngle method at all, so we guard with typeof.
+	// rotFn converts between geographic and rotated-frame coordinates. Used to
+	// recover crossLat/exitSide when classifying D3 sub-path splits, and for the
+	// clip-circle trim detection below. geoAlbersUsa and other composite
+	// projections have no rotate method, so guard with typeof.
 	const rot = typeof proj.rotate === 'function' ? proj.rotate() : ([0, 0, 0] as [number, number, number]);
-	// rotFn is used after D3 splits an arc to recover crossLat/exitSide from the
-	// two geo vertices that straddle the antimeridian crossing.
 	const rotFn = d3.geoRotation(rot);
 	const clipAngle = typeof proj.clipAngle === 'function' ? proj.clipAngle() : null;
-	// Apply the distance check only for true hemisphere-style clips (roughly 45°–91°).
-	// This catches orthographic (90.000001°) and gnomonic (~60°) while leaving
-	// conic (0°) and wide-angle azimuthal (>91°) projections for MAX_COORD filtering.
-	const clipDistRad = (clipAngle !== null && clipAngle > 0 && clipAngle <= 91)
-		? clipAngle * Math.PI / 180
-		: Infinity;
-	// True whenever D3 uses a small-circle preclip for this projection — regardless of
-	// the clip angle. Used to classify D3 sub-path splits: if the projection has any
-	// small-circle preclip (clipAngle > 0), splits come from that preclip and should be
-	// treated as hemisphere breaks. If clipAngle is 0 (conic, antimeridian-only) or null
-	// (no clipAngle method), splits are antimeridian or viewport breaks instead.
-	// Note: clipDistRad uses a ≤91° threshold for a different reason (point filtering),
-	// so these two variables serve separate concerns.
+	// True whenever D3 uses a small-circle preclip for this projection: the whole
+	// azimuthal family — orthographic (90°), gnomonic (~60°), stereographic (142°),
+	// azimuthal equal-area/equidistant (~180°). For these, every D3 sub-path split
+	// is a hemisphere (horizon) crossing. clipAngle = 0 is a sentinel meaning
+	// "antimeridian preclip only" (conic, cylindrical, most world projections) —
+	// there, splits are antimeridian crossings. Since mappy never sets clipExtent,
+	// there is no viewport postclip and no other source of splits.
 	const hasSmallCircleClip = clipAngle !== null && clipAngle > 0;
 
 	// Diagonal width/height for threshold calculations — uses the larger of the two
@@ -179,6 +169,12 @@ export function buildBezierArcs(
 	// midpoints inserted. Scale-relative so behaviour is consistent across canvases.
 	const densifyMaxPx = Math.max(24, projMax * 0.02);
 
+	// Trim detection for small-circle clips: an arc whose first/last vertex lies
+	// beyond the clip radius starts/ends at a horizon crossing the per-arc split
+	// machinery cannot see. Ring assembly synthesizes seam breaks from these flags.
+	const clipRad = hasSmallCircleClip ? (clipAngle as number) * Math.PI / 180 : Infinity;
+	const clipCenterGeo = rotFn.invert([0, 0] as [number, number]) as [number, number];
+
 	const geoArcs: [number, number][][] = [];
 	const _result = (anyTopo.arcs as number[][][]).map((arc: number[][]) => {
 		_totalArcs++;
@@ -194,6 +190,8 @@ export function buildBezierArcs(
 		}
 		const geo = densifyArc(geoRaw, proj, densifyMaxPx);
 		geoArcs.push(geo);
+		const trimmedStart = hasSmallCircleClip && d3.geoDistance(geo[0], clipCenterGeo) > clipRad;
+		const trimmedEnd   = hasSmallCircleClip && d3.geoDistance(geo[geo.length - 1], clipCenterGeo) > clipRad;
 
 		// Feed arc vertices through D3's full pipeline (precision=0 → no resampling,
 		// just clipping). D3's preclip (antimeridian or small-circle) splits the arc
@@ -225,7 +223,7 @@ export function buildBezierArcs(
 		}
 		stream.lineEnd();
 
-		if (dSubPaths.length === 0) { _emptyArcs++; return { sx: 0, sy: 0, segs: [] }; }
+		if (dSubPaths.length === 0) { _emptyArcs++; return { sx: 0, sy: 0, segs: [], empty: geo.length > 0 }; }
 		if (dSubPaths.length > 1)   _splitArcs++;
 
 		const sx = dSubPaths[0][0][0];
@@ -405,7 +403,7 @@ export function buildBezierArcs(
 			} // end segment loop
 		} // end sub-path loop
 
-		return { sx, sy, segs };
+		return { sx, sy, segs, trimmedStart, trimmedEnd };
 	});
 
 	proj.precision(origPrecision);
@@ -1009,9 +1007,13 @@ export function arcRingToPath(arcIndices: number[], bezierArcs: BezierArc[], rec
 	// a single reconstructable break type and no plain clamp breaks mixed in.
 	if (close && !isComposite) {
 		let antiN = 0, hemiN = 0, vpN = 0, otherN = 0;
+		let trimN = 0, arcCount = 0, emptyCount = 0;
 		for (const idx of arcIndices) {
 			const arc = bezierArcs[idx < 0 ? ~idx : idx];
 			if (!arc) continue;
+			arcCount++;
+			if (arc.segs.length === 0) emptyCount++;
+			if (arc.trimmedStart || arc.trimmedEnd || arc.empty) trimN++;
 			for (const seg of arc.segs) {
 				if (!seg.isBreak) continue;
 				if      (seg.breakType === 'antimeridian') antiN++;
@@ -1021,6 +1023,26 @@ export function arcRingToPath(arcIndices: number[], bezierArcs: BezierArc[], rec
 			}
 		}
 		const hasAnti = antiN > 0, hasHemi = hemiN > 0, hasVp = vpN > 0, hasOther = otherN > 0;
+		// Hemisphere rings need the rejoin whenever the ring interacts with the
+		// horizon at all: internal breaks, trimmed/empty arcs (seam crossings the
+		// split machinery can't see), or even a fully-clipped ring that may
+		// enclose the whole visible cap.
+		const hasHemiWork = hasHemi || trimN > 0;
+		const allClipped = arcCount > 0 && emptyCount === arcCount;
+
+		// Wide clips (clipAngle > 90, e.g. stereographic/azimuthal): a clean,
+		// fully-visible ring may still contain the view's ANTIPODE — the excluded
+		// cap — in which case its clipped outline includes the horizon circle
+		// (d3's cleanInside rule) and evenodd fill would otherwise invert. One
+		// containment test routes such rings through the rejoin's N=0 path.
+		let cleanEnclosesCap = false;
+		if (proj && geoArcs && !hasAnti && !hasHemi && !hasVp && !hasOther && trimN === 0 && !allClipped &&
+			typeof proj.clipAngle === 'function' && (proj.clipAngle() ?? 0) > 90 &&
+			typeof proj.rotate === 'function') {
+			const antipode = d3.geoRotation(proj.rotate()).invert([180, 0] as [number, number]) as [number, number];
+			const rg = ringGeoCoords(arcIndices, geoArcs);
+			cleanEnclosesCap = rg.length >= 4 && d3.geoContains({ type: 'Polygon', coordinates: [rg] }, antipode);
+		}
 
 		// Break-signature diagnostics: which combinations occur, and which path handles them.
 		const sig = [
@@ -1032,9 +1054,11 @@ export function arcRingToPath(arcIndices: number[], bezierArcs: BezierArc[], rec
 		const route =
 			proj && geoArcs && hasAnti && !hasHemi && !hasOther           ? '→rejoinAnti'
 			: proj && hasAnti && !hasHemi && !hasOther && antiN <= 2      ? '→reconAnti'
+			: proj && geoArcs && !hasAnti && !hasVp && !hasOther && (hasHemiWork || cleanEnclosesCap) ? '→rejoinHemi'
 			: proj && hasHemi && !hasAnti && !hasVp && !hasOther          ? '→reconHemi'
 			: viewport && hasVp && !hasAnti && !hasHemi && !hasOther      ? '→reconVp'
-			: sig === 'clean'                                             ? ''
+			: sig === 'clean' && !allClipped                              ? ''
+			: sig === 'clean'                                             ? 'allClipped'
 			:                                                               '→fallback';
 		ringStats.record(route ? `${sig} ${route}` : sig);
 
@@ -1051,9 +1075,20 @@ export function arcRingToPath(arcIndices: number[], bezierArcs: BezierArc[], rec
 				return;
 			}
 		}
-		if (proj && hasHemi && !hasAnti && !hasVp && !hasOther) {
-			arcRingReconstructHemisphere(arcIndices, bezierArcs, recorder, proj);
-			return;
+		// Hemisphere rings need the rejoin whenever the ring interacts with the
+		// horizon at all: internal breaks, trimmed/empty arcs (seam crossings
+		// invisible to the split machinery), or a fully-clipped ring that may
+		// enclose the whole visible cap.
+		if (proj && !hasAnti && !hasVp && !hasOther && (hasHemiWork || cleanEnclosesCap || (allClipped && geoArcs))) {
+			const rClipAngle = typeof proj.clipAngle === 'function' ? proj.clipAngle() : null;
+			if (geoArcs && rClipAngle !== null && rClipAngle > 0) {
+				rejoinRing(arcIndices, bezierArcs, geoArcs, recorder, makeHemisphereBoundary(proj, rClipAngle), 'hemisphere');
+				return;
+			}
+			if (hasHemi) {
+				arcRingReconstructHemisphere(arcIndices, bezierArcs, recorder, proj);
+				return;
+			}
 		}
 		if (viewport && hasVp && !hasAnti && !hasHemi && !hasOther) {
 			arcRingReconstructViewport(arcIndices, bezierArcs, recorder, viewport[0], viewport[1]);

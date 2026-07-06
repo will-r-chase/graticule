@@ -7,13 +7,16 @@ import type { BezierArc, BezierSegment, PathRecorder } from './bezier';
  * d3-geo's clipRejoin:
  *
  * 1. Walk the ring's arcs, collecting visible bezier runs and boundary
- *    crossing nodes (exit/entry pairs with a boundary parameter t).
+ *    crossing nodes (exit/entry pairs with a boundary parameter t). For
+ *    hemisphere clips this includes seam crossings synthesized from
+ *    trimmed/empty arcs — see collectRing.
  * 2. Sort all nodes by t. The boundary stretches between consecutive sorted
  *    nodes alternate between ring-interior and ring-exterior; a single
- *    containment bit — does the ring contain the boundary's reference point,
- *    which sits at the t-wrap? — fixes the parity. Interior stretches are the
- *    portions of the boundary the clip cut the ring along, i.e. the seams to
- *    seal.
+ *    containment bit fixes the parity. The bit comes from probing the stretch
+ *    farthest from every crossing (midpoint of the largest t-gap) with a
+ *    spherical point-in-ring test — see the parity section in rejoinRing.
+ *    Interior stretches are the portions of the boundary the clip cut the
+ *    ring along, i.e. the seams to seal.
  * 3. Emit sub-polygons by alternating walks: from an entry node, follow ring
  *    runs to the structurally-next exit, then trace the exit's interior
  *    boundary stretch to the entry at its far end; repeat until the walk
@@ -22,7 +25,13 @@ import type { BezierArc, BezierSegment, PathRecorder } from './bezier';
  *
  * Handles any number of crossings (no N≤2 gate), including odd counts —
  * pole-enclosing rings legitimately cross the antimeridian an odd number of
- * times.
+ * times. Rings with NO crossings are handled too: they may enclose the whole
+ * clip region (emit the boundary circle), enclose the excluded cap (emit ring
+ * + boundary circle, d3's "cleanInside" case), or simply not interact with
+ * the boundary (plain closed ring).
+ *
+ * See docs/bezier-pipeline.md for the full picture of the pipeline, the
+ * artifact cases each piece addresses, and the offline verification harness.
  */
 
 // A clip boundary: parameterises crossing points along the boundary loop,
@@ -37,12 +46,19 @@ export interface RejoinBoundary {
 	// false the sweep is monotonic (either direction); when true it passes
 	// through the tMax/tMin wrap. Exact endpoints are the caller's job.
 	trace(fromT: number, toT: number, throughWrap: boolean, recorder: PathRecorder): void;
-	// Does the ring (geographic coordinates, degrees) contain the boundary's
-	// reference point (located at the t-wrap)? Decides stretch parity.
+	// Geographic point on the boundary at parameter t, nudged slightly inside
+	// the clip region. Used as the containment probe that decides stretch parity.
+	pointAt(t: number): [number, number] | null;
+	// Does the ring (geographic coordinates, degrees) contain the boundary
+	// itself? Only consulted for rings with no crossings — where the whole
+	// boundary lies on one side of the ring, so probing any boundary point
+	// answers for all of them. True means the boundary circle is part of the
+	// ring's clipped outline (see the N === 0 branch of rejoinRing).
 	ringContainsRef(ringGeo: [number, number][]): boolean;
-	// Emitted when a ring has no crossings but contains the reference point:
-	// the ring encloses the whole clip region, so its visible outline is the
-	// entire boundary.
+	// Emits the entire boundary as a closed loop. Used for crossing-free rings
+	// that contain the boundary: alone when the ring is invisible (it encloses
+	// the whole clip region), together with the ring itself when visible (it
+	// encloses the excluded cap and renders "inside-out" under evenodd).
 	fullBoundary?(recorder: PathRecorder): void;
 }
 
@@ -59,16 +75,25 @@ interface RingSeg { startX: number; startY: number; cmds: SegCmd[] }
 // Collects the ring's visible bezier runs (segs) and boundary crossings
 // (breaks) by walking the arc list, honouring the ~idx reversal convention.
 // Structure: run i ends at break i's exit; run i+1 starts at break i's entry;
-// the final run (index N) wraps into run 0 via the ring closure.
+// the final run wraps into run 0 via the ring closure.
+//
+// For hemisphere boundaries it also SYNTHESIZES seam breaks the per-arc split
+// machinery cannot see: when an arc's trimmed end meets the next arc's trimmed
+// start (possibly across entirely-clipped arcs), the ring left and re-entered
+// the clip region at that arc seam. A wrap seam (ring end ↔ ring start) is
+// appended without an extra run — the walk's modulo indexing maps its entry
+// (segIdx N ≡ 0) onto run 0 naturally.
 function collectRing(
 	arcIndices: number[],
 	bezierArcs: BezierArc[],
 	breakType: BezierSegment['breakType']
-): { segs: RingSeg[]; ringBreaks: RingBreak[] } {
+): { segs: RingSeg[]; ringBreaks: RingBreak[]; anyVisible: boolean } {
 	const segs: RingSeg[] = [];
 	const ringBreaks: RingBreak[] = [];
 	let curStartX = 0, curStartY = 0, curCmds: SegCmd[] = [];
-	let started = false;
+	let anyVisible = false, gapPending = false, prevEndTrimmed = false, firstStartTrimmed = false;
+	let firstX = 0, firstY = 0, lastX = 0, lastY = 0;
+	const seams = breakType === 'hemisphere';
 
 	const flushSeg = (brk: RingBreak) => {
 		segs.push({ startX: curStartX, startY: curStartY, cmds: curCmds });
@@ -81,14 +106,30 @@ function collectRing(
 	for (const idx of arcIndices) {
 		const reversed = idx < 0;
 		const arc = bezierArcs[reversed ? ~idx : idx];
-		if (!arc || arc.segs.length === 0) continue;
+		if (!arc) continue;
+		if (arc.segs.length === 0) {
+			if (anyVisible) gapPending = true; else firstStartTrimmed = true;
+			continue;
+		}
+		const startTrim = reversed ? !!arc.trimmedEnd : !!arc.trimmedStart;
+		const endTrim   = reversed ? !!arc.trimmedStart : !!arc.trimmedEnd;
+		const aFirstX = reversed ? arc.segs[arc.segs.length - 1].ex : arc.sx;
+		const aFirstY = reversed ? arc.segs[arc.segs.length - 1].ey : arc.sy;
+
+		if (!anyVisible) {
+			anyVisible = true;
+			firstX = aFirstX; firstY = aFirstY;
+			firstStartTrimmed = firstStartTrimmed || startTrim;
+			curStartX = aFirstX; curStartY = aFirstY;
+		} else if (seams && (gapPending || prevEndTrimmed || startTrim)) {
+			flushSeg({ exitX: lastX, exitY: lastY, entryX: aFirstX, entryY: aFirstY, crossLat: 0, exitSide: 0 });
+		}
+		gapPending = false;
+		prevEndTrimmed = endTrim;
+		lastX = reversed ? arc.sx : arc.segs[arc.segs.length - 1].ex;
+		lastY = reversed ? arc.sy : arc.segs[arc.segs.length - 1].ey;
 
 		if (reversed) {
-			if (!started) {
-				const last = arc.segs[arc.segs.length - 1];
-				curStartX = last.ex; curStartY = last.ey;
-				started = true;
-			}
 			for (let i = arc.segs.length - 1; i >= 0; i--) {
 				const seg = arc.segs[i];
 				const toX = i === 0 ? arc.sx : arc.segs[i - 1].ex;
@@ -106,7 +147,6 @@ function collectRing(
 				}
 			}
 		} else {
-			if (!started) { curStartX = arc.sx; curStartY = arc.sy; started = true; }
 			for (const seg of arc.segs) {
 				if (seg.isBreak && seg.breakType === breakType) {
 					flushSeg({
@@ -124,7 +164,12 @@ function collectRing(
 	// Last run has no following break — the ring closes back into segs[0].
 	segs.push({ startX: curStartX, startY: curStartY, cmds: curCmds });
 
-	return { segs, ringBreaks };
+	// Wrap seam: ring end and ring start are separated by the clip region.
+	if (seams && anyVisible && (gapPending || prevEndTrimmed || firstStartTrimmed)) {
+		ringBreaks.push({ exitX: lastX, exitY: lastY, entryX: firstX, entryY: firstY, crossLat: 0, exitSide: 0 });
+	}
+
+	return { segs, ringBreaks, anyVisible };
 }
 
 // Assembles a ring's geographic coordinates from geoArcs, honouring reversal.
@@ -145,6 +190,13 @@ export function ringGeoCoords(arcIndices: number[], geoArcs: [number, number][][
 		const first = ring[0], last = ring[ring.length - 1];
 		if (first[0] !== last[0] || first[1] !== last[1]) ring.push([first[0], first[1]]);
 	}
+	// Winding normalization: hole rings are wound opposite to exteriors, and
+	// d3's spherical containment interprets an opposite-wound ring as the
+	// complement of the sphere (it "contains" nearly everything). Under
+	// per-ring evenodd rendering the small-patch interpretation is always the
+	// correct one, so reverse any ring d3 measures as covering more than a
+	// hemisphere.
+	if (ring.length >= 4 && d3.geoArea({ type: 'Polygon', coordinates: [ring] }) > 2 * Math.PI) ring.reverse();
 	return ring;
 }
 
@@ -160,18 +212,26 @@ export function rejoinRing(
 	boundary: RejoinBoundary,
 	breakType: BezierSegment['breakType']
 ): void {
-	const { segs, ringBreaks } = collectRing(arcIndices, bezierArcs, breakType);
+	const { segs, ringBreaks, anyVisible } = collectRing(arcIndices, bezierArcs, breakType);
 	const N = ringBreaks.length;
-	if (segs.length === 0) return;
-
 	const ringGeo = ringGeoCoords(arcIndices, geoArcs);
-	const refInside = boundary.ringContainsRef(ringGeo);
 
 	if (N === 0) {
-		// No crossings: either the ring encloses the whole clip region (emit the
-		// full boundary as its outline) or it never touches the boundary at all
-		// (the caller shouldn't have routed it here — emit nothing).
-		if (refInside && boundary.fullBoundary) boundary.fullBoundary(recorder);
+		// A crossing-free ring lies entirely on one side of the boundary. If it
+		// CONTAINS the boundary (with no crossings, the whole boundary is on one
+		// side of the ring), the boundary circle is part of the ring's clipped
+		// outline: alone for an invisible ring enclosing the clip region, in
+		// addition to the ring itself for a visible ring enclosing the excluded
+		// cap (d3's cleanInside rule).
+		const containsBoundary = boundary.fullBoundary ? boundary.ringContainsRef(ringGeo) : false;
+		if (anyVisible) {
+			recorder.moveTo(segs[0].startX, segs[0].startY);
+			for (const sg of segs) for (const c of sg.cmds) recorder.bezierCurveTo(c.cp1x, c.cp1y, c.cp2x, c.cp2y, c.ex, c.ey);
+			recorder.closePath();
+			if (containsBoundary && boundary.fullBoundary) boundary.fullBoundary(recorder);
+		} else if (containsBoundary && boundary.fullBoundary) {
+			boundary.fullBoundary(recorder);
+		}
 		return;
 	}
 
@@ -206,12 +266,24 @@ export function rejoinRing(
 		}
 	}
 
-	// Interior/exterior stretches alternate along the boundary. The reference
-	// point sits at the t-wrap, so: ring contains ref → the wrap stretch is
-	// interior → interior stretches are (sorted[1]→sorted[2]), …, (sorted[M-1]→
-	// sorted[0] through the wrap). Ring doesn't contain ref → (sorted[0]→
-	// sorted[1]), (sorted[2]→sorted[3]), …, none wrapping.
-	const offset = refInside ? 1 : 0;
+	// Interior/exterior stretches alternate along the boundary; a single
+	// containment bit fixes the parity. Probe the stretch farthest from every
+	// crossing (midpoint of the largest gap in t) — a fixed reference at the
+	// t-wrap is fragile when a ring's crossings cluster around the wrap, as
+	// they do for rings hugging the boundary there.
+	let gi = M - 1, bestGap = sorted[0].t + 2 * Math.PI - sorted[M - 1].t;
+	for (let i = 0; i + 1 < M; i++) {
+		const gap = sorted[i + 1].t - sorted[i].t;
+		if (gap > bestGap) { bestGap = gap; gi = i; }
+	}
+	let tProbe = sorted[gi].t + bestGap / 2;
+	if (tProbe > Math.PI) tProbe -= 2 * Math.PI;
+	const probeGeo = boundary.pointAt(tProbe);
+	const probeInside = probeGeo && ringGeo.length >= 4
+		? d3.geoContains({ type: 'Polygon', coordinates: [ringGeo] }, probeGeo)
+		: false;
+	// The stretch starting at sorted[gi] is interior iff the probe is inside.
+	const offset = ((probeInside ? gi : gi + 1) % 2 + 2) % 2;
 	for (let m = 0; m < M; m += 2) {
 		const ai = (m + offset) % M;
 		const bi = (m + offset + 1) % M;
@@ -226,7 +298,9 @@ export function rejoinRing(
 	const exitOfBreak: BNode[] = [];
 	for (const n of nodes) if (!n.isEntry) exitOfBreak[n.breakIdx] = n;
 
-	const totalSegs = segs.length; // = N + 1
+	// segs.length is N+1 for internal breaks only; when a wrap seam was appended
+	// it equals N — the modulo indexing below handles both shapes.
+	const totalSegs = segs.length;
 
 	// Walks ring runs from an entry node to an exit node, emitting bezier
 	// commands. Bridges run boundaries (only the closure wrap) with a snap
@@ -302,10 +376,11 @@ export function makeAntimeridianBoundary(proj: d3.GeoProjection): RejoinBoundary
 	const rot = typeof proj.rotate === 'function' ? proj.rotate() : ([0, 0, 0] as [number, number, number]);
 	const rotFn = d3.geoRotation(rot);
 
-	// Reference point: the south pole in the rotated frame, mapped back to
-	// geographic coordinates so containment runs on the ring's original coords
-	// (spherical containment is rotation-invariant). Nudged off the exact pole
-	// and seam for numerical stability.
+	// Reference point for ringContainsRef (N=0 rings only — in practice nearly
+	// unreachable for the antimeridian, since any ring containing it crosses it):
+	// the south pole in the rotated frame, mapped back to geographic coordinates
+	// so containment runs on the ring's original coords (spherical containment
+	// is rotation-invariant). Nudged off the exact pole and seam for stability.
 	const refGeo = rotFn.invert([-180 + EPS, -90 + EPS] as [number, number]) as [number, number];
 
 	// Monotonic sweep from t0 to t1 (either direction), endpoints exclusive.
@@ -380,9 +455,92 @@ export function makeAntimeridianBoundary(proj: d3.GeoProjection): RejoinBoundary
 				sweepSmart(Math.PI, toT, recorder);
 			}
 		},
+		pointAt(t) {
+			const { side, latDeg } = antimeridianFromT(t);
+			return rotFn.invert([side * (180 - 0.5), latDeg] as [number, number]) as [number, number] | null;
+		},
 		ringContainsRef(ringGeo) {
 			if (ringGeo.length < 4) return false;
 			return d3.geoContains({ type: 'Polygon', coordinates: [ringGeo] }, refGeo);
+		},
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Hemisphere (horizon-circle) boundary
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a RejoinBoundary for the horizon circle of a projection with a
+ * small-circle preclip (orthographic, gnomonic, stereographic, azimuthal —
+ * the azimuthal family, for which the projected horizon is a screen circle).
+ * t = screen angle about the circle centre.
+ *
+ * Note: pointAt assumes gamma rotation is 0 (screen angle ↔ spherical bearing
+ * mapping); mappy's rotations are [lambda, phi, 0].
+ */
+export function makeHemisphereBoundary(proj: d3.GeoProjection, clipAngle: number): RejoinBoundary {
+	const rot = typeof proj.rotate === 'function' ? proj.rotate() : ([0, 0, 0] as [number, number, number]);
+	const rotFn = d3.geoRotation(rot);
+	const centerPt = proj(rotFn.invert([0, 0] as [number, number]) as [number, number]) as [number, number];
+	const edgePt = proj(rotFn.invert([-(clipAngle - 1e-3), 0] as [number, number]) as [number, number]) as [number, number];
+	const cx = centerPt[0], cy = centerPt[1];
+	const R = Math.hypot(edgePt[0] - cx, edgePt[1] - cy);
+	const STEP = 2 * Math.PI / 360; // ~1° of arc per sample
+
+	const sweep = (a0: number, a1: number, recorder: PathRecorder) => {
+		const total = a1 - a0;
+		const steps = Math.floor(Math.abs(total) / STEP);
+		for (let i = 1; i <= steps; i++) {
+			const a = a0 + (total * i) / (steps + 1);
+			recorder.lineTo(cx + R * Math.cos(a), cy + R * Math.sin(a));
+		}
+	};
+
+	return {
+		tMin: -Math.PI,
+		tMax: Math.PI,
+		t(brk, isEntry) {
+			const x = isEntry ? brk.entryX : brk.exitX;
+			const y = isEntry ? brk.entryY : brk.exitY;
+			return Math.atan2(y - cy, x - cx);
+		},
+		trace(fromT, toT, throughWrap, recorder) {
+			if (!throughWrap) sweep(fromT, toT, recorder);
+			else if (fromT >= toT) { sweep(fromT, Math.PI, recorder); sweep(-Math.PI, toT, recorder); }
+			else { sweep(fromT, -Math.PI, recorder); sweep(Math.PI, toT, recorder); }
+		},
+		pointAt(t) {
+			// Spherical point at screen angle t on the horizon, nudged 0.5° into
+			// the cap. Screen angle → bearing: β = t + π/2 (y-down canvas, north
+			// up, gamma=0). Rotated coords from bearing/distance, then unrotate.
+			const beta = t + Math.PI / 2;
+			const d = (clipAngle - 0.5) * Math.PI / 180;
+			const lat = Math.asin(Math.sin(d) * Math.cos(beta)) * 180 / Math.PI;
+			const lon = Math.atan2(Math.sin(beta) * Math.sin(d), Math.cos(d)) * 180 / Math.PI;
+			return rotFn.invert([lon, lat] as [number, number]) as [number, number] | null;
+		},
+		ringContainsRef(ringGeo) {
+			// N=0 only: does the ring contain the boundary circle? With no
+			// crossings the whole boundary is on one side of the ring, so any
+			// boundary point answers for all of them. Majority-of-3 well-separated
+			// probes guards against one landing on the ring's edge.
+			if (ringGeo.length < 4) return false;
+			const poly = { type: 'Polygon' as const, coordinates: [ringGeo] };
+			let votes = 0;
+			for (const t of [0, 2 * Math.PI / 3, -2 * Math.PI / 3]) {
+				const p = this.pointAt(t);
+				if (p && d3.geoContains(poly, p)) votes++;
+			}
+			return votes >= 2;
+		},
+		fullBoundary(recorder) {
+			recorder.moveTo(cx + R, cy);
+			for (let a = 1; a <= 360; a++) {
+				const r = (a * Math.PI) / 180;
+				recorder.lineTo(cx + R * Math.cos(r), cy + R * Math.sin(r));
+			}
+			recorder.closePath();
 		},
 	};
 }
