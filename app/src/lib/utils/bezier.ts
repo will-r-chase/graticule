@@ -37,6 +37,37 @@ function normLon(lon: number): number {
 	return ((lon % 360) + 540) % 360 - 180;
 }
 
+// Recursively subdivides segments whose projection exceeds maxPx, sampling the
+// great circle between the segment's endpoints. This replaces d3's adaptive
+// resampling, which buildBezierArcs disables via precision(0) to get raw
+// vertices for smoothing — without it, coarse segments passing near a
+// projection pole (e.g. a conic's apex, where tiny geographic steps sweep huge
+// screen angles) render as straight chords cutting across the apex, producing
+// large sail/lens fill artifacts. Depth 8 caps a segment at 256 subdivisions.
+function densifyArc(
+	geoRaw: [number, number][],
+	proj: d3.GeoProjection,
+	maxPx: number
+): [number, number][] {
+	if (geoRaw.length < 2) return geoRaw;
+	const out: [number, number][] = [geoRaw[0]];
+	const push = (a: [number, number], b: [number, number], depth: number) => {
+		if (depth > 0) {
+			const pa = proj(a), pb = proj(b);
+			if (pa && pb && isFinite(pa[0]) && isFinite(pb[0]) &&
+				Math.hypot(pa[0] - pb[0], pa[1] - pb[1]) > maxPx) {
+				const mid = d3.geoInterpolate(a, b)(0.5);
+				push(a, mid, depth - 1);
+				push(mid, b, depth - 1);
+				return;
+			}
+		}
+		out.push(b);
+	};
+	for (let i = 1; i < geoRaw.length; i++) push(geoRaw[i - 1], geoRaw[i], 8);
+	return out;
+}
+
 // Returns the geographic latitude (degrees) where the great-circle arc from
 // [lon0, lat0] to [lon1, lat1] crosses the antimeridian (±180°).
 // Adapted from D3's clipAntimeridianIntersect — inputs and output are in degrees.
@@ -144,19 +175,24 @@ export function buildBezierArcs(
 	const origPrecision = proj.precision();
 	proj.precision(0);
 
+	// Densification threshold: segments longer than this on screen get great-circle
+	// midpoints inserted. Scale-relative so behaviour is consistent across canvases.
+	const densifyMaxPx = Math.max(24, projMax * 0.02);
+
 	const geoArcs: [number, number][][] = [];
 	const _result = (anyTopo.arcs as number[][][]).map((arc: number[][]) => {
 		_totalArcs++;
-		const geo: [number, number][] = [];
+		const geoRaw: [number, number][] = [];
 		if (hasTransform) {
 			let qx = 0, qy = 0;
 			for (const [dqx, dqy] of arc) {
 				qx += dqx; qy += dqy;
-				geo.push([qx * scx + otx, qy * scy + oty]);
+				geoRaw.push([qx * scx + otx, qy * scy + oty]);
 			}
 		} else {
-			for (const [gx, gy] of arc) geo.push([gx, gy]);
+			for (const [gx, gy] of arc) geoRaw.push([gx, gy]);
 		}
+		const geo = densifyArc(geoRaw, proj, densifyMaxPx);
 		geoArcs.push(geo);
 
 		// Feed arc vertices through D3's full pipeline (precision=0 → no resampling,
