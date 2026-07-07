@@ -48,6 +48,36 @@ export interface LayerProcessing {
 	bezierBias: number;          // -1–1, KB only
 }
 
+// 'geometry' renders shapes via LayerStyle; 'label' renders text via LabelStyle.
+// One Layer type for both — label layers reuse all layer machinery (geometryId,
+// history, persistence) and simply ignore processing/style, and vice versa.
+export type LayerKind = 'geometry' | 'label';
+
+export type LabelTextTransform = 'none' | 'uppercase' | 'lowercase' | 'sentence' | 'capitalize';
+
+// Where the text sits relative to its anchor point (9-way grid).
+export type LabelAnchor =
+	| 'center' | 'top' | 'bottom' | 'left' | 'right'
+	| 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+
+// Layer-level label styling. Per-feature data (text content, position, rotation,
+// wrap width) lives in feature properties/geometry, not here.
+export interface LabelStyle {
+	fontFamily: string;
+	fontSize: number;
+	fontWeight: 'normal' | 'bold';
+	italic: boolean;
+	letterSpacing: number;     // px
+	textTransform: LabelTextTransform;
+	color: string;
+	colorOpacity: number;
+	haloColor: string;
+	haloWidth: number;         // px, 0 = no halo
+	anchor: LabelAnchor;
+	lineHeight: number;        // multiplier
+	textAlign: 'left' | 'center' | 'right';
+}
+
 export interface LayerStyle {
 	fill: string;
 	fillOpacity: number;
@@ -81,6 +111,13 @@ export interface Layer {
 	hasTopology: boolean;
 	style: LayerStyle;
 	processing: LayerProcessing;
+	kind: LayerKind;
+	// Which feature property supplies the label text. null until set (label layers only).
+	labelAttribute: string | null;
+	labelStyle: LabelStyle;
+	// Display-only provenance: the source layer's name captured when this layer was
+	// derived (e.g. by createLabelLayer). No live link — informational, null otherwise.
+	derivedFrom: string | null;
 	geometryTypes: string[];
 	// Bumped when bezier settings change so the path cache rebuilds without
 	// re-running the topology pipeline. Bezier runs entirely in the cache builder.

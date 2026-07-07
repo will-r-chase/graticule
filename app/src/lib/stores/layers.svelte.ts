@@ -1,8 +1,9 @@
 import type { Topology } from 'topojson-specification';
 import { geoArea } from 'd3-geo';
-import type { Layer, LayerStyle, LayerProcessing, Dataset } from '$lib/types';
+import type { Layer, LayerStyle, LayerProcessing, LabelStyle, Dataset } from '$lib/types';
 import { catalog } from './catalog.svelte';
 import { countTopoPoints } from '$lib/utils/chaikin';
+import { computeLabelAnchors, guessLabelAttribute } from '$lib/utils/labels';
 import { topologyToAbsolute } from '$lib/utils/topology';
 import { workerChaikin } from '$lib/workers/geoWorker';
 import { workerSimplify } from '$lib/workers/simplifyWorker';
@@ -71,6 +72,26 @@ function defaultStyle() {
 		strokeGap: 4,
 		pointRadius: 3,
 		pointShape: 'symbolCircle',
+	};
+}
+
+// Default label style. Every layer carries one (geometry layers ignore it) so no
+// call site needs undefined-checks; exported for the load path in project.ts.
+export function defaultLabelStyle(): LabelStyle {
+	return {
+		fontFamily: 'Arial',
+		fontSize: 14,
+		fontWeight: 'normal',
+		italic: false,
+		letterSpacing: 0,
+		textTransform: 'none',
+		color: '#161819',
+		colorOpacity: 1,
+		haloColor: '#ffffff',
+		haloWidth: 0,
+		anchor: 'center',
+		lineHeight: 1.2,
+		textAlign: 'center',
 	};
 }
 
@@ -267,6 +288,10 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 				hasTopology: false,
 				style: defaultStyle(),
 				processing: defaultProcessing(),
+				kind: 'geometry',
+				labelAttribute: null,
+				labelStyle: defaultLabelStyle(),
+				derivedFrom: null,
 				geometryTypes: [],
 				bezierCacheKey: 0,
 			});
@@ -290,6 +315,10 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 			hasTopology: false,
 			style: defaultStyle(),
 			processing: defaultProcessing(),
+			kind: 'geometry',
+			labelAttribute: null,
+			labelStyle: defaultLabelStyle(),
+			derivedFrom: null,
 			geometryTypes: [],
 			bezierCacheKey: 0,
 		});
@@ -339,6 +368,10 @@ export function addEmptyLayer(): string {
 		hasTopology: false,
 		style: defaultStyle(),
 		processing: defaultProcessing(),
+		kind: 'geometry',
+		labelAttribute: null,
+		labelStyle: defaultLabelStyle(),
+		derivedFrom: null,
 		geometryTypes: [],
 		bezierCacheKey: 0,
 	});
@@ -363,6 +396,10 @@ export function addUploadedLayer(name: string, topology: Topology, uploadId: str
 		hasTopology: false,
 		style: style ? JSON.parse(JSON.stringify(style)) : defaultStyle(),
 		processing: defaultProcessing(),
+		kind: 'geometry',
+		labelAttribute: null,
+		labelStyle: defaultLabelStyle(),
+		derivedFrom: null,
 		geometryTypes: [],
 		bezierCacheKey: 0,
 	});
@@ -391,6 +428,7 @@ export function duplicateLayer(id: string): void {
 		error: null,
 		style: JSON.parse(JSON.stringify(source.style)),
 		processing: JSON.parse(JSON.stringify(source.processing)),
+		labelStyle: JSON.parse(JSON.stringify(source.labelStyle)),
 	};
 
 	// Copy the derived caches (keyed by layer.id) so the duplicate is immediately renderable;
@@ -402,6 +440,65 @@ export function duplicateLayer(id: string): void {
 
 	// Insert immediately above the original.
 	layers.splice(index, 0, newLayer);
+}
+
+// Creates a label layer from a source layer's on-screen geometry — a one-time
+// derivation (docs/labels-plan.md, D2): one anchor point per feature, all properties
+// copied, text attribute best-guessed. The new layer is fully independent of the
+// source afterwards and persists inline (geometryEdited). Inserted directly above
+// the source. Returns the new layer id, or null if there's no usable geometry.
+// Like other ops, history snapshots are the caller's job (via onComplete).
+export function createLabelLayer(sourceId: string, onComplete?: () => void): string | null {
+	const source = layers.find((l) => l.id === sourceId);
+	const working = workingTopologyData.get(sourceId);
+	if (!source || !working) return null;
+
+	const anchors = computeLabelAnchors(working);
+	if (anchors.length === 0) return null;
+
+	const labelTopology = {
+		type: 'Topology',
+		arcs: [],
+		objects: {
+			labels: {
+				type: 'GeometryCollection',
+				geometries: anchors.map((a) => ({
+					type: 'Point',
+					coordinates: a.coordinates,
+					properties: a.properties,
+				})),
+			},
+		},
+	} as unknown as Topology;
+
+	const id = generateId();
+	const geometryId = generateId();
+	// Provenance label only — the derived geometry lives in rawTopologyData.
+	const datasetId = generateId();
+	const index = layers.findIndex((l) => l.id === sourceId);
+
+	layers.splice(index, 0, {
+		id,
+		geometryId,
+		geometryEdited: true,
+		datasetId,
+		name: `${source.name} labels`,
+		visible: true,
+		loading: true,
+		error: null,
+		hasTopology: false,
+		style: defaultStyle(),
+		processing: defaultProcessing(),
+		kind: 'label',
+		labelAttribute: guessLabelAttribute(anchors.map((a) => a.properties)),
+		labelStyle: defaultLabelStyle(),
+		derivedFrom: source.name,
+		geometryTypes: [],
+		bezierCacheKey: 0,
+	});
+	rawTopologyData.set(geometryId, labelTopology);
+	runLayerPipeline(id, false).then(() => onComplete?.());
+	return id;
 }
 
 export function removeLayer(id: string): void {
@@ -428,6 +525,16 @@ export function setLayerError(id: string, error: string): void {
 export function updateLayerStyle(id: string, patch: Partial<LayerStyle>): void {
 	const layer = layers.find((l) => l.id === id);
 	if (layer) Object.assign(layer.style, patch);
+}
+
+export function updateLayerLabelStyle(id: string, patch: Partial<LabelStyle>): void {
+	const layer = layers.find((l) => l.id === id);
+	if (layer) Object.assign(layer.labelStyle, patch);
+}
+
+export function setLabelAttribute(id: string, attribute: string | null): void {
+	const layer = layers.find((l) => l.id === id);
+	if (layer) layer.labelAttribute = attribute;
 }
 
 // Replaces a layer's geometry while keeping its stable identity (layer.id). Mints a NEW
@@ -678,6 +785,10 @@ function insertLayerAt(
 		hasTopology: false,
 		style: style ? JSON.parse(JSON.stringify(style)) : defaultStyle(),
 		processing: processing ? JSON.parse(JSON.stringify(processing)) : defaultProcessing(),
+		kind: 'geometry',
+		labelAttribute: null,
+		labelStyle: defaultLabelStyle(),
+		derivedFrom: null,
 		geometryTypes: [],
 		bezierCacheKey: 0,
 	});
@@ -730,6 +841,10 @@ export function bakeLayerForEdit(sourceId: string, onReady: (newId: string) => v
 		hasTopology: false,
 		style: JSON.parse(JSON.stringify(source.style)),
 		processing: processingForEdit(source),
+		kind: source.kind,
+		labelAttribute: source.labelAttribute,
+		labelStyle: JSON.parse(JSON.stringify(source.labelStyle)),
+		derivedFrom: source.derivedFrom,
 		geometryTypes: [],
 		bezierCacheKey: 0,
 	});

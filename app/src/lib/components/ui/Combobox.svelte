@@ -69,18 +69,20 @@
 		return [...groups.entries()].map(([group, opts]) => ({ group, opts }));
 	});
 
-	// Close when clicking outside the component.
+	// Close when clicking outside the component. Capture phase, because ancestors
+	// (e.g. the layer accordion) stopPropagation on bubbling clicks, which would
+	// otherwise keep the dropdown open when clicking elsewhere in the panel.
 	$effect(() => {
 		if (!open) return;
-		function handleOutsideClick(e: MouseEvent) {
+		function handleOutsideClick(e: PointerEvent) {
 			if (!containerEl?.contains(e.target as Node)) {
 				open = false;
 				search = '';
 				highlightedIndex = -1;
 			}
 		}
-		document.addEventListener('click', handleOutsideClick);
-		return () => document.removeEventListener('click', handleOutsideClick);
+		document.addEventListener('pointerdown', handleOutsideClick, { capture: true });
+		return () => document.removeEventListener('pointerdown', handleOutsideClick, { capture: true });
 	});
 
 	// Scroll the highlighted item into view when navigating with keyboard.
@@ -102,7 +104,9 @@
 		if (disabled) return;
 		open = true;
 		search = '';
-		highlightedIndex = -1;
+		// Land on the current selection so long lists open scrolled to it
+		// (the highlight effect scrolls the highlighted item into view).
+		highlightedIndex = options.findIndex((o) => o.id === value);
 		inputEl?.focus();
 	}
 
@@ -115,7 +119,11 @@
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'ArrowDown') {
 			e.preventDefault();
-			if (!open) { open = true; return; }
+			if (!open) {
+				open = true;
+				highlightedIndex = options.findIndex((o) => o.id === value);
+				return;
+			}
 			highlightedIndex = Math.min(highlightedIndex + 1, filteredOptions.length - 1);
 		} else if (e.key === 'ArrowUp') {
 			e.preventDefault();

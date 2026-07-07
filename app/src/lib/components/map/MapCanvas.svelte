@@ -6,7 +6,9 @@
 	import { feature } from 'topojson-client';
 	import { workerBuildPaths, workerStoreTopology, workerRemoveTopology } from '$lib/workers/geoWorker';
 	import type { PathCommand } from '$lib/workers/types';
-	import type { LayerProcessing } from '$lib/types';
+	import type { Layer, LayerProcessing } from '$lib/types';
+	import { applyTextTransform, LABEL_ANCHOR_DIR, labelFontString } from '$lib/utils/labels';
+	import { fonts, ensureFontLoaded } from '$lib/stores/fonts.svelte';
 	import { layers, workingTopologyData, layerDrag, deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures } from '$lib/stores/layers.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
 	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
@@ -1952,6 +1954,8 @@
 
 		for (const layer of [...layers].reverse()) {
 			if (!layer.visible) continue;
+			// Label layers aren't hit-testable yet — text hit-testing comes with text edit mode.
+			if (layer.kind === 'label') continue;
 			const chunks = pathCache.get(layer.id);
 			if (chunks === undefined) continue;
 
@@ -2351,11 +2355,89 @@
 		mapView.extent = [westLon, south, eastLon, north];
 	});
 
+	// Draws a label layer: the labelAttribute value as text at each projected anchor.
+	// Text renders zoom-independent (same inverse-scale trick as point symbols) with
+	// the halo stroked under the fill. Multi-line via manual \n breaks; textAlign for
+	// differing line widths comes with text edit mode (step 3).
+	function drawLabelLayer(ctx: CanvasRenderingContext2D, layer: Layer, dim: number): void {
+		if (!projection) return;
+		const attr = layer.labelAttribute;
+		if (!attr) return;
+		const topo = workingTopologyData.get(layer.id);
+		if (!topo) return;
+		const objectName = Object.keys(topo.objects)[0];
+		if (!objectName) return;
+		const data = feature(topo, topo.objects[objectName]) as {
+			features?: { geometry?: { type?: string; coordinates?: unknown }; properties?: Record<string, unknown> }[];
+		};
+		if (!data?.features) return;
+
+		const ls = layer.labelStyle;
+		// Kick off the webfont load if needed (idempotent); when it arrives,
+		// fonts.version bumps and the repaint effect re-renders with the real face.
+		ensureFontLoaded(ls.fontFamily);
+		const dir = LABEL_ANCHOR_DIR[ls.anchor];
+		const gap = dir.x === 0 && dir.y === 0 ? 0 : ls.fontSize * 0.3 + ls.haloWidth;
+		const lineH = ls.fontSize * ls.lineHeight;
+
+		// Same back-hemisphere culling as point symbols: projection(coord) bypasses
+		// d3's stream preclip in rotate mode, so check visibility explicitly.
+		const projCenter: [number, number] | null = interactionMode === 'rotate'
+			? [-projectionStore.rotate[0], -projectionStore.rotate[1]]
+			: null;
+
+		ctx.save();
+		ctx.font = labelFontString(ls);
+		ctx.textAlign = dir.x === -1 ? 'right' : dir.x === 1 ? 'left' : 'center';
+		ctx.textBaseline = 'middle';
+		(ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${ls.letterSpacing}px`;
+		ctx.globalAlpha = ls.colorOpacity * dim;
+
+		for (const f of data.features) {
+			const geom = f?.geometry;
+			if (!geom || geom.type !== 'Point') continue;
+			const coord = geom.coordinates as [number, number];
+			if (projCenter && d3.geoDistance(coord, projCenter) >= Math.PI / 2) continue;
+			const pt = projection(coord);
+			if (!pt) continue;
+
+			const raw = f.properties?.[attr];
+			if (raw === null || raw === undefined || raw === '') continue;
+			const lines = applyTextTransform(String(raw), ls.textTransform).split('\n');
+
+			// First line's y, with middle baselines throughout: centered anchors spread
+			// the block around the point; above-anchors stack up from the gap; below-
+			// anchors stack down from it.
+			const x = dir.x * gap;
+			const y0 =
+				dir.y === 0 ? -((lines.length - 1) / 2) * lineH
+				: dir.y === -1 ? -gap - ls.fontSize / 2 - (lines.length - 1) * lineH
+				: gap + ls.fontSize / 2;
+
+			ctx.save();
+			ctx.translate(pt[0], pt[1]);
+			ctx.scale(1 / mapScale, 1 / mapScale);
+
+			if (ls.haloWidth > 0) {
+				ctx.strokeStyle = ls.haloColor;
+				ctx.lineWidth = ls.haloWidth * 2;
+				ctx.lineJoin = 'round';
+				for (let i = 0; i < lines.length; i++) ctx.strokeText(lines[i], x, y0 + i * lineH);
+			}
+			ctx.fillStyle = ls.color;
+			for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], x, y0 + i * lineH);
+
+			ctx.restore();
+		}
+		ctx.restore();
+	}
+
 	// Repaint the canvas whenever styles, visibility, layer order, or the
 	// path cache changes. No geometry computation happens here — just
 	// stamping pre-built Path2D objects onto the canvas with current styles.
 	$effect(() => {
 		void cacheVersion; // re-run whenever a new path is cached
+		void fonts.version; // re-run when a webfont finishes loading (labels re-render)
 		if (!canvasEl || !width || !height) return;
 
 		const dpr = window.devicePixelRatio || 1;
@@ -2576,6 +2658,13 @@
 				const isMaskLayer = clipBbox.open && clipBbox.mode === 'layer' && layer.id === clipBbox.maskId;
 				const clipFill   = isMaskLayer ? '#e9a400' : null;
 
+				// Label layers draw text at their anchors instead of geometry.
+				if (layer.kind === 'label') {
+					drawLabelLayer(ctx, layer, dim);
+					ctx.globalAlpha = 1;
+					continue;
+				}
+
 			if (hasNonPoint) {
 				const vxMin = -tx / mapScale;
 				const vxMax = (width - tx) / mapScale;
@@ -2698,6 +2787,7 @@
 				ctx.save();
 				for (const layer of [...layers].reverse()) {
 					if (!layer.visible) continue;
+					if (layer.kind === 'label') continue; // no tint/bbox treatment for text yet
 					if (layer.id === enteredId) continue; // entered = opacity knockback only
 					const isSelected = selIds.includes(layer.id);
 					const isHovered  = layer.id === hovId;

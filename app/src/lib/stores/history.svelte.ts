@@ -2,7 +2,8 @@ import { layers, runLayerPipeline, pruneRawTopology } from './layers.svelte';
 import { pruneUploadedDatasets } from './uploadedDatasets.svelte';
 import { projection } from './projection.svelte';
 import { canvasStyles } from './canvasStyles.svelte';
-import type { LayerStyle, LayerProcessing } from '$lib/types';
+import { defaultLabelStyle } from './layers.svelte';
+import type { LayerStyle, LayerProcessing, LabelStyle, LayerKind } from '$lib/types';
 
 const MAX_HISTORY = 50;
 
@@ -19,6 +20,10 @@ interface SnapshotLayer {
 	visible: boolean;
 	style: LayerStyle;
 	processing: LayerProcessing;
+	kind: LayerKind;
+	labelAttribute: string | null;
+	labelStyle: LabelStyle;
+	derivedFrom: string | null;
 	geometryTypes: string[];
 	hasTopology: boolean;
 	error: string | null;
@@ -47,6 +52,10 @@ function capture(): Snapshot {
 			visible: l.visible,
 			style: { ...l.style },
 			processing: { ...l.processing },
+			kind: l.kind,
+			labelAttribute: l.labelAttribute,
+			labelStyle: { ...l.labelStyle },
+			derivedFrom: l.derivedFrom,
 			geometryTypes: [...l.geometryTypes],
 			hasTopology: l.hasTopology,
 			error: l.error,
@@ -99,6 +108,12 @@ function restore(snapshot: Snapshot): void {
 			...sl,
 			style: { ...sl.style },
 			processing: { ...sl.processing },
+			// Fallbacks cover snapshots captured before the label fields existed
+			// (possible within a session that spans the upgrade).
+			kind: sl.kind ?? 'geometry',
+			labelAttribute: sl.labelAttribute ?? null,
+			labelStyle: sl.labelStyle ? { ...sl.labelStyle } : defaultLabelStyle(),
+			derivedFrom: sl.derivedFrom ?? null,
 			geometryTypes: [...sl.geometryTypes],
 			hasTopology: keepGeometry,
 			loading: keepGeometry ? false : sl.hasTopology,

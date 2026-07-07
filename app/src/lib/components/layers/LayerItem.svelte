@@ -1,18 +1,20 @@
 <script lang="ts">
 	import { getContext, tick } from 'svelte';
-	import { Eye, EyeSlash, DotsThree, SlidersHorizontal, CircleNotch, CopySimple, PencilSimple, Trash, Table, Crosshair } from 'phosphor-svelte';
+	import { Eye, EyeSlash, DotsThree, SlidersHorizontal, CircleNotch, CopySimple, PencilSimple, Trash, Table, Crosshair, TextT } from 'phosphor-svelte';
 	import { dragHandle } from 'svelte-dnd-action';
 	import DropdownMenu from '$lib/components/ui/DropdownMenu.svelte';
 	import type { Layer } from '$lib/types';
-	import { removeLayer, toggleVisibility, renameLayer, duplicateLayer } from '$lib/stores/layers.svelte';
+	import { removeLayer, toggleVisibility, renameLayer, duplicateLayer, createLabelLayer } from '$lib/stores/layers.svelte';
 	import { layerSelection, selectLayer, toggleLayerSelection, rangeSelectLayers, setHoveredLayer, startLayerEdit, clearLayerEdit } from '$lib/stores/layerSelection.svelte';
 	import { layers } from '$lib/stores/layers.svelte';
 	import { pushSnapshot, historyVersion } from '$lib/stores/history.svelte';
 	import { openFeaturesTable } from '$lib/stores/featuresTable.svelte';
 	import { drawSession, pickLayer } from '$lib/stores/drawSession.svelte';
 	import LayerStylePanel from './LayerStylePanel.svelte';
+	import LabelStylePanel from './LabelStylePanel.svelte';
 	import LayerProcessingPanel from './LayerProcessingPanel.svelte';
 	import LayerDataPanel from './LayerDataPanel.svelte';
+	import LabelDataPanel from './LabelDataPanel.svelte';
 
 	let { layer }: { layer: Layer } = $props();
 
@@ -183,7 +185,17 @@
 				<CircleNotch size={14} color="var(--color-text-tertiary)" />
 			</div>
 		{:else}
-			{#if geomKind === 'line'}
+			{#if layer.kind === 'label'}
+				<button
+					class="style-swatch label-swatch"
+					onclick={() => { activeTab = 'style'; styleCtx.toggle(layer.id); }}
+					onpointerdown={(e) => e.stopPropagation()}
+					aria-label="Edit label style"
+					style="color: {layer.labelStyle.color}"
+				>
+					<TextT size={14} weight="bold" />
+				</button>
+			{:else if geomKind === 'line'}
 				<button
 					class="style-swatch line-swatch"
 					onclick={() => { activeTab = 'style'; styleCtx.toggle(layer.id); }}
@@ -249,7 +261,7 @@
 				class:active={styleOpen}
 				aria-label="Edit layer settings"
 				title="Edit layer settings"
-				onclick={() => { activeTab = 'simplification'; styleCtx.toggle(layer.id); }}
+				onclick={() => { activeTab = layer.kind === 'label' ? 'style' : 'simplification'; styleCtx.toggle(layer.id); }}
 			>
 				<SlidersHorizontal size={16} />
 			</button>
@@ -291,6 +303,12 @@
 				<CopySimple size={14} />
 				<span>Duplicate</span>
 			</button>
+			{#if layer.kind === 'geometry' && layer.hasTopology}
+				<button class="dropdown-item body-small" onclick={() => { createLabelLayer(layer.id, pushSnapshot); closeMenu(); }}>
+					<TextT size={14} />
+					<span>Create labels</span>
+				</button>
+			{/if}
 			<button class="dropdown-item body-small" onclick={() => { startEditing(); closeMenu(); }}>
 				<PencilSimple size={14} />
 				<span>Rename</span>
@@ -311,22 +329,30 @@
 					class:active={activeTab === 'style'}
 					onclick={() => activeTab = 'style'}
 				>Style</button>
-				<button
-					class="tab-btn body-regular"
-					class:active={activeTab === 'simplification'}
-					onclick={() => activeTab = 'simplification'}
-				>Simplify</button>
+				{#if layer.kind !== 'label'}
+					<button
+						class="tab-btn body-regular"
+						class:active={activeTab === 'simplification'}
+						onclick={() => activeTab = 'simplification'}
+					>Simplify</button>
+				{/if}
 				<button
 					class="tab-btn body-regular"
 					class:active={activeTab === 'data'}
 					onclick={() => activeTab = 'data'}
-				>Data</button>
+				>{layer.kind === 'label' ? 'Text data' : 'Data'}</button>
 			</div>
 			{#key historyVersion()}
 				{#if activeTab === 'style'}
-					<LayerStylePanel {layer} onclose={() => { pushSnapshot(); styleCtx.toggle(layer.id); }} />
+					{#if layer.kind === 'label'}
+						<LabelStylePanel {layer} onclose={() => { pushSnapshot(); styleCtx.toggle(layer.id); }} />
+					{:else}
+						<LayerStylePanel {layer} onclose={() => { pushSnapshot(); styleCtx.toggle(layer.id); }} />
+					{/if}
 				{:else if activeTab === 'simplification'}
 					<LayerProcessingPanel {layer} />
+				{:else if layer.kind === 'label'}
+					<LabelDataPanel {layer} />
 				{:else}
 					<LayerDataPanel {layer} />
 				{/if}
@@ -464,7 +490,8 @@
 	}
 
 	.style-swatch.line-swatch,
-	.style-swatch.point-swatch {
+	.style-swatch.point-swatch,
+	.style-swatch.label-swatch {
 		background-color: transparent;
 		background-image: none;
 		outline: none;
@@ -474,7 +501,8 @@
 	}
 
 	.style-swatch.line-swatch::after,
-	.style-swatch.point-swatch::after {
+	.style-swatch.point-swatch::after,
+	.style-swatch.label-swatch::after {
 		display: none;
 	}
 

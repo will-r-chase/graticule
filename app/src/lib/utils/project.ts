@@ -1,5 +1,5 @@
-import type { Layer, LayerStyle, LayerProcessing } from '$lib/types';
-import { layers, rawTopologyData, clearLayers, addUploadedLayer, runLayerPipeline, defaultProcessing } from '$lib/stores/layers.svelte';
+import type { Layer, LayerStyle, LayerProcessing, LabelStyle, LayerKind } from '$lib/types';
+import { layers, rawTopologyData, clearLayers, addUploadedLayer, runLayerPipeline, defaultProcessing, defaultLabelStyle } from '$lib/stores/layers.svelte';
 import { uploadedDatasets, clearUploadedDatasets } from '$lib/stores/uploadedDatasets.svelte';
 import { projection } from '$lib/stores/projection.svelte';
 import { catalog } from '$lib/stores/catalog.svelte';
@@ -28,6 +28,11 @@ interface SavedLayer {
 	visible: boolean;
 	style: LayerStyle;
 	processing: LayerProcessing;
+	// Label fields — absent in files saved before labels existed; load defaults them.
+	kind?: LayerKind;
+	labelAttribute?: string | null;
+	labelStyle?: LabelStyle;
+	derivedFrom?: string | null;
 	// 'catalog' re-fetches by URL; 'upload' re-links to a persisted uploaded dataset by
 	// datasetId; 'inline' carries the layer's own (edited/derived) geometry in `topology`.
 	source: 'catalog' | 'upload' | 'inline';
@@ -67,6 +72,10 @@ export function prepareProject(): SaveResult {
 			visible: l.visible,
 			style: { ...l.style },
 			processing: { ...l.processing },
+			kind: l.kind,
+			labelAttribute: l.labelAttribute,
+			labelStyle: { ...l.labelStyle },
+			derivedFrom: l.derivedFrom,
 		};
 		// Edited/derived geometry can't be reconstructed from a source → inline it.
 		if (l.geometryEdited) {
@@ -162,6 +171,10 @@ export function loadProject(json: string): void {
 					l.visible = saved.visible;
 					Object.assign(l.style, saved.style);
 					if (saved.processing) Object.assign(l.processing, saved.processing);
+					l.kind = saved.kind ?? 'geometry';
+					l.labelAttribute = saved.labelAttribute ?? null;
+					if (saved.labelStyle) Object.assign(l.labelStyle, saved.labelStyle);
+					l.derivedFrom = saved.derivedFrom ?? null;
 				}
 			}
 		} else if (saved.source === 'inline') {
@@ -182,6 +195,10 @@ export function loadProject(json: string): void {
 				hasTopology: false,
 				style: { ...saved.style },
 				processing: saved.processing ? { ...saved.processing } : defaultProcessing(),
+				kind: saved.kind ?? 'geometry',
+				labelAttribute: saved.labelAttribute ?? null,
+				labelStyle: saved.labelStyle ? { ...saved.labelStyle } : defaultLabelStyle(),
+				derivedFrom: saved.derivedFrom ?? null,
 				geometryTypes: [],
 				bezierCacheKey: 0,
 			});
@@ -205,6 +222,10 @@ export function loadProject(json: string): void {
 				hasTopology: false,
 				style: { ...saved.style },
 				processing: saved.processing ? { ...saved.processing } : defaultProcessing(),
+				kind: saved.kind ?? 'geometry',
+				labelAttribute: saved.labelAttribute ?? null,
+				labelStyle: saved.labelStyle ? { ...saved.labelStyle } : defaultLabelStyle(),
+				derivedFrom: saved.derivedFrom ?? null,
 				geometryTypes: [],
 				bezierCacheKey: 0,
 			});
