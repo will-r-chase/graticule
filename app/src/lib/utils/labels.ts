@@ -170,6 +170,28 @@ export const LABEL_ANCHOR_DIR: Record<LabelAnchorPosition, { x: -1 | 0 | 1; y: -
 	'bottom-right': { x: 1, y: 1 },
 };
 
+// Greedy word-wrap against measured widths. Manual \n breaks are preserved; each
+// resulting paragraph wraps to maxWidth. Expects ctx.font already set (widths are
+// measured in the same units the label paints at).
+export function wrapLabelLines(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+	const out: string[] = [];
+	for (const paragraph of text.split('\n')) {
+		const words = paragraph.split(' ');
+		let line = '';
+		for (const word of words) {
+			const candidate = line ? `${line} ${word}` : word;
+			if (line && ctx.measureText(candidate).width > maxWidth) {
+				out.push(line);
+				line = word;
+			} else {
+				line = candidate;
+			}
+		}
+		out.push(line);
+	}
+	return out;
+}
+
 // CSS font shorthand for a LabelStyle. Quotes the family when it needs it
 // (spaces, no comma-separated fallback list).
 export function labelFontString(style: LabelStyle): string {

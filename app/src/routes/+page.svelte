@@ -59,7 +59,8 @@
 			return;
 		}
 		if (layerSelection.ids.length > 0) {
-			if (e.key === 't') {
+			// 'b' (taBle) — 't' belongs to the text tool.
+			if (e.key === 'b') {
 				const firstId = layerSelection.ids[0];
 				const layer = layers.find(l => l.id === firstId && l.hasTopology);
 				if (layer) openFeaturesTable(layer.id);

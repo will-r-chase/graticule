@@ -3,7 +3,8 @@
 	import { layerSelection, clearLayerSelection } from '$lib/stores/layerSelection.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { tooltip } from '$lib/actions/tooltip';
-	import { UniteSquare, DiamondsFour, Crop, SubtractSquare, Unite, GitMerge, X } from 'phosphor-svelte';
+	import { UniteSquare, DiamondsFour, Crop, SubtractSquare, Unite, GitMerge, X, CursorText } from 'phosphor-svelte';
+	import { toolState } from '$lib/stores/tool.svelte';
 	import type { Topology } from 'topojson-specification';
 	import Checkbox from '$lib/components/ui/Checkbox.svelte';
 	import { clipBbox, openClipPopover, closeClipPopover, setClipBbox } from '$lib/stores/clipBbox.svelte';
@@ -11,7 +12,9 @@
 	let { getViewportBbox }: { getViewportBbox: () => [number, number, number, number] | null } = $props();
 
 	const count = $derived(layerSelection.ids.length);
-	const visible = $derived(count > 0 && layerSelection.enteredId === null);
+	// Hidden in text mode: there, layer selection is how new text boxes are targeted,
+	// and the geometry ops don't apply.
+	const visible = $derived(count > 0 && layerSelection.enteredId === null && toolState.active !== 'text');
 
 	// Ordered selected layers (by stack position, top first).
 	const selectedLayers = $derived(
@@ -20,6 +23,8 @@
 
 	// Single-layer context.
 	const singleLayer = $derived(count === 1 ? selectedLayers[0] : null);
+	// Label layers get an Edit entry point instead of geometry ops.
+	const singleLabelLayer = $derived(singleLayer?.kind === 'label' ? singleLayer : null);
 	const hasMultiTypes = $derived(
 		singleLayer?.geometryTypes.some(t => t.startsWith('Multi')) ?? false
 	);
@@ -249,7 +254,18 @@
 
 {#if visible}
 <div class="layer-action-bar">
-	{#if count === 1}
+	{#if singleLabelLayer}
+		<!-- Text layer: geometry ops don't apply — offer text edit mode instead.
+		     The selection carries over as the text target. -->
+		<button
+			class="bar-btn"
+			onclick={() => { toolState.active = 'text'; }}
+			use:tooltip={{ text: 'Edit this layer’s text', shortcut: 'T', placement: 'up' }}
+		>
+			<CursorText size={14} />
+			Edit
+		</button>
+	{:else if count === 1}
 		<!-- Dissolve -->
 		<div class="popover-anchor">
 			<button

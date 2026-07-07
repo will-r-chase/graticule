@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Hand, Cursor, LineSegments, PenNib } from 'phosphor-svelte';
+	import { Hand, Cursor, LineSegments, PenNib, TextT } from 'phosphor-svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
 	import { tooltip } from '$lib/actions/tooltip';
 </script>
@@ -40,6 +40,15 @@
 		use:tooltip={{ text: 'Draw', shortcut: 'D', placement: 'up' }}
 	>
 		<PenNib size={24} />
+	</button>
+	<button
+		class="tool-btn"
+		class:active={toolState.active === 'text'}
+		aria-label="Text tool"
+		onclick={() => toolState.active = 'text'}
+		use:tooltip={{ text: 'Text', shortcut: 'T', placement: 'up' }}
+	>
+		<TextT size={24} />
 	</button>
 </div>
 

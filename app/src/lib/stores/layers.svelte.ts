@@ -688,6 +688,151 @@ export function commitDrawnFeatures(
 	return layerId;
 }
 
+// Creates an empty freeform text layer — a label layer with no source, holding text
+// boxes placed by the text tool. Content lives in the plain `text` property.
+function addEmptyTextLayer(): string {
+	const id = generateId();
+	// Name "Text N" like addEmptyLayer's "Layer N" — never duplicates a visible name.
+	const usedNumbers = layers
+		.map((l) => /^Text (\d+)$/.exec(l.name))
+		.filter((m): m is RegExpExecArray => m !== null)
+		.map((m) => parseInt(m[1], 10));
+	const n = usedNumbers.length > 0 ? Math.max(...usedNumbers) + 1 : 1;
+
+	layers.unshift({
+		id,
+		geometryId: generateId(),
+		geometryEdited: true,
+		// Provenance label only — freeform text has no dataset.
+		datasetId: generateId(),
+		name: `Text ${n}`,
+		visible: true,
+		loading: false,
+		error: null,
+		hasTopology: false,
+		style: defaultStyle(),
+		processing: defaultProcessing(),
+		kind: 'label',
+		labelAttribute: 'text',
+		labelStyle: defaultLabelStyle(),
+		derivedFrom: null,
+		geometryTypes: [],
+		bezierCacheKey: 0,
+	});
+	return id;
+}
+
+// Commits text boxes from a text session to the target layer, or a new "Text" layer
+// when the target is null. Same shape as commitDrawnFeatures: append to the layer's
+// on-screen topology and funnel through replaceLayerGeometry (one geometryId mint).
+export function commitTextFeatures(
+	targetLayerId: string | null,
+	features: readonly { coord: [number, number]; text: string; rotation?: number; wrapWidth?: number }[],
+	onComplete?: () => void,
+): string {
+	const layerId = targetLayerId ?? addEmptyTextLayer();
+	const layer = layers.find((l) => l.id === layerId);
+
+	// Base geometry: the layer's current on-screen topology, or fresh when empty.
+	const working = workingTopologyData.get(layerId);
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let topo: any;
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let geometries: any[];
+	if (working) {
+		topo = topologyToAbsolute(working);
+		const objName = Object.keys(topo.objects)[0];
+		geometries = topo.objects[objName].geometries;
+	} else {
+		geometries = [];
+		topo = { type: 'Topology', arcs: [], objects: { data: { type: 'GeometryCollection', geometries } } };
+	}
+
+	// New features null-fill to the union of existing property keys, keeping the table
+	// schema stable (matters when appending to a derived label layer).
+	const keys = new Set<string>();
+	for (const g of geometries) for (const k in (g.properties ?? {})) keys.add(k);
+	const nullProps = (): Record<string, unknown> => {
+		const o: Record<string, unknown> = {};
+		for (const k of keys) o[k] = null;
+		return o;
+	};
+
+	for (const f of features) {
+		const properties: Record<string, unknown> = { ...nullProps(), text: f.text };
+		if (f.rotation !== undefined && f.rotation !== 0) properties.__rotation = f.rotation;
+		if (f.wrapWidth !== undefined) properties.__wrapWidth = f.wrapWidth;
+		geometries.push({
+			type: 'Point',
+			coordinates: [f.coord[0], f.coord[1]],
+			properties,
+		});
+	}
+
+	// Make sure the new text is actually displayed: a layer without a chosen attribute
+	// (or a fresh one) reads from `text`.
+	if (layer && layer.labelAttribute === null) layer.labelAttribute = 'text';
+
+	replaceLayerGeometry(layerId, topo as Topology, { applyDefaults: false, geometryEdited: true }, onComplete);
+	return layerId;
+}
+
+// Applies a text session's edits to one label layer: moved anchor coordinates, edited
+// text (written to the layer's labelAttribute), per-feature rotation/wrap width (the
+// reserved __rotation/__wrapWidth properties), and deleted features, against the
+// layer's current on-screen topology. Funnels through replaceLayerGeometry (one
+// geometryId mint) like every other geometry op.
+export interface LabelEdits {
+	moves?: Map<number, [number, number]>;
+	deletes?: Set<number>;
+	texts?: Map<number, string>;
+	rotations?: Map<number, number>;
+	wrapWidths?: Map<number, number>;
+}
+
+export function applyLabelEdits(layerId: string, edits: LabelEdits, onComplete?: () => void): void {
+	const working = workingTopologyData.get(layerId);
+	if (!working) { onComplete?.(); return; }
+
+	const topo = topologyToAbsolute(working);
+	const objName = Object.keys(topo.objects)[0];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const obj = (topo.objects as any)[objName];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	let geometries = obj.geometries as any[];
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const setProp = (i: number, key: string, value: any) => {
+		const g = geometries[i];
+		if (g) g.properties = { ...(g.properties ?? {}), [key]: value };
+	};
+
+	if (edits.moves) {
+		for (const [i, coord] of edits.moves) {
+			const g = geometries[i];
+			if (g?.type === 'Point') g.coordinates = [coord[0], coord[1]];
+		}
+	}
+	const attr = layers.find((l) => l.id === layerId)?.labelAttribute;
+	if (edits.texts && attr) {
+		for (const [i, text] of edits.texts) setProp(i, attr, text);
+	}
+	if (edits.rotations) {
+		for (const [i, deg] of edits.rotations) setProp(i, '__rotation', deg);
+	}
+	if (edits.wrapWidths) {
+		for (const [i, px] of edits.wrapWidths) setProp(i, '__wrapWidth', px);
+	}
+	// Deletions last — the other edits index into the pre-filter positions.
+	if (edits.deletes && edits.deletes.size > 0) {
+		const del = edits.deletes;
+		geometries = geometries.filter((_, i) => !del.has(i));
+		obj.geometries = geometries;
+	}
+
+	replaceLayerGeometry(layerId, topo as Topology, { applyDefaults: false, geometryEdited: true }, onComplete);
+}
+
 export function renameLayer(id: string, name: string): void {
 	const layer = layers.find((l) => l.id === id);
 	if (layer) layer.name = name.trim() || layer.name;

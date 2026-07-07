@@ -132,6 +132,16 @@ Each step is usable on its own before the next starts:
 3. **Text edit mode** — text tool: click empty map to place freeform text, click a label to
    select, drag to move, double-click to edit text. Session-accumulate → one commit, like
    drawing mode.
+   **BUILT 2026-07-07 (all slices; pending review/verification)**: 3a text tool +
+   textSession + click-to-place with inline textarea editor + commitTextFeatures ("Text N"
+   layers, plain `text` property); 3b screen-space label hit boxes recorded during paint,
+   select/drag/Delete on existing labels via per-layer session maps applied through
+   applyLabelEdits; TextBar (target picker restricted to label layers, Done/Cancel);
+   3c double-click retype (existing labels store session text overrides → written to
+   labelAttribute on commit); 3d per-feature `__rotation` (TextBar input — deviation from
+   D7's "style panel" home, since entering the text tool clears layer selection) and
+   `__wrapWidth` (drag handle on the selected box's right edge; greedy word-wrap in
+   wrapLabelLines; rotated labels hit-test/outline in the anchor-pivoted frame).
 4. **Curved labels** — per-glyph path-walking renderer; line-source derivation copies lines.
    Blocked on Q1 (placement details).
 5. **Export** — `<text>`/`<textPath>` in SVG export; PNG needs nothing (labels are on canvas).
@@ -201,6 +211,30 @@ like drawing mode.
 - Export caveats (accepted): SVG references `font-family` by name — system-font SVGs render
   differently on machines lacking the font; Google-font SVGs can embed an `@import`. PNG is
   immune (rasterized from canvas).
+
+### Step 3 details (decided 2026-07-07)
+
+- **Session model**: `textSession` mirrors drawSession (non-reactive data + `version`
+  counter; ghosts until commit) but holds two collections: NEW text features headed for the
+  target layer, and per-layer EDIT maps (moved coords / changed text / deletions) for
+  existing labels. Commit applies each touched layer via `replaceLayerGeometry` (one
+  geometryId mint per layer), creates/extends the target text layer, and pushes ONE
+  history snapshot for the whole session.
+- **Reserved property keys**: `__rotation`, `__wrapWidth` (prefixed — can't collide with
+  real dataset attributes on derived layers; shown in the features table for now, may be
+  filtered from display later). Freeform text boxes store content in a plain `text`
+  property (`labelAttribute = 'text'`) — it's genuine user data.
+- **New-text target mirrors draw mode**: explicit target + pick-a-layer affordance;
+  null target auto-creates a "Text" layer on commit and then keeps targeting it. Avoids
+  depending on the deferred active-layer concept.
+- **Session-local Cmd+Z: deferred** past v1. The session commits as one global undo step.
+- **Hit-testing**: screen-space label bboxes recorded while drawLabelLayer paints;
+  the tool walks them topmost-first.
+- **Inline editor**: styled textarea overlaid on the canvas; Enter inserts a line break;
+  commit on blur/Escape; an empty NEW box is discarded.
+- Slices: 3a place+edit new text boxes → commit; 3b select/drag/Delete existing labels;
+  3c double-click retype (derived labels edit the attribute value per D6); 3d rotation
+  control + wrap-width handle.
 
 ## Open questions
 

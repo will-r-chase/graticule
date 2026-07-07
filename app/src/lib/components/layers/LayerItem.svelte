@@ -10,6 +10,7 @@
 	import { pushSnapshot, historyVersion } from '$lib/stores/history.svelte';
 	import { openFeaturesTable } from '$lib/stores/featuresTable.svelte';
 	import { drawSession, pickLayer } from '$lib/stores/drawSession.svelte';
+	import { textSession } from '$lib/stores/textSession.svelte';
 	import LayerStylePanel from './LayerStylePanel.svelte';
 	import LabelStylePanel from './LabelStylePanel.svelte';
 	import LayerProcessingPanel from './LayerProcessingPanel.svelte';
@@ -39,6 +40,8 @@
 	let anyEntered = $derived(layerSelection.enteredId !== null);
 
 	let isDrawTarget = $derived(drawSession.targetLayerId === layer.id);
+	// In text mode, targeting follows selection — the badge marks where new boxes land.
+	let isTextTarget = $derived(textSession.targetLayerId === layer.id);
 
 	function handleRowClick(e: MouseEvent) {
 		// While the draw "pick a layer" mode is armed, a row click sets the draw target
@@ -179,7 +182,7 @@
 </script>
 
 <div class="layer-item-wrapper" class:open={styleOpen} onclick={(e) => e.stopPropagation()}>
-	<div class="layer-item" class:selected={!anyEntered && (styleOpen || isSelected)} class:menu-open={menuOpen} class:canvas-hovered={isCanvasHovered && !isSelected && !styleOpen} class:dimmed={anyEntered && !isEntered} class:layer-hidden={!layer.visible} class:draw-picking={drawSession.picking} class:draw-target={isDrawTarget} tabindex="-1" use:rowDragHandle={!editing} onclick={handleRowClick} onmouseenter={() => setHoveredLayer(layer.id)} onmouseleave={() => setHoveredLayer(null)} onpointerdown={(e) => { if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopImmediatePropagation(); }}>
+	<div class="layer-item" class:selected={!anyEntered && (styleOpen || isSelected)} class:menu-open={menuOpen} class:canvas-hovered={isCanvasHovered && !isSelected && !styleOpen} class:dimmed={anyEntered && !isEntered} class:layer-hidden={!layer.visible} class:draw-picking={drawSession.picking} class:draw-target={isDrawTarget || isTextTarget} tabindex="-1" use:rowDragHandle={!editing} onclick={handleRowClick} onmouseenter={() => setHoveredLayer(layer.id)} onmouseleave={() => setHoveredLayer(null)} onpointerdown={(e) => { if (e.shiftKey || e.metaKey || e.ctrlKey) e.stopImmediatePropagation(); }}>
 		{#if showSpinner}
 			<div class="style-spinner" aria-label="Loading">
 				<CircleNotch size={14} color="var(--color-text-tertiary)" />
@@ -249,8 +252,8 @@
 			>{layer.name}</span>
 		{/if}
 
-		{#if isDrawTarget}
-			<span class="draw-target-badge" title="Drawing to this layer">
+		{#if isDrawTarget || isTextTarget}
+			<span class="draw-target-badge" title={isDrawTarget ? 'Drawing to this layer' : 'Adding text to this layer'}>
 				<Crosshair size={14} weight="bold" />
 			</span>
 		{/if}

@@ -7,9 +7,10 @@
 	import { workerBuildPaths, workerStoreTopology, workerRemoveTopology } from '$lib/workers/geoWorker';
 	import type { PathCommand } from '$lib/workers/types';
 	import type { Layer, LayerProcessing } from '$lib/types';
-	import { applyTextTransform, LABEL_ANCHOR_DIR, labelFontString } from '$lib/utils/labels';
+	import { applyTextTransform, LABEL_ANCHOR_DIR, labelFontString, wrapLabelLines } from '$lib/utils/labels';
 	import { fonts, ensureFontLoaded } from '$lib/stores/fonts.svelte';
-	import { layers, workingTopologyData, layerDrag, deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures } from '$lib/stores/layers.svelte';
+	import { textSession, getNewTextFeatures, placeText, updateNewText, finishEditingNew, commitText, resetTextTarget, setTextTarget, editorJustClosed, sessionMovedCoord, sessionDeleted, sessionTextOverride, sessionRotationOverride, sessionWrapOverride, moveLabel, moveNewText, deleteSelected, beginEditingExisting, finishEditingExisting, currentEditingText, setLabelText, setSelectedWrapWidth, type TextSelection } from '$lib/stores/textSession.svelte';
+	import { layers, workingTopologyData, layerDrag, deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures, defaultLabelStyle } from '$lib/stores/layers.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
 	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
 	import { layerSelection, clearLayerSelection, selectLayer, toggleLayerSelection, enterLayer, exitLayer, setHoveredLayer } from '$lib/stores/layerSelection.svelte';
@@ -29,6 +30,7 @@
 	import MapToolbar from '$lib/components/map/MapToolbar.svelte';
 	import SelectionBar from '$lib/components/map/SelectionBar.svelte';
 	import DrawBar from '$lib/components/map/DrawBar.svelte';
+	import TextBar from '$lib/components/map/TextBar.svelte';
 	import EditSessionBar from '$lib/components/map/EditSessionBar.svelte';
 	import LayerActionBar from '$lib/components/map/LayerActionBar.svelte';
 	import ConfirmModal from '$lib/components/ui/ConfirmModal.svelte';
@@ -363,6 +365,21 @@
 	// Point-feature (group) drag — points store coords directly, not in arcs. `from` is the
 	// grabbed point's origin; the delta vs the cursor drives the group translation.
 	let pointDrag = $state<{ group: PointMember[]; from: [number, number] } | null>(null);
+
+	// Text tool: in-progress label drag + hover state (cursor + grey hover outline).
+	let labelDrag: { sel: TextSelection; startCursor: { x: number; y: number }; startAnchor: { x: number; y: number }; moved: boolean } | null = null;
+	let overLabel = $state(false);
+	let hoveredLabel = $state<TextSelection | null>(null);
+
+	function sameSelection(a: TextSelection | null, b: TextSelection | null): boolean {
+		if (a === null || b === null) return a === b;
+		if (a.kind === 'new') return b.kind === 'new' && a.index === b.index;
+		return b.kind === 'existing' && a.layerId === b.layerId && a.featureIndex === b.featureIndex;
+	}
+	// Wrap-handle drag: resizes the selected label's wrap width. Width is measured in
+	// the label's unrotated frame from the box's (fixed) left edge to the cursor.
+	let wrapDrag: { boxLeft: number; ax: number; ay: number; rot: number } | null = null;
+	let overHandle = $state(false);
 	// Currently hovered point + the selected point set (for marker styling). Keyed "fi:pi".
 	let hoveredPoint = $state<string | null>(null);
 	let selectedPoints = $state<Set<string>>(new Set());
@@ -984,6 +1001,28 @@
 			return;
 		}
 
+		if (toolState.active === 'text') {
+			if (spacePanning) return;
+			// The click that dismissed the inline editor shouldn't also place a new box.
+			if (editorJustClosed()) return;
+			if (textSession.editingNew !== null || textSession.editingExisting !== null) { closeTextEditor(); return; }
+			// Clicking a label selects it (drag handling lives in pointerdown; this is
+			// the no-movement case). Clicking empty space deselects first, then places.
+			if (canvasEl) {
+				const rect = canvasEl.getBoundingClientRect();
+				const hit = hitTestLabel(e.clientX - rect.left, e.clientY - rect.top);
+				if (hit) {
+					textSession.selected = hit;
+					if (hit.kind === 'existing') selectLayer(hit.layerId);
+					return;
+				}
+			}
+			if (textSession.selected) { textSession.selected = null; return; }
+			const geo = screenToGeo(e.clientX, e.clientY);
+			if (geo) placeText(geo[0], geo[1]); // null = clicked off-globe; ignore
+			return;
+		}
+
 		if (toolState.active === 'edit') {
 			const editHit = getHitAtPoint(e.clientX, e.clientY);
 			if (editSession.activeLayerId) {
@@ -1009,6 +1048,21 @@
 
 		const hit = getHitAtPoint(e.clientX, e.clientY);
 		const cmd = e.metaKey || e.ctrlKey;
+
+		// Labels aren't in the hit canvas — fall back to the text hit boxes so label
+		// layers are selectable with the select tool (layer selection only; feature-
+		// level selection of labels lives in the text tool).
+		if (!hit && canvasEl) {
+			const rect = canvasEl.getBoundingClientRect();
+			const labelHit = hitTestLabel(e.clientX - rect.left, e.clientY - rect.top);
+			if (labelHit && labelHit.kind === 'existing') {
+				clearSelection();
+				if (layerSelection.enteredId) exitLayer();
+				if (e.shiftKey) toggleLayerSelection(labelHit.layerId);
+				else selectLayer(labelHit.layerId);
+				return;
+			}
+		}
 
 		if (layerSelection.enteredId !== null) {
 			if (!hit) {
@@ -1043,6 +1097,38 @@
 	}
 
 	function handleDblClick(e: MouseEvent) {
+		if (toolState.active === 'text') {
+			// Double-click opens the inline editor on a label: an uncommitted new box
+			// re-opens directly; an existing label captures its anchor + current text.
+			if (!canvasEl) return;
+			const rect = canvasEl.getBoundingClientRect();
+			const hit = hitTestLabel(e.clientX - rect.left, e.clientY - rect.top);
+			if (!hit) return;
+			textSession.selected = null;
+			if (hit.kind === 'new') {
+				textSession.editingNew = hit.index;
+				return;
+			}
+			// Editing a label also targets its layer ("adding text to X").
+			selectLayer(hit.layerId);
+			const box = hitBoxFor(hit);
+			const geo = box ? projection?.invert?.([(box.ax - tx) / mapScale, (box.ay - ty) / mapScale]) : null;
+			if (!geo) return;
+			const layer = layers.find((l) => l.id === hit.layerId);
+			const attr = layer?.labelAttribute;
+			let initialText = '';
+			if (layer && attr) {
+				const topo = workingTopologyData.get(layer.id);
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				const anyTopo = topo as any;
+				const objName = anyTopo ? Object.keys(anyTopo.objects)[0] : null;
+				const props = objName ? anyTopo.objects[objName]?.geometries?.[hit.featureIndex]?.properties : null;
+				const raw = props?.[attr];
+				if (raw !== null && raw !== undefined) initialText = String(raw);
+			}
+			beginEditingExisting(hit.layerId, hit.featureIndex, [geo[0], geo[1]], initialText);
+			return;
+		}
 		if (toolState.active === 'draw') {
 			// Finish the active line/polygon (drops the duplicate vertex the dblclick's second
 			// click placed). The draw tool stays active to start the next feature.
@@ -1208,6 +1294,37 @@
 	function handlePointerDown(e: PointerEvent) {
 		if (clipBbox.open && clipBbox.mode === 'bbox' && toolState.active !== 'pan' && !spacePanning) return;
 
+		// Text tool: the selected label's wrap handle takes precedence, then pressing
+		// on a label selects it and arms a move drag.
+		if (toolState.active === 'text' && !spacePanning && canvasEl) {
+			const rect = canvasEl.getBoundingClientRect();
+			const cx = e.clientX - rect.left;
+			const cy = e.clientY - rect.top;
+			if (textSession.selected && overWrapHandle(cx, cy)) {
+				const b = hitBoxFor(textSession.selected);
+				if (b) {
+					wrapDrag = { boxLeft: b.x0, ax: b.ax, ay: b.ay, rot: b.rot };
+					(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+					return;
+				}
+			}
+			const hit = hitTestLabel(e.clientX - rect.left, e.clientY - rect.top);
+			if (hit) {
+				const box = hitBoxFor(hit);
+				textSession.selected = hit;
+				// Clicking a label also targets its layer ("adding text to X").
+				if (hit.kind === 'existing') selectLayer(hit.layerId);
+				labelDrag = {
+					sel: hit,
+					startCursor: { x: e.clientX, y: e.clientY },
+					startAnchor: box ? { x: box.ax, y: box.ay } : { x: e.clientX - rect.left, y: e.clientY - rect.top },
+					moved: false,
+				};
+				(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+				return;
+			}
+		}
+
 		// Edit tool, active draft: select/drag a vertex, insert, or clear the selection.
 		if (toolState.active === 'edit' && editSession.activeLayerId && !spacePanning) {
 			// Point feature — grab the point itself (points aren't stored in arcs).
@@ -1331,6 +1448,51 @@
 		} else if (drawHover !== null) {
 			drawHover = null;
 		}
+		// Dragging the wrap handle — new width runs from the box's left edge to the
+		// cursor, measured in the label's unrotated frame.
+		if (wrapDrag && canvasEl) {
+			const rect = canvasEl.getBoundingClientRect();
+			const cx = e.clientX - rect.left;
+			const cy = e.clientY - rect.top;
+			const fake: LabelHitBox = { layerId: null, index: -1, x0: 0, y0: 0, x1: 0, y1: 0, ax: wrapDrag.ax, ay: wrapDrag.ay, rot: wrapDrag.rot };
+			const [lx] = toBoxFrame(fake, cx, cy);
+			setSelectedWrapWidth(lx - wrapDrag.boxLeft);
+			return;
+		}
+
+		// Dragging a label with the text tool — offset its anchor by the cursor delta.
+		if (labelDrag) {
+			const dx = e.clientX - labelDrag.startCursor.x;
+			const dy = e.clientY - labelDrag.startCursor.y;
+			if (!labelDrag.moved && Math.hypot(dx, dy) < 3) return;
+			labelDrag.moved = true;
+			const nx = (labelDrag.startAnchor.x + dx - tx) / mapScale;
+			const ny = (labelDrag.startAnchor.y + dy - ty) / mapScale;
+			const geo = projection?.invert?.([nx, ny]) ?? null;
+			if (geo) {
+				if (labelDrag.sel.kind === 'existing') moveLabel(labelDrag.sel.layerId, labelDrag.sel.featureIndex, geo[0], geo[1]);
+				else moveNewText(labelDrag.sel.index, geo[0], geo[1]);
+			}
+			return;
+		}
+
+		// Text tool hover: resize cursor over the wrap handle, move cursor + grey
+		// outline over labels. hoveredLabel only reassigns on change so the repaint
+		// effect isn't retriggered by every mouse move.
+		if (toolState.active === 'text' && !spacePanning && canvasEl) {
+			const rect = canvasEl.getBoundingClientRect();
+			const cx = e.clientX - rect.left;
+			const cy = e.clientY - rect.top;
+			overHandle = overWrapHandle(cx, cy);
+			const hover = overHandle ? null : hitTestLabel(cx, cy);
+			if (!sameSelection(hover, hoveredLabel)) hoveredLabel = hover;
+			overLabel = hover !== null;
+		} else if (overLabel || overHandle || hoveredLabel) {
+			overLabel = false;
+			overHandle = false;
+			hoveredLabel = null;
+		}
+
 		// Dragging a point feature — move the point under the cursor.
 		if (pointDrag) {
 			const geo = screenToGeo(e.clientX, e.clientY);
@@ -1378,8 +1540,15 @@
 		if (toolState.active === 'select' && !isDragging && !isMarqueeDragging && hitCanvas && canvasEl) {
 			const featureHoverActive = layerSelection.enteredId !== null || e.metaKey || e.ctrlKey;
 			if (!featureHoverActive) {
-				const hit = getHitAtPoint(e.clientX, e.clientY);
-				setHoveredLayer(hit?.layerId ?? null);
+				let hitLayerId = getHitAtPoint(e.clientX, e.clientY)?.layerId ?? null;
+				// Labels aren't in the hit canvas — fall back to the text hit boxes so
+				// hovering a label highlights its layer.
+				if (hitLayerId === null) {
+					const rect = canvasEl.getBoundingClientRect();
+					const labelHit = hitTestLabel(e.clientX - rect.left, e.clientY - rect.top);
+					if (labelHit?.kind === 'existing') hitLayerId = labelHit.layerId;
+				}
+				setHoveredLayer(hitLayerId);
 				hoveredFeature.value = null;
 			} else {
 				setHoveredLayer(null);
@@ -1481,6 +1650,21 @@
 	}
 
 	function handlePointerUp() {
+		// End of a wrap-handle drag — swallow the trailing click so it doesn't deselect.
+		if (wrapDrag) {
+			wrapDrag = null;
+			suppressNextClick = true;
+			return;
+		}
+
+		// End of a label drag — swallow the trailing click if it actually moved
+		// (a press without movement is a plain selection click).
+		if (labelDrag) {
+			if (labelDrag.moved) suppressNextClick = true;
+			labelDrag = null;
+			return;
+		}
+
 		// End of a point drag — record it for undo and swallow the trailing click.
 		if (pointDrag) {
 			recordPointMoves(pointDrag.group);
@@ -2091,6 +2275,10 @@
 				// active path, then discards the rest of the session (two-stage).
 				if (toolState.active === 'draw' && drawSession.picking) { cancelPicking(); return; }
 				if (toolState.active === 'draw' && escapeDraw()) return;
+				// Text tool: Esc clears the selection first, then commits the session (D7) —
+				// the inline editor handles its own Esc before focus returns to the canvas.
+				if (toolState.active === 'text' && textSession.selected) { textSession.selected = null; return; }
+				if (toolState.active === 'text' && (textSession.newCount > 0 || textSession.editCount > 0)) { commitText(); return; }
 			}
 
 			// Enter confirms the bake dialog, then commits an edit session (done).
@@ -2100,6 +2288,15 @@
 				// While drawing, Enter finishes the active line/polygon (stay drawing), or
 				// commits the session when nothing is active. The draw tool stays active.
 				if (toolState.active === 'draw' && (drawSession.committedCount > 0 || drawSession.activeCount > 0)) { enterDraw(); return; }
+				if (toolState.active === 'text' && (textSession.newCount > 0 || textSession.editCount > 0)) { commitText(); return; }
+			}
+
+			// Text tool: Delete removes the selected label (existing → applied on commit;
+			// uncommitted new box → dropped immediately).
+			if ((e.key === 'Delete' || e.key === 'Backspace') && toolState.active === 'text' && textSession.selected) {
+				e.preventDefault();
+				deleteSelected();
+				return;
 			}
 
 			// During a session, Delete/Backspace removes the selected vertices (and takes
@@ -2125,7 +2322,7 @@
 				return;
 			}
 
-			if (e.key === ' ' && (toolState.active === 'select' || toolState.active === 'edit' || toolState.active === 'draw')) {
+			if (e.key === ' ' && (toolState.active === 'select' || toolState.active === 'edit' || toolState.active === 'draw' || toolState.active === 'text')) {
 				e.preventDefault(); // prevent page scroll
 				spacePanning = true;
 				return;
@@ -2143,6 +2340,9 @@
 			} else if (e.key === 'd' || e.key === 'D') {
 				exitLayer();
 				toolState.active = 'draw';
+			} else if (e.key === 't' || e.key === 'T') {
+				exitLayer();
+				toolState.active = 'text';
 			} else if ((e.key === 'Delete' || e.key === 'Backspace') && selection.features.size > 0) {
 				e.preventDefault();
 				const snapshot = new Map([...selection.features.entries()].map(([k, v]) => [k, new Set(v)]));
@@ -2199,6 +2399,28 @@
 			commitDraw(true); // forced by leaving — drops an invalid active polygon, commits the rest
 			resetDrawTarget();
 		}
+	});
+
+	// Entering the text tool clears feature selection but KEEPS the layer selection —
+	// in text mode the selected layer IS the target for new boxes (an "Edit" entry from
+	// a selected text layer lands here already targeted). Leaving commits the session
+	// (no-op if empty) and resets the target for a fresh re-entry.
+	$effect(() => {
+		if (toolState.active === 'text') {
+			clearSelection();
+		} else {
+			commitText();
+			resetTextTarget();
+		}
+	});
+
+	// While the text tool is active, targeting follows the layers-panel selection: a
+	// single selected label layer receives new boxes; anything else means a fresh
+	// "Text" layer on commit.
+	$effect(() => {
+		if (toolState.active !== 'text') return;
+		const sel = layerSelection.ids.length === 1 ? layers.find((l) => l.id === layerSelection.ids[0]) : undefined;
+		setTextTarget(sel && sel.kind === 'label' ? sel.id : null);
 	});
 
 	// Reset point hover/selection whenever the edit session starts, ends, or changes layer.
@@ -2355,10 +2577,160 @@
 		mapView.extent = [westLon, south, eastLon, north];
 	});
 
+	// Screen-space bounding boxes of every label painted this frame, in paint order
+	// (topmost last). Rebuilt on each repaint; the text tool hit-tests it back-to-front.
+	// layerId null = an uncommitted session ghost (index into getNewTextFeatures()).
+	interface LabelHitBox {
+		layerId: string | null;
+		index: number;
+		// Box in the label's UNROTATED frame (rotation spins it about the anchor).
+		x0: number; y0: number; x1: number; y1: number;
+		// Anchor's screen position — drag math offsets from here; rotation pivots here.
+		ax: number; ay: number;
+		// Degrees clockwise.
+		rot: number;
+	}
+	let labelHitBoxes: LabelHitBox[] = [];
+
+	function numberProp(v: unknown): number | null {
+		return typeof v === 'number' && Number.isFinite(v) ? v : null;
+	}
+
+	// A box's four corners in true screen space (rotated about the anchor).
+	function boxCorners(b: LabelHitBox): [number, number][] {
+		const pts: [number, number][] = [
+			[b.x0, b.y0], [b.x1, b.y0], [b.x1, b.y1], [b.x0, b.y1],
+		];
+		if (!b.rot) return pts;
+		const r = (b.rot * Math.PI) / 180;
+		return pts.map(([x, y]) => {
+			const dx = x - b.ax;
+			const dy = y - b.ay;
+			return [b.ax + dx * Math.cos(r) - dy * Math.sin(r), b.ay + dx * Math.sin(r) + dy * Math.cos(r)];
+		});
+	}
+
+	// Transforms a screen point into a box's unrotated frame (inverse-rotate about the
+	// anchor), so containment tests work on the plain rect.
+	function toBoxFrame(b: LabelHitBox, cx: number, cy: number): [number, number] {
+		if (!b.rot) return [cx, cy];
+		const r = (-b.rot * Math.PI) / 180;
+		const dx = cx - b.ax;
+		const dy = cy - b.ay;
+		return [b.ax + dx * Math.cos(r) - dy * Math.sin(r), b.ay + dx * Math.sin(r) + dy * Math.cos(r)];
+	}
+
+	// Measures a painted label and records its screen-space box. sx/sy = anchor in
+	// canvas CSS pixels. Mirrors paintLabel's placement math, but unscaled.
+	function recordLabelHitBox(
+		ctx: CanvasRenderingContext2D,
+		ls: Layer['labelStyle'],
+		lines: string[],
+		sx: number,
+		sy: number,
+		layerId: string | null,
+		index: number,
+		rot: number,
+	): void {
+		const dir = LABEL_ANCHOR_DIR[ls.anchor];
+		const gap = dir.x === 0 && dir.y === 0 ? 0 : ls.fontSize * 0.3 + ls.haloWidth;
+		const lineH = ls.fontSize * ls.lineHeight;
+		let w = 0;
+		for (const line of lines) w = Math.max(w, ctx.measureText(line).width);
+		const h = (lines.length - 1) * lineH + ls.fontSize;
+		const x0 = dir.x === -1 ? sx - gap - w : dir.x === 1 ? sx + gap : sx - w / 2;
+		const y0 = dir.y === -1 ? sy - gap - h : dir.y === 1 ? sy + gap : sy - h / 2;
+		const pad = 3;
+		labelHitBoxes.push({ layerId, index, x0: x0 - pad, y0: y0 - pad, x1: x0 + w + pad, y1: y0 + h + pad, ax: sx, ay: sy, rot });
+	}
+
+	// Topmost label under a canvas-relative point, or null.
+	function hitTestLabel(cx: number, cy: number): TextSelection | null {
+		for (let i = labelHitBoxes.length - 1; i >= 0; i--) {
+			const b = labelHitBoxes[i];
+			const [lx, ly] = toBoxFrame(b, cx, cy);
+			if (lx >= b.x0 && lx <= b.x1 && ly >= b.y0 && ly <= b.y1) {
+				return b.layerId === null
+					? { kind: 'new', index: b.index }
+					: { kind: 'existing', layerId: b.layerId, featureIndex: b.index };
+			}
+		}
+		return null;
+	}
+
+	// The selected box's wrap handle sits at the middle of its right edge.
+	function overWrapHandle(cx: number, cy: number): boolean {
+		const sel = textSession.selected;
+		if (!sel) return false;
+		const b = hitBoxFor(sel);
+		if (!b) return false;
+		const [lx, ly] = toBoxFrame(b, cx, cy);
+		return Math.hypot(lx - b.x1, ly - (b.y0 + b.y1) / 2) <= 7;
+	}
+
+	function hitBoxFor(sel: TextSelection): LabelHitBox | undefined {
+		return labelHitBoxes.find((b) =>
+			sel.kind === 'new'
+				? b.layerId === null && b.index === sel.index
+				: b.layerId === sel.layerId && b.index === sel.featureIndex
+		);
+	}
+
+	// Paints one label's text at a projected position. Expects ctx.font / textAlign /
+	// textBaseline / letterSpacing / globalAlpha already set by the caller (they're
+	// per-layer, set once outside the feature loop). Text renders zoom-independent
+	// (same inverse-scale trick as point symbols) with the halo stroked under the fill.
+	function paintLabel(
+		ctx: CanvasRenderingContext2D,
+		ls: Layer['labelStyle'],
+		lines: string[],
+		px: number,
+		py: number,
+		rot = 0,
+	): void {
+		const dir = LABEL_ANCHOR_DIR[ls.anchor];
+		const gap = dir.x === 0 && dir.y === 0 ? 0 : ls.fontSize * 0.3 + ls.haloWidth;
+		const lineH = ls.fontSize * ls.lineHeight;
+
+		// First line's y, with middle baselines throughout: centered anchors spread
+		// the block around the point; above-anchors stack up from the gap; below-
+		// anchors stack down from it.
+		const x = dir.x * gap;
+		const y0 =
+			dir.y === 0 ? -((lines.length - 1) / 2) * lineH
+			: dir.y === -1 ? -gap - ls.fontSize / 2 - (lines.length - 1) * lineH
+			: gap + ls.fontSize / 2;
+
+		ctx.save();
+		ctx.translate(px, py);
+		ctx.scale(1 / mapScale, 1 / mapScale);
+		if (rot) ctx.rotate((rot * Math.PI) / 180);
+
+		if (ls.haloWidth > 0) {
+			ctx.strokeStyle = ls.haloColor;
+			ctx.lineWidth = ls.haloWidth * 2;
+			ctx.lineJoin = 'round';
+			for (let i = 0; i < lines.length; i++) ctx.strokeText(lines[i], x, y0 + i * lineH);
+		}
+		ctx.fillStyle = ls.color;
+		for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], x, y0 + i * lineH);
+
+		ctx.restore();
+	}
+
+	// Sets the per-layer text state on the context for a labelStyle. Pair with paintLabel.
+	function setLabelContext(ctx: CanvasRenderingContext2D, ls: Layer['labelStyle'], dim: number): void {
+		const dir = LABEL_ANCHOR_DIR[ls.anchor];
+		ctx.font = labelFontString(ls);
+		ctx.textAlign = dir.x === -1 ? 'right' : dir.x === 1 ? 'left' : 'center';
+		ctx.textBaseline = 'middle';
+		(ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${ls.letterSpacing}px`;
+		ctx.globalAlpha = ls.colorOpacity * dim;
+	}
+
 	// Draws a label layer: the labelAttribute value as text at each projected anchor.
-	// Text renders zoom-independent (same inverse-scale trick as point symbols) with
-	// the halo stroked under the fill. Multi-line via manual \n breaks; textAlign for
-	// differing line widths comes with text edit mode (step 3).
+	// Multi-line via manual \n breaks; textAlign for differing line widths comes with
+	// text edit mode (step 3).
 	function drawLabelLayer(ctx: CanvasRenderingContext2D, layer: Layer, dim: number): void {
 		if (!projection) return;
 		const attr = layer.labelAttribute;
@@ -2376,9 +2748,6 @@
 		// Kick off the webfont load if needed (idempotent); when it arrives,
 		// fonts.version bumps and the repaint effect re-renders with the real face.
 		ensureFontLoaded(ls.fontFamily);
-		const dir = LABEL_ANCHOR_DIR[ls.anchor];
-		const gap = dir.x === 0 && dir.y === 0 ? 0 : ls.fontSize * 0.3 + ls.haloWidth;
-		const lineH = ls.fontSize * ls.lineHeight;
 
 		// Same back-hemisphere culling as point symbols: projection(coord) bypasses
 		// d3's stream preclip in rotate mode, so check visibility explicitly.
@@ -2387,49 +2756,138 @@
 			: null;
 
 		ctx.save();
-		ctx.font = labelFontString(ls);
-		ctx.textAlign = dir.x === -1 ? 'right' : dir.x === 1 ? 'left' : 'center';
-		ctx.textBaseline = 'middle';
-		(ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${ls.letterSpacing}px`;
-		ctx.globalAlpha = ls.colorOpacity * dim;
+		setLabelContext(ctx, ls, dim);
 
-		for (const f of data.features) {
+		for (let fi = 0; fi < data.features.length; fi++) {
+			const f = data.features[fi];
 			const geom = f?.geometry;
 			if (!geom || geom.type !== 'Point') continue;
-			const coord = geom.coordinates as [number, number];
+			// An in-progress text session can move, retype, or delete labels; paint
+			// reflects it live. The label open in the inline editor is skipped — the
+			// textarea shows it.
+			if (sessionDeleted(layer.id, fi)) continue;
+			const editing = textSession.editingExisting;
+			if (editing && editing.layerId === layer.id && editing.featureIndex === fi) continue;
+			const coord = sessionMovedCoord(layer.id, fi) ?? (geom.coordinates as [number, number]);
 			if (projCenter && d3.geoDistance(coord, projCenter) >= Math.PI / 2) continue;
 			const pt = projection(coord);
 			if (!pt) continue;
 
-			const raw = f.properties?.[attr];
+			const raw = sessionTextOverride(layer.id, fi) ?? f.properties?.[attr];
 			if (raw === null || raw === undefined || raw === '') continue;
-			const lines = applyTextTransform(String(raw), ls.textTransform).split('\n');
-
-			// First line's y, with middle baselines throughout: centered anchors spread
-			// the block around the point; above-anchors stack up from the gap; below-
-			// anchors stack down from it.
-			const x = dir.x * gap;
-			const y0 =
-				dir.y === 0 ? -((lines.length - 1) / 2) * lineH
-				: dir.y === -1 ? -gap - ls.fontSize / 2 - (lines.length - 1) * lineH
-				: gap + ls.fontSize / 2;
-
-			ctx.save();
-			ctx.translate(pt[0], pt[1]);
-			ctx.scale(1 / mapScale, 1 / mapScale);
-
-			if (ls.haloWidth > 0) {
-				ctx.strokeStyle = ls.haloColor;
-				ctx.lineWidth = ls.haloWidth * 2;
-				ctx.lineJoin = 'round';
-				for (let i = 0; i < lines.length; i++) ctx.strokeText(lines[i], x, y0 + i * lineH);
-			}
-			ctx.fillStyle = ls.color;
-			for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], x, y0 + i * lineH);
-
-			ctx.restore();
+			const props = f.properties as Record<string, unknown> | undefined;
+			const rot = sessionRotationOverride(layer.id, fi) ?? numberProp(props?.__rotation) ?? 0;
+			const wrap = sessionWrapOverride(layer.id, fi) ?? numberProp(props?.__wrapWidth);
+			const transformed = applyTextTransform(String(raw), ls.textTransform);
+			const lines = wrap !== null ? wrapLabelLines(ctx, transformed, wrap) : transformed.split('\n');
+			paintLabel(ctx, ls, lines, pt[0], pt[1], rot);
+			recordLabelHitBox(ctx, ls, lines, pt[0] * mapScale + tx, pt[1] * mapScale + ty, layer.id, fi, rot);
 		}
 		ctx.restore();
+	}
+
+	// Ghost pass: new text boxes placed this session, drawn with the target layer's
+	// style (or defaults when the target doesn't exist yet). The box currently in the
+	// inline editor is skipped — the textarea shows it.
+	function drawTextSessionGhosts(ctx: CanvasRenderingContext2D): void {
+		if (!projection) return;
+		const feats = getNewTextFeatures();
+		if (feats.length === 0) return;
+
+		const target = layers.find((l) => l.id === textSession.targetLayerId);
+		const ls = target ? target.labelStyle : defaultLabelStyle();
+		ensureFontLoaded(ls.fontFamily);
+
+		const projCenter: [number, number] | null = interactionMode === 'rotate'
+			? [-projectionStore.rotate[0], -projectionStore.rotate[1]]
+			: null;
+
+		ctx.save();
+		setLabelContext(ctx, ls, 1);
+		for (let i = 0; i < feats.length; i++) {
+			if (i === textSession.editingNew) continue;
+			const f = feats[i];
+			if (f.text === '') continue;
+			if (projCenter && d3.geoDistance(f.coord, projCenter) >= Math.PI / 2) continue;
+			const pt = projection(f.coord);
+			if (!pt) continue;
+			const transformed = applyTextTransform(f.text, ls.textTransform);
+			const lines = f.wrapWidth !== undefined ? wrapLabelLines(ctx, transformed, f.wrapWidth) : transformed.split('\n');
+			paintLabel(ctx, ls, lines, pt[0], pt[1], f.rotation ?? 0);
+			recordLabelHitBox(ctx, ls, lines, pt[0] * mapScale + tx, pt[1] * mapScale + ty, null, i, f.rotation ?? 0);
+		}
+		ctx.restore();
+	}
+
+	// --- Inline text editor overlay (text tool) -------------------------------
+	let textEditorEl = $state<HTMLTextAreaElement | null>(null);
+
+	// Screen position of the box being edited (new box or existing label). tx/ty/mapScale
+	// keep it glued during pan/zoom; textSession.version covers coordinate changes.
+	const textEditorPos = $derived.by(() => {
+		void textSession.version;
+		if (!projection) return null;
+		let coord: [number, number] | null = null;
+		if (textSession.editingNew !== null) {
+			coord = getNewTextFeatures()[textSession.editingNew]?.coord ?? null;
+		} else if (textSession.editingExisting) {
+			const ex = textSession.editingExisting;
+			coord = sessionMovedCoord(ex.layerId, ex.featureIndex) ?? ex.coord;
+		}
+		if (!coord) return null;
+		const pt = projection(coord);
+		if (!pt) return null;
+		return { x: pt[0] * mapScale + tx, y: pt[1] * mapScale + ty };
+	});
+
+	// The editor matches the style its text will render with: the edited label's layer,
+	// the target layer for new boxes, or defaults when the target doesn't exist yet.
+	const textEditorStyle = $derived.by(() => {
+		const id = textSession.editingExisting?.layerId ?? textSession.targetLayerId;
+		const layer = layers.find((l) => l.id === id);
+		return layer ? layer.labelStyle : defaultLabelStyle();
+	});
+
+	// Focus the editor when it mounts and seed it with the current text (empty for a
+	// fresh box; the label's text for double-click edits).
+	$effect(() => {
+		if (textEditorEl) {
+			textEditorEl.value = currentEditingText();
+			textEditorEl.focus();
+			textEditorEl.select();
+			autosizeTextEditor(textEditorEl);
+		}
+	});
+
+	function autosizeTextEditor(el: HTMLTextAreaElement): void {
+		el.style.width = '2px';
+		el.style.width = `${el.scrollWidth + 4}px`;
+		el.style.height = 'auto';
+		el.style.height = `${el.scrollHeight}px`;
+	}
+
+	function handleTextEditorInput(e: Event): void {
+		const el = e.currentTarget as HTMLTextAreaElement;
+		if (textSession.editingNew !== null) {
+			updateNewText(textSession.editingNew, el.value);
+		} else if (textSession.editingExisting) {
+			setLabelText(textSession.editingExisting.layerId, textSession.editingExisting.featureIndex, el.value);
+		}
+		autosizeTextEditor(el);
+	}
+
+	function closeTextEditor(): void {
+		finishEditingNew();
+		finishEditingExisting();
+	}
+
+	function handleTextEditorKeydown(e: KeyboardEvent): void {
+		// Enter inserts a line break (default). Esc closes the editor; the session's
+		// commit stays a separate, later Esc on the canvas.
+		if (e.key === 'Escape') {
+			e.stopPropagation();
+			closeTextEditor();
+		}
 	}
 
 	// Repaint the canvas whenever styles, visibility, layer order, or the
@@ -2438,6 +2896,7 @@
 	$effect(() => {
 		void cacheVersion; // re-run whenever a new path is cached
 		void fonts.version; // re-run when a webfont finishes loading (labels re-render)
+		void textSession.version; // re-run when text-session ghosts change
 		if (!canvasEl || !width || !height) return;
 
 		const dpr = window.devicePixelRatio || 1;
@@ -2456,6 +2915,9 @@
 
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, width, height);
+
+		// Label hit boxes are rebuilt as labels paint below.
+		labelHitBoxes = [];
 
 		if (canvasStyles.background.enabled) {
 			const bgDim = (layerSelection.enteredId !== null || editSession.activeLayerId !== null) ? 0.35 : 1.0;
@@ -2758,6 +3220,51 @@
 			ctx.globalAlpha = 1;
 		}
 
+		// New text boxes from an in-progress text session render as ghosts on top.
+		drawTextSessionGhosts(ctx);
+
+		// Hover outline for the text tool — grey, under the selection outline.
+		if (toolState.active === 'text' && hoveredLabel && !sameSelection(hoveredLabel, textSession.selected)) {
+			const box = hitBoxFor(hoveredLabel);
+			if (box) {
+				const css = getComputedStyle(canvasEl!);
+				ctx.save();
+				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+				ctx.translate(box.ax, box.ay);
+				if (box.rot) ctx.rotate((box.rot * Math.PI) / 180);
+				ctx.strokeStyle = css.getPropertyValue('--color-border').trim();
+				ctx.lineWidth = 1;
+				ctx.setLineDash([]);
+				ctx.strokeRect(box.x0 - box.ax, box.y0 - box.ay, box.x1 - box.x0, box.y1 - box.y0);
+				ctx.restore();
+			}
+		}
+
+		// Selection outline + wrap handle for the text tool — drawn in screen space
+		// (boxes are CSS px), rotated about the label's anchor like the label itself.
+		if (toolState.active === 'text' && textSession.selected) {
+			const box = hitBoxFor(textSession.selected);
+			if (box) {
+				const css = getComputedStyle(canvasEl!);
+				const accent = css.getPropertyValue('--color-accent').trim();
+				ctx.save();
+				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+				ctx.translate(box.ax, box.ay);
+				if (box.rot) ctx.rotate((box.rot * Math.PI) / 180);
+				ctx.strokeStyle = accent;
+				ctx.lineWidth = 1;
+				ctx.setLineDash([]);
+				ctx.strokeRect(box.x0 - box.ax, box.y0 - box.ay, box.x1 - box.x0, box.y1 - box.y0);
+				// Wrap-width handle: a small square on the right edge's midpoint.
+				ctx.fillStyle = '#ffffff';
+				const hx = box.x1 - box.ax;
+				const hy = (box.y0 + box.y1) / 2 - box.ay;
+				ctx.fillRect(hx - 3.5, hy - 3.5, 7, 7);
+				ctx.strokeRect(hx - 3.5, hy - 3.5, 7, 7);
+				ctx.restore();
+			}
+		}
+
 		ctx.globalAlpha = 1;
 		ctx.setLineDash([]);
 
@@ -2787,11 +3294,45 @@
 				ctx.save();
 				for (const layer of [...layers].reverse()) {
 					if (!layer.visible) continue;
-					if (layer.kind === 'label') continue; // no tint/bbox treatment for text yet
 					if (layer.id === enteredId) continue; // entered = opacity knockback only
 					const isSelected = selIds.includes(layer.id);
 					const isHovered  = layer.id === hovId;
 					if (!isSelected && !isHovered) continue;
+
+					// Label layers: hover/selected feedback outlines each painted label's box
+					// plus a dashed union bbox — drawn in screen space (boxes are CSS px).
+					// Select-mode feedback only: in text mode the selected layer is the text
+					// TARGET (selection persists there), and this would linger distractingly.
+					if (layer.kind === 'label') {
+						if (toolState.active === 'text') continue;
+						let ux0 = Infinity, uy0 = Infinity, ux1 = -Infinity, uy1 = -Infinity;
+						ctx.save();
+						ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+						ctx.strokeStyle = isSelected ? accentColor : textColor;
+						ctx.lineWidth = 1;
+						ctx.setLineDash([]);
+						for (const b of labelHitBoxes) {
+							if (b.layerId !== layer.id) continue;
+							// Per-box outline, rotated like the label.
+							ctx.save();
+							ctx.translate(b.ax, b.ay);
+							if (b.rot) ctx.rotate((b.rot * Math.PI) / 180);
+							ctx.strokeRect(b.x0 - b.ax, b.y0 - b.ay, b.x1 - b.x0, b.y1 - b.y0);
+							ctx.restore();
+							for (const [cxp, cyp] of boxCorners(b)) {
+								if (cxp < ux0) ux0 = cxp;
+								if (cyp < uy0) uy0 = cyp;
+								if (cxp > ux1) ux1 = cxp;
+								if (cyp > uy1) uy1 = cyp;
+							}
+						}
+						if (isFinite(ux0)) {
+							ctx.setLineDash([4, 3]);
+							ctx.strokeRect(ux0 - 2, uy0 - 2, ux1 - ux0 + 4, uy1 - uy0 + 4);
+						}
+						ctx.restore();
+						continue;
+					}
 					const stylePanelOpen = stylePanel.openId === layer.id;
 
 					const chunks = pathCache.get(layer.id);
@@ -3233,6 +3774,8 @@
 				<EditSessionBar />
 			{:else if toolState.active === 'draw'}
 				<DrawBar />
+			{:else if toolState.active === 'text'}
+				<TextBar />
 			{:else}
 				<SelectionBar />
 			{/if}
@@ -3271,6 +3814,9 @@
 			class:select-mode={toolState.active === 'select' && !spacePanning}
 			class:edit-mode={toolState.active === 'edit' && !spacePanning}
 			class:draw-mode={toolState.active === 'draw' && !spacePanning}
+			class:text-mode={toolState.active === 'text' && !spacePanning}
+			class:label-hover={toolState.active === 'text' && overLabel && !spacePanning}
+			class:handle-hover={toolState.active === 'text' && overHandle && !spacePanning}
 			class:vertex-grab={toolState.active === 'edit' && overVertex && !vertexDrag && !spacePanning && !metaHeld}
 			class:insert-ghost-hover={toolState.active === 'edit' && overInsertGhost && !vertexDrag && !spacePanning && !metaHeld}
 			class:vertex-grabbing={vertexDrag !== null || pointDrag !== null}
@@ -3283,8 +3829,29 @@
 			onpointerdown={handlePointerDown}
 			onpointermove={handlePointerMove}
 			onpointerup={handlePointerUp}
-			onpointerleave={() => { hoveredFeature.value = null; setHoveredLayer(null); insertHover = null; overVertex = false; overInsertGhost = false; hoveredPoint = null; hoveredVertexKey = null; }}
+			onpointerleave={() => { hoveredFeature.value = null; setHoveredLayer(null); insertHover = null; overVertex = false; overInsertGhost = false; hoveredPoint = null; hoveredVertexKey = null; overLabel = false; overHandle = false; hoveredLabel = null; }}
 		></canvas>
+
+		{#if (textSession.editingNew !== null || textSession.editingExisting !== null) && textEditorPos}
+			<textarea
+				class="text-editor-overlay"
+				bind:this={textEditorEl}
+				style:left="{textEditorPos.x}px"
+				style:top="{textEditorPos.y}px"
+				style:font-family={textEditorStyle.fontFamily}
+				style:font-size="{textEditorStyle.fontSize}px"
+				style:font-weight={textEditorStyle.fontWeight}
+				style:font-style={textEditorStyle.italic ? 'italic' : 'normal'}
+				style:color={textEditorStyle.color}
+				style:letter-spacing="{textEditorStyle.letterSpacing}px"
+				style:line-height={textEditorStyle.lineHeight}
+				rows="1"
+				spellcheck="false"
+				oninput={handleTextEditorInput}
+				onkeydown={handleTextEditorKeydown}
+				onblur={closeTextEditor}
+			></textarea>
+		{/if}
 
 		{#if showBezierOutlineNote}
 			<div class="bezier-outline-note">
@@ -3367,6 +3934,35 @@
 
 	canvas.draw-mode {
 		cursor: crosshair;
+	}
+
+	canvas.text-mode {
+		cursor: text;
+	}
+
+	canvas.text-mode.label-hover {
+		cursor: move;
+	}
+
+	canvas.text-mode.handle-hover {
+		cursor: ew-resize;
+	}
+
+	.text-editor-overlay {
+		position: absolute;
+		transform: translate(-50%, -50%);
+		background: transparent;
+		border: 1px dashed var(--color-accent);
+		border-radius: 2px;
+		padding: 2px 4px;
+		margin: 0;
+		resize: none;
+		overflow: hidden;
+		white-space: pre;
+		min-width: 24px;
+		outline: none;
+		z-index: 10;
+		text-align: center;
 	}
 
 	canvas.vertex-grab {
