@@ -8,8 +8,9 @@
 	import type { PathCommand } from '$lib/workers/types';
 	import type { Layer, LayerProcessing } from '$lib/types';
 	import { applyTextTransform, LABEL_ANCHOR_DIR, labelFontString, wrapLabelLines } from '$lib/utils/labels';
+	import { layoutGlyphsAlongPath, splitGraphemes, type GlyphPlacement } from '$lib/utils/curvedText';
 	import { fonts, ensureFontLoaded } from '$lib/stores/fonts.svelte';
-	import { textSession, getNewTextFeatures, placeText, updateNewText, finishEditingNew, commitText, resetTextTarget, setTextTarget, editorJustClosed, sessionMovedCoord, sessionDeleted, sessionTextOverride, sessionRotationOverride, sessionWrapOverride, moveLabel, moveNewText, deleteSelected, beginEditingExisting, finishEditingExisting, currentEditingText, setLabelText, setSelectedWrapWidth, type TextSelection } from '$lib/stores/textSession.svelte';
+	import { textSession, getNewTextFeatures, placeText, updateNewText, finishEditingNew, commitText, resetTextTarget, setTextTarget, editorJustClosed, sessionMovedCoord, sessionLineDelta, sessionDeleted, sessionTextOverride, sessionRotationOverride, sessionWrapOverride, moveLabel, moveLine, moveNewText, deleteSelected, beginEditingExisting, finishEditingExisting, currentEditingText, setLabelText, setSelectedWrapWidth, type TextSelection } from '$lib/stores/textSession.svelte';
 	import { layers, workingTopologyData, layerDrag, deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures, defaultLabelStyle } from '$lib/stores/layers.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
 	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
@@ -367,7 +368,16 @@
 	let pointDrag = $state<{ group: PointMember[]; from: [number, number] } | null>(null);
 
 	// Text tool: in-progress label drag + hover state (cursor + grey hover outline).
-	let labelDrag: { sel: TextSelection; startCursor: { x: number; y: number }; startAnchor: { x: number; y: number }; moved: boolean } | null = null;
+	// Curved labels drag by lon/lat delta (whole-line translate): startGeo is the
+	// unprojected cursor at mousedown, baseDelta the session's prior offset so a
+	// second gesture continues from where the first left the line.
+	let labelDrag: {
+		sel: TextSelection;
+		startCursor: { x: number; y: number };
+		startAnchor: { x: number; y: number };
+		moved: boolean;
+		curved?: { startGeo: [number, number]; baseDelta: [number, number] };
+	} | null = null;
 	let overLabel = $state(false);
 	let hoveredLabel = $state<TextSelection | null>(null);
 
@@ -1112,7 +1122,14 @@
 			// Editing a label also targets its layer ("adding text to X").
 			selectLayer(hit.layerId);
 			const box = hitBoxFor(hit);
-			const geo = box ? projection?.invert?.([(box.ax - tx) / mapScale, (box.ay - ty) / mapScale]) : null;
+			// Curved labels: the editor opens (horizontal) at the baseline's midpoint;
+			// straight labels open at their anchor.
+			const anchor: [number, number] | null = box
+				? box.baseline
+					? box.baseline[Math.floor(box.baseline.length / 2)]
+					: [box.ax, box.ay]
+				: null;
+			const geo = anchor ? projection?.invert?.([(anchor[0] - tx) / mapScale, (anchor[1] - ty) / mapScale]) : null;
 			if (!geo) return;
 			const layer = layers.find((l) => l.id === hit.layerId);
 			const attr = layer?.labelAttribute;
@@ -1314,11 +1331,22 @@
 				textSession.selected = hit;
 				// Clicking a label also targets its layer ("adding text to X").
 				if (hit.kind === 'existing') selectLayer(hit.layerId);
+				// Curved labels drag by delta from the cursor's geo position; if the
+				// cursor doesn't unproject (off-globe), select without arming a drag.
+				let curved: { startGeo: [number, number]; baseDelta: [number, number] } | undefined;
+				if (box?.baseline && hit.kind === 'existing') {
+					const geo = projection?.invert?.([(cx - tx) / mapScale, (cy - ty) / mapScale]) ?? null;
+					if (!geo) return;
+					curved = { startGeo: [geo[0], geo[1]], baseDelta: sessionLineDelta(hit.layerId, hit.featureIndex) ?? [0, 0] };
+				}
 				labelDrag = {
 					sel: hit,
 					startCursor: { x: e.clientX, y: e.clientY },
-					startAnchor: box ? { x: box.ax, y: box.ay } : { x: e.clientX - rect.left, y: e.clientY - rect.top },
+					// Curved drags are cursor-relative (startGeo above is the cursor's geo
+					// position), so their anchor is the cursor, not the glyph box.
+					startAnchor: box && !curved ? { x: box.ax, y: box.ay } : { x: cx, y: cy },
 					moved: false,
+					curved,
 				};
 				(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
 				return;
@@ -1461,6 +1489,7 @@
 		}
 
 		// Dragging a label with the text tool — offset its anchor by the cursor delta.
+		// Curved labels translate their whole line by the cursor's geo delta instead.
 		if (labelDrag) {
 			const dx = e.clientX - labelDrag.startCursor.x;
 			const dy = e.clientY - labelDrag.startCursor.y;
@@ -1470,8 +1499,19 @@
 			const ny = (labelDrag.startAnchor.y + dy - ty) / mapScale;
 			const geo = projection?.invert?.([nx, ny]) ?? null;
 			if (geo) {
-				if (labelDrag.sel.kind === 'existing') moveLabel(labelDrag.sel.layerId, labelDrag.sel.featureIndex, geo[0], geo[1]);
-				else moveNewText(labelDrag.sel.index, geo[0], geo[1]);
+				if (labelDrag.curved && labelDrag.sel.kind === 'existing') {
+					const { startGeo, baseDelta } = labelDrag.curved;
+					moveLine(
+						labelDrag.sel.layerId,
+						labelDrag.sel.featureIndex,
+						baseDelta[0] + geo[0] - startGeo[0],
+						baseDelta[1] + geo[1] - startGeo[1],
+					);
+				} else if (labelDrag.sel.kind === 'existing') {
+					moveLabel(labelDrag.sel.layerId, labelDrag.sel.featureIndex, geo[0], geo[1]);
+				} else {
+					moveNewText(labelDrag.sel.index, geo[0], geo[1]);
+				}
 			}
 			return;
 		}
@@ -2589,6 +2629,11 @@
 		ax: number; ay: number;
 		// Degrees clockwise.
 		rot: number;
+		// Curved labels only: the smoothed screen-space path the text follows. One box
+		// per GLYPH (all sharing the same baseline reference), so any letter is a hit
+		// target; its presence is also how downstream code recognizes a curved label
+		// (outline = baseline stroke, no wrap handle, no move drag until 4c-drag).
+		baseline?: [number, number][];
 	}
 	let labelHitBoxes: LabelHitBox[] = [];
 
@@ -2644,6 +2689,15 @@
 		labelHitBoxes.push({ layerId, index, x0: x0 - pad, y0: y0 - pad, x1: x0 + w + pad, y1: y0 + h + pad, ax: sx, ay: sy, rot });
 	}
 
+	// Strokes a screen-space polyline with whatever style the ctx has set — the
+	// hover/selection indicator for curved labels (their baseline).
+	function strokePolyline(ctx: CanvasRenderingContext2D, pts: [number, number][]): void {
+		ctx.beginPath();
+		ctx.moveTo(pts[0][0], pts[0][1]);
+		for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+		ctx.stroke();
+	}
+
 	// Topmost label under a canvas-relative point, or null.
 	function hitTestLabel(cx: number, cy: number): TextSelection | null {
 		for (let i = labelHitBoxes.length - 1; i >= 0; i--) {
@@ -2663,7 +2717,7 @@
 		const sel = textSession.selected;
 		if (!sel) return false;
 		const b = hitBoxFor(sel);
-		if (!b) return false;
+		if (!b || b.baseline) return false; // curved labels have no wrap handle
 		const [lx, ly] = toBoxFrame(b, cx, cy);
 		return Math.hypot(lx - b.x1, ly - (b.y0 + b.y1) / 2) <= 7;
 	}
@@ -2718,6 +2772,75 @@
 		ctx.restore();
 	}
 
+	// Paints one curved label: glyphs walked along the projected line (D3/D9). Layout
+	// runs in true screen pixels — font size is zoom-independent, so glyph advances
+	// only mean anything after zoom — then each placement converts back to projected
+	// coords for painting under the same inverse-scale trick as straight labels.
+	// Letter spacing is applied manually between glyphs; ctx.letterSpacing stays 0
+	// here because it would double-count inside per-glyph measureText.
+	function paintCurvedLabel(
+		ctx: CanvasRenderingContext2D,
+		ls: Layer['labelStyle'],
+		text: string,
+		coords: [number, number][],
+		layerId: string,
+		fi: number,
+	): void {
+		if (!projection) return;
+		const path: [number, number][] = [];
+		for (const c of coords) {
+			const pt = projection(c);
+			if (pt) path.push([pt[0] * mapScale + tx, pt[1] * mapScale + ty]);
+		}
+		if (path.length < 2) return;
+
+		ctx.save();
+		(ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = '0px';
+		ctx.textAlign = 'center';
+		// Text-on-a-path is single-line: manual breaks become word gaps.
+		const glyphs = splitGraphemes(text.split('\n').join(' ')).map((glyph) => ({
+			glyph,
+			width: ctx.measureText(glyph).width,
+		}));
+		const { placements, baseline } = layoutGlyphsAlongPath(path, glyphs, ls.letterSpacing, ls.fontSize);
+
+		// One hit box per glyph (all carrying the shared baseline), so clicking any
+		// letter — or the gap of a space — targets the label.
+		const pad = 3;
+		for (let i = 0; i < placements.length; i++) {
+			const p = placements[i];
+			const half = glyphs[i].width / 2;
+			labelHitBoxes.push({
+				layerId, index: fi,
+				x0: p.x - half - pad, y0: p.y - ls.fontSize / 2 - pad,
+				x1: p.x + half + pad, y1: p.y + ls.fontSize / 2 + pad,
+				ax: p.x, ay: p.y, rot: (p.angle * 180) / Math.PI,
+				baseline,
+			});
+		}
+
+		const drawGlyph = (p: GlyphPlacement, stroke: boolean): void => {
+			ctx.save();
+			ctx.translate((p.x - tx) / mapScale, (p.y - ty) / mapScale);
+			ctx.scale(1 / mapScale, 1 / mapScale);
+			ctx.rotate(p.angle);
+			if (stroke) ctx.strokeText(p.glyph, 0, 0);
+			else ctx.fillText(p.glyph, 0, 0);
+			ctx.restore();
+		};
+
+		// All halos under all fills, so a glyph's halo never overpaints its neighbor.
+		if (ls.haloWidth > 0) {
+			ctx.strokeStyle = ls.haloColor;
+			ctx.lineWidth = ls.haloWidth * 2;
+			ctx.lineJoin = 'round';
+			for (const p of placements) drawGlyph(p, true);
+		}
+		ctx.fillStyle = ls.color;
+		for (const p of placements) drawGlyph(p, false);
+		ctx.restore();
+	}
+
 	// Sets the per-layer text state on the context for a labelStyle. Pair with paintLabel.
 	function setLabelContext(ctx: CanvasRenderingContext2D, ls: Layer['labelStyle'], dim: number): void {
 		const dir = LABEL_ANCHOR_DIR[ls.anchor];
@@ -2761,7 +2884,25 @@
 		for (let fi = 0; fi < data.features.length; fi++) {
 			const f = data.features[fi];
 			const geom = f?.geometry;
-			if (!geom || geom.type !== 'Point') continue;
+			if (!geom) continue;
+			if (geom.type === 'LineString') {
+				// Curved label. Rotation and wrap width don't apply to text-on-a-path.
+				// Culling uses the middle vertex as a cheap stand-in for the path midpoint.
+				if (sessionDeleted(layer.id, fi)) continue;
+				const editingCurved = textSession.editingExisting;
+				if (editingCurved && editingCurved.layerId === layer.id && editingCurved.featureIndex === fi) continue;
+				const raw = sessionTextOverride(layer.id, fi) ?? f.properties?.[attr];
+				if (raw === null || raw === undefined || raw === '') continue;
+				let coords = geom.coordinates as [number, number][];
+				if (coords.length < 2) continue;
+				// An in-progress drag translates the whole line live.
+				const delta = sessionLineDelta(layer.id, fi);
+				if (delta) coords = coords.map(([x, y]) => [x + delta[0], y + delta[1]] as [number, number]);
+				if (projCenter && d3.geoDistance(coords[Math.floor(coords.length / 2)], projCenter) >= Math.PI / 2) continue;
+				paintCurvedLabel(ctx, ls, applyTextTransform(String(raw), ls.textTransform), coords, layer.id, fi);
+				continue;
+			}
+			if (geom.type !== 'Point') continue;
 			// An in-progress text session can move, retype, or delete labels; paint
 			// reflects it live. The label open in the inline editor is skipped — the
 			// textarea shows it.
@@ -3224,24 +3365,30 @@
 		drawTextSessionGhosts(ctx);
 
 		// Hover outline for the text tool — grey, under the selection outline.
+		// Straight labels get their rotated box; curved labels get a baseline stroke.
 		if (toolState.active === 'text' && hoveredLabel && !sameSelection(hoveredLabel, textSession.selected)) {
 			const box = hitBoxFor(hoveredLabel);
 			if (box) {
 				const css = getComputedStyle(canvasEl!);
 				ctx.save();
 				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-				ctx.translate(box.ax, box.ay);
-				if (box.rot) ctx.rotate((box.rot * Math.PI) / 180);
 				ctx.strokeStyle = css.getPropertyValue('--color-border').trim();
 				ctx.lineWidth = 1;
 				ctx.setLineDash([]);
-				ctx.strokeRect(box.x0 - box.ax, box.y0 - box.ay, box.x1 - box.x0, box.y1 - box.y0);
+				if (box.baseline) {
+					strokePolyline(ctx, box.baseline);
+				} else {
+					ctx.translate(box.ax, box.ay);
+					if (box.rot) ctx.rotate((box.rot * Math.PI) / 180);
+					ctx.strokeRect(box.x0 - box.ax, box.y0 - box.ay, box.x1 - box.x0, box.y1 - box.y0);
+				}
 				ctx.restore();
 			}
 		}
 
 		// Selection outline + wrap handle for the text tool — drawn in screen space
 		// (boxes are CSS px), rotated about the label's anchor like the label itself.
+		// Curved labels: accent baseline stroke with end dots; no box, no wrap handle.
 		if (toolState.active === 'text' && textSession.selected) {
 			const box = hitBoxFor(textSession.selected);
 			if (box) {
@@ -3249,18 +3396,28 @@
 				const accent = css.getPropertyValue('--color-accent').trim();
 				ctx.save();
 				ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-				ctx.translate(box.ax, box.ay);
-				if (box.rot) ctx.rotate((box.rot * Math.PI) / 180);
 				ctx.strokeStyle = accent;
 				ctx.lineWidth = 1;
 				ctx.setLineDash([]);
-				ctx.strokeRect(box.x0 - box.ax, box.y0 - box.ay, box.x1 - box.x0, box.y1 - box.y0);
-				// Wrap-width handle: a small square on the right edge's midpoint.
-				ctx.fillStyle = '#ffffff';
-				const hx = box.x1 - box.ax;
-				const hy = (box.y0 + box.y1) / 2 - box.ay;
-				ctx.fillRect(hx - 3.5, hy - 3.5, 7, 7);
-				ctx.strokeRect(hx - 3.5, hy - 3.5, 7, 7);
+				if (box.baseline) {
+					strokePolyline(ctx, box.baseline);
+					ctx.fillStyle = accent;
+					for (const [ex, ey] of [box.baseline[0], box.baseline[box.baseline.length - 1]]) {
+						ctx.beginPath();
+						ctx.arc(ex, ey, 2.5, 0, Math.PI * 2);
+						ctx.fill();
+					}
+				} else {
+					ctx.translate(box.ax, box.ay);
+					if (box.rot) ctx.rotate((box.rot * Math.PI) / 180);
+					ctx.strokeRect(box.x0 - box.ax, box.y0 - box.ay, box.x1 - box.x0, box.y1 - box.y0);
+					// Wrap-width handle: a small square on the right edge's midpoint.
+					ctx.fillStyle = '#ffffff';
+					const hx = box.x1 - box.ax;
+					const hy = (box.y0 + box.y1) / 2 - box.ay;
+					ctx.fillRect(hx - 3.5, hy - 3.5, 7, 7);
+					ctx.strokeRect(hx - 3.5, hy - 3.5, 7, 7);
+				}
 				ctx.restore();
 			}
 		}

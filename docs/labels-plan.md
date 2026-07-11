@@ -143,7 +143,36 @@ Each step is usable on its own before the next starts:
    `__wrapWidth` (drag handle on the selected box's right edge; greedy word-wrap in
    wrapLabelLines; rotated labels hit-test/outline in the anchor-pivoted frame).
 4. **Curved labels** — per-glyph path-walking renderer; line-source derivation copies lines.
-   Blocked on Q1 (placement details).
+   Placement decided in D9. Slices (decided 2026-07-07): 4a derivation keeps line geometry
+   (MultiLineString → longest part, like MultiPolygon → largest); 4b curved renderer
+   (screen-space arc-length walk, per-glyph translate/rotate/fillText, halo under fill,
+   auto-flip when the path runs right-to-left, cull when the path midpoint is on the globe's
+   back hemisphere); 4c text-edit-mode integration (hit-test along the path, drag =
+   translate the whole line geometry, retype/delete via existing session maps;
+   rotation/wrap-width controls hidden for curved labels).
+   **4a DONE 2026-07-07**: `computeLabelGeometries` (née computeLabelAnchors) returns
+   Point or LineString per feature; createLabelLayer builds a real `arcs` array for lines.
+   **4b decisions**: project vertices only, no densification (revisit if chords show on
+   sparse lines); `\n` collapses to a space on curved paths (text-on-a-path is single-line);
+   pure layout math in `utils/curvedText.ts` (screen-px in/out — reused by step-5 SVG
+   export's per-glyph fallback), MapCanvas keeps only the ctx painting; manual letter
+   spacing between glyphs (ctx.letterSpacing would double-count in per-glyph measurement);
+   9-way anchor / line height / alignment don't apply to curved labels.
+   **4b smoothing (decided 2026-07-11)**: glyphs follow a smoothed copy of the projected
+   path, not the raw one — raw river data is higher-frequency than a glyph is wide, so raw
+   tangents made letters tumble and re-roll on zoom. Uniform resample at fontSize/2 px, two
+   box-filter passes with half-width 1.5×fontSize, glyph angle from the secant across the
+   glyph's own width. Window is font-size-proportional (screen-constant) so the label reads
+   the same across zoom. Accepted cost: baselines cut tight meander corners by a few px.
+   **4b DONE + verified 2026-07-11.**
+   **4c DONE 2026-07-11** (select/delete/retype verified; drag verified; TextBar hide
+   pending eyeball): per-glyph hit boxes sharing a `baseline` reference (its presence =
+   "curved" downstream); hover/selection = baseline stroke (accent + end dots when
+   selected); dblclick editor opens horizontal at the baseline midpoint; drag = whole-line
+   translate via `lineMoves` lon/lat-delta session map → `applyLabelEdits` translates the
+   feature's arcs; rotation input hidden for curved selections (`selectedIsCurved`), wrap
+   handle suppressed. Deferred: curve reshaping (path editing) — discussion started
+   2026-07-11; orphaned arcs left behind by label deletes (harmless, minor topology bloat).
 5. **Export** — `<text>`/`<textPath>` in SVG export; PNG needs nothing (labels are on canvas).
 
 ### Step 1 details (decided 2026-07-06)
@@ -212,6 +241,42 @@ like drawing mode.
   differently on machines lacking the font; Google-font SVGs can embed an `@import`. PNG is
   immune (rasterized from canvas).
 
+### D9: Curved label placement (decided 2026-07-07, resolves Q1)
+
+- **Lines only in v1.** Polygon labels stay at the pole-of-inaccessibility point; curved text
+  across polygon interiors (synthesized arc paths) is a later feature.
+- **No curved toggle**: a label renders curved automatically when its feature geometry is a
+  LineString (line-source derivation copies the line per D2); point-geometry labels render
+  straight. One layer can mix both.
+- **Placement**: text centered on the line's arc-length midpoint.
+- **Overflow**: text longer than its line continues straight along the end tangents — the
+  label always renders; the user shortens or restyles. (Rejected: fall back to straight, or
+  hide — hiding fights the user-curates-everything philosophy.)
+
+### D10: Curved-label path editing — bezier editor in text mode (decided 2026-07-11)
+
+Reshaping the line a curved label follows (deferred from 4c) plus first-class authoring
+of new text paths. Users never drag raw vertices:
+
+- **Editing representation is a single cubic bezier** (two anchors + two tangent handles);
+  the **stored representation stays a plain LineString**. No schema change.
+- **Handles appear on selection** of a curved label, dressing the existing baseline
+  underline as the curve editor. The bezier is FIT to the current path for display
+  (anchors at the ends, control arms along end tangents); geometry only rewrites if a
+  handle is actually dragged — translate/retype/delete leave the original line untouched.
+  Cancel restores the original. Dragging a handle opts the path into "smooth curve":
+  a wiggly derived river line collapses to one sweep, which is the point.
+- **Session model**: control points stored in lon/lat in textSession; projected to screen
+  every frame for handle display, curve evaluation, and text layout (pan/zoom/reproject
+  mid-edit just morphs the curve like any geometry).
+- **Commit bakes in screen space**: sample the on-screen cubic densely, unproject the
+  samples, write as the feature's new LineString via applyLabelEdits. What you sculpted
+  is what you get under the projection you sculpted it in.
+- **Authoring**: a TextBar toggle ("place text on path"); with it on, clicking empty map
+  creates a DEFAULT path (gentle arc at the click) with handles + the inline editor —
+  no click-drag path drawing. Rejected: draw-the-path gestures; multi-segment pen-tool
+  splines (revisit if single cubics prove limiting).
+
 ### Step 3 details (decided 2026-07-07)
 
 - **Session model**: `textSession` mirrors drawSession (non-reactive data + `version`
@@ -238,9 +303,7 @@ like drawing mode.
 
 ## Open questions
 
-- **Q1 — Curved label placement.** Which path anchors a curved label (the line itself,
-  presumably) and where along it (midpoint? longest smooth stretch?)? Does v1 offer curved
-  placement for polygon labels too, or lines only?
+- **Q1 — RESOLVED 2026-07-07** → D9 (curved label placement).
 - **Q2 — Label datasets in the catalog.** Format for the dedicated label datasets (country
   labels, water labels): point geometry + text attribute? Line geometry for curved placement?
   How does a label layer sourced from a *label dataset* differ from one derived from a regular

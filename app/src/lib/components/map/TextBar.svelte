@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Plus, Check, X, ArrowClockwise } from 'phosphor-svelte';
-	import { textSession, commitText, discardText, selectedRotation, setSelectedRotation } from '$lib/stores/textSession.svelte';
+	import { textSession, commitText, discardText, selectedRotation, setSelectedRotation, selectedIsCurved } from '$lib/stores/textSession.svelte';
 	import { layerSelection, clearLayerSelection, selectLayer } from '$lib/stores/layerSelection.svelte';
 	import { layers, createLabelLayer } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -37,6 +37,13 @@
 		void textSession.selected;
 		return selectedRotation();
 	});
+
+	// Curved labels get their orientation from the path — no rotation control.
+	const curved = $derived.by(() => {
+		void textSession.version;
+		void textSession.selected;
+		return selectedIsCurved();
+	});
 </script>
 
 <div class="text-bar">
@@ -63,7 +70,7 @@
 			</button>
 			<div class="bar-divider"></div>
 		{/if}
-		{#if textSession.selected}
+		{#if textSession.selected && !curved}
 			<span class="rotate-field" use:tooltip={{ text: 'Rotate the selected label', placement: 'up' }}>
 				<ArrowClockwise size={14} />
 				<input

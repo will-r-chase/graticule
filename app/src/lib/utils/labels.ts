@@ -8,26 +8,29 @@ import type { LabelAnchor as LabelAnchorPosition, LabelStyle, LabelTextTransform
 import { feature } from 'topojson-client';
 import polylabel from 'polylabel';
 
-export interface LabelAnchor {
-	coordinates: [number, number];
+export interface LabelGeometry {
+	geometry:
+		| { type: 'Point'; coordinates: [number, number] }
+		| { type: 'LineString'; coordinates: [number, number][] };
 	properties: Record<string, unknown>;
 }
 
-// One anchor per feature across all objects in the topology. Features whose
-// geometry yields no anchor (null/empty geometries) are skipped.
-export function computeLabelAnchors(topo: Topology): LabelAnchor[] {
-	const anchors: LabelAnchor[] = [];
+// One label geometry per feature across all objects in the topology: an anchor
+// point for point/polygon sources, a copied line for line sources (curved
+// placement, D9). Features whose geometry yields nothing (null/empty) are skipped.
+export function computeLabelGeometries(topo: Topology): LabelGeometry[] {
+	const out: LabelGeometry[] = [];
 	for (const key of Object.keys(topo.objects)) {
 		const result = feature(topo, topo.objects[key]);
 		const features: Feature[] = result.type === 'FeatureCollection' ? result.features : [result];
 		for (const f of features) {
 			if (!f.geometry) continue;
-			const coordinates = anchorForGeometry(f.geometry);
-			if (!coordinates) continue;
-			anchors.push({ coordinates, properties: { ...(f.properties ?? {}) } });
+			const geometry = labelGeometryFor(f.geometry);
+			if (!geometry) continue;
+			out.push({ geometry, properties: { ...(f.properties ?? {}) } });
 		}
 	}
-	return anchors;
+	return out;
 }
 
 // Best-guess which property supplies the label text: prefer name-like keys, then
@@ -51,33 +54,46 @@ export function guessLabelAttribute(propsList: Record<string, unknown>[]): strin
 	);
 }
 
-function anchorForGeometry(geom: Geometry): [number, number] | null {
+function labelGeometryFor(geom: Geometry): LabelGeometry['geometry'] | null {
 	switch (geom.type) {
 		case 'Point':
-			return [geom.coordinates[0], geom.coordinates[1]];
+			return point(geom.coordinates[0], geom.coordinates[1]);
 		case 'MultiPoint':
-			return geom.coordinates.length > 0 ? [geom.coordinates[0][0], geom.coordinates[0][1]] : null;
+			return geom.coordinates.length > 0 ? point(geom.coordinates[0][0], geom.coordinates[0][1]) : null;
 		case 'LineString':
-			return midpointAlong(geom.coordinates);
+			return line(geom.coordinates);
 		case 'MultiLineString': {
+			// Longest part by arc length — labels the main channel, not a side branch.
 			const longest = maxBy(geom.coordinates, lineLength);
-			return longest ? midpointAlong(longest) : null;
+			return longest ? line(longest) : null;
 		}
-		case 'Polygon':
-			return poleOfInaccessibility(geom.coordinates);
+		case 'Polygon': {
+			const p = poleOfInaccessibility(geom.coordinates);
+			return p ? point(p[0], p[1]) : null;
+		}
 		case 'MultiPolygon': {
 			// Largest part by outer-ring area — labels the mainland, not an islet.
 			const largest = maxBy(geom.coordinates, (poly) => Math.abs(ringArea(poly[0] ?? [])));
-			return largest ? poleOfInaccessibility(largest) : null;
+			const p = largest ? poleOfInaccessibility(largest) : null;
+			return p ? point(p[0], p[1]) : null;
 		}
 		case 'GeometryCollection': {
 			for (const g of geom.geometries) {
-				const anchor = anchorForGeometry(g);
-				if (anchor) return anchor;
+				const result = labelGeometryFor(g);
+				if (result) return result;
 			}
 			return null;
 		}
 	}
+}
+
+function point(x: number, y: number): LabelGeometry['geometry'] {
+	return { type: 'Point', coordinates: [x, y] };
+}
+
+function line(coords: Position[]): LabelGeometry['geometry'] | null {
+	if (coords.length < 2) return null;
+	return { type: 'LineString', coordinates: coords.map((c) => [c[0], c[1]]) };
 }
 
 function poleOfInaccessibility(rings: Position[][]): [number, number] | null {
@@ -95,27 +111,6 @@ function poleOfInaccessibility(rings: Position[][]): [number, number] | null {
 	const precision = Math.max(maxX - minX, maxY - minY) / 200 || 0.01;
 	const p = polylabel(rings as Array<Array<[number, number]>>, precision);
 	return [p[0], p[1]];
-}
-
-function midpointAlong(coords: Position[]): [number, number] | null {
-	if (coords.length === 0) return null;
-	if (coords.length === 1) return [coords[0][0], coords[0][1]];
-	const total = lineLength(coords);
-	if (total === 0) return [coords[0][0], coords[0][1]];
-	let walked = 0;
-	for (let i = 1; i < coords.length; i++) {
-		const seg = segLength(coords[i - 1], coords[i]);
-		if (walked + seg >= total / 2) {
-			const t = (total / 2 - walked) / seg;
-			return [
-				coords[i - 1][0] + (coords[i][0] - coords[i - 1][0]) * t,
-				coords[i - 1][1] + (coords[i][1] - coords[i - 1][1]) * t,
-			];
-		}
-		walked += seg;
-	}
-	const last = coords[coords.length - 1];
-	return [last[0], last[1]];
 }
 
 function lineLength(coords: Position[]): number {

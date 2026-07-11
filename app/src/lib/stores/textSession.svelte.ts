@@ -31,6 +31,9 @@ let newFeatures: NewTextFeature[] = [];
 // Edits to existing labels, keyed by layer id then feature index (indices are into the
 // layer's CURRENT working topology — stable during the session; commit re-indexes).
 let moves = new Map<string, Map<number, [number, number]>>();
+// Curved (line-geometry) labels move by a lon/lat DELTA applied to every vertex,
+// not an absolute coord — the whole line translates, keeping its shape.
+let lineMoves = new Map<string, Map<number, [number, number]>>();
 let deletes = new Map<string, Set<number>>();
 let textEdits = new Map<string, Map<number, string>>();
 let rotations = new Map<string, Map<number, number>>();
@@ -69,6 +72,9 @@ export function getNewTextFeatures(): readonly NewTextFeature[] {
 export function sessionMovedCoord(layerId: string, featureIndex: number): [number, number] | null {
 	return moves.get(layerId)?.get(featureIndex) ?? null;
 }
+export function sessionLineDelta(layerId: string, featureIndex: number): [number, number] | null {
+	return lineMoves.get(layerId)?.get(featureIndex) ?? null;
+}
 export function sessionDeleted(layerId: string, featureIndex: number): boolean {
 	return deletes.get(layerId)?.has(featureIndex) ?? false;
 }
@@ -86,6 +92,7 @@ function bump(): void {
 	textSession.newCount = newFeatures.length;
 	let edits = 0;
 	for (const m of moves.values()) edits += m.size;
+	for (const m of lineMoves.values()) edits += m.size;
 	for (const s of deletes.values()) edits += s.size;
 	for (const t of textEdits.values()) edits += t.size;
 	for (const r of rotations.values()) edits += r.size;
@@ -177,6 +184,18 @@ function selectedProp(sel: TextSelection, key: '__rotation' | '__wrapWidth'): nu
 	return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
 }
 
+// Whether the current selection is a curved (line-geometry) label — rotation and
+// wrap width don't apply to text-on-a-path, so the bar hides those controls.
+export function selectedIsCurved(): boolean {
+	const sel = textSession.selected;
+	if (!sel || sel.kind !== 'existing') return false;
+	const topo = workingTopologyData.get(sel.layerId);
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const anyTopo = topo as any;
+	const objName = anyTopo ? Object.keys(anyTopo.objects)[0] : null;
+	return objName ? anyTopo.objects[objName]?.geometries?.[sel.featureIndex]?.type === 'LineString' : false;
+}
+
 export function selectedRotation(): number {
 	const sel = textSession.selected;
 	return sel ? (selectedProp(sel, '__rotation') ?? 0) : 0;
@@ -223,6 +242,16 @@ export function moveLabel(layerId: string, featureIndex: number, lon: number, la
 	bump();
 }
 
+// Translates a curved label's whole line (live during drag; applied on commit).
+// The delta is the TOTAL offset from the feature's stored geometry — a new drag
+// gesture starts from the previous total (the caller adds it), not from zero.
+export function moveLine(layerId: string, featureIndex: number, dlon: number, dlat: number): void {
+	let m = lineMoves.get(layerId);
+	if (!m) { m = new Map(); lineMoves.set(layerId, m); }
+	m.set(featureIndex, [dlon, dlat]);
+	bump();
+}
+
 // Moves an uncommitted new box (drag before commit).
 export function moveNewText(index: number, lon: number, lat: number): void {
 	const f = newFeatures[index];
@@ -243,6 +272,7 @@ export function deleteSelected(): void {
 		s.add(sel.featureIndex);
 		// Pending edits on a deleted label are moot.
 		moves.get(sel.layerId)?.delete(sel.featureIndex);
+		lineMoves.get(sel.layerId)?.delete(sel.featureIndex);
 		textEdits.get(sel.layerId)?.delete(sel.featureIndex);
 		rotations.get(sel.layerId)?.delete(sel.featureIndex);
 		wrapWidths.get(sel.layerId)?.delete(sel.featureIndex);
@@ -260,9 +290,10 @@ export function discardText(): void {
 	textSession.editingNew = null;
 	textSession.editingExisting = null;
 	textSession.selected = null;
-	if (newFeatures.length === 0 && moves.size === 0 && deletes.size === 0 && textEdits.size === 0 && rotations.size === 0 && wrapWidths.size === 0) return;
+	if (newFeatures.length === 0 && moves.size === 0 && lineMoves.size === 0 && deletes.size === 0 && textEdits.size === 0 && rotations.size === 0 && wrapWidths.size === 0) return;
 	newFeatures = [];
 	moves = new Map();
+	lineMoves = new Map();
 	deletes = new Map();
 	textEdits = new Map();
 	rotations = new Map();
@@ -279,23 +310,25 @@ export function commitText(): void {
 	finishEditingNew();
 	finishEditingExisting();
 	textSession.selected = null;
-	if (newFeatures.length === 0 && moves.size === 0 && deletes.size === 0 && textEdits.size === 0 && rotations.size === 0 && wrapWidths.size === 0) return;
+	if (newFeatures.length === 0 && moves.size === 0 && lineMoves.size === 0 && deletes.size === 0 && textEdits.size === 0 && rotations.size === 0 && wrapWidths.size === 0) return;
 
 	const feats = newFeatures;
 	const mv = moves;
+	const lmv = lineMoves;
 	const del = deletes;
 	const txt = textEdits;
 	const rot = rotations;
 	const wrap = wrapWidths;
 	newFeatures = [];
 	moves = new Map();
+	lineMoves = new Map();
 	deletes = new Map();
 	textEdits = new Map();
 	rotations = new Map();
 	wrapWidths = new Map();
 	bump();
 
-	const editedLayerIds = [...new Set([...mv.keys(), ...del.keys(), ...txt.keys(), ...rot.keys(), ...wrap.keys()])]
+	const editedLayerIds = [...new Set([...mv.keys(), ...lmv.keys(), ...del.keys(), ...txt.keys(), ...rot.keys(), ...wrap.keys()])]
 		.filter((id) => layers.some((l) => l.id === id)); // skip layers deleted mid-session
 	let pending = editedLayerIds.length + (feats.length > 0 ? 1 : 0);
 	if (pending === 0) return;
@@ -304,6 +337,7 @@ export function commitText(): void {
 	for (const layerId of editedLayerIds) {
 		applyLabelEdits(layerId, {
 			moves: mv.get(layerId),
+			lineMoves: lmv.get(layerId),
 			deletes: del.get(layerId),
 			texts: txt.get(layerId),
 			rotations: rot.get(layerId),

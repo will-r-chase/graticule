@@ -3,7 +3,7 @@ import { geoArea } from 'd3-geo';
 import type { Layer, LayerStyle, LayerProcessing, LabelStyle, Dataset } from '$lib/types';
 import { catalog } from './catalog.svelte';
 import { countTopoPoints } from '$lib/utils/chaikin';
-import { computeLabelAnchors, guessLabelAttribute } from '$lib/utils/labels';
+import { computeLabelGeometries, guessLabelAttribute } from '$lib/utils/labels';
 import { topologyToAbsolute } from '$lib/utils/topology';
 import { workerChaikin } from '$lib/workers/geoWorker';
 import { workerSimplify } from '$lib/workers/simplifyWorker';
@@ -453,20 +453,23 @@ export function createLabelLayer(sourceId: string, onComplete?: () => void): str
 	const working = workingTopologyData.get(sourceId);
 	if (!source || !working) return null;
 
-	const anchors = computeLabelAnchors(working);
-	if (anchors.length === 0) return null;
+	const labelGeoms = computeLabelGeometries(working);
+	if (labelGeoms.length === 0) return null;
 
+	// Points carry inline coordinates; lines (curved labels, D9) reference arcs,
+	// pushed here as plain coordinate arrays (no transform on this topology).
+	const arcs: [number, number][][] = [];
 	const labelTopology = {
 		type: 'Topology',
-		arcs: [],
+		arcs,
 		objects: {
 			labels: {
 				type: 'GeometryCollection',
-				geometries: anchors.map((a) => ({
-					type: 'Point',
-					coordinates: a.coordinates,
-					properties: a.properties,
-				})),
+				geometries: labelGeoms.map((g) =>
+					g.geometry.type === 'Point'
+						? { type: 'Point', coordinates: g.geometry.coordinates, properties: g.properties }
+						: { type: 'LineString', arcs: [arcs.push(g.geometry.coordinates) - 1], properties: g.properties }
+				),
 			},
 		},
 	} as unknown as Topology;
@@ -490,7 +493,7 @@ export function createLabelLayer(sourceId: string, onComplete?: () => void): str
 		style: defaultStyle(),
 		processing: defaultProcessing(),
 		kind: 'label',
-		labelAttribute: guessLabelAttribute(anchors.map((a) => a.properties)),
+		labelAttribute: guessLabelAttribute(labelGeoms.map((g) => g.properties)),
 		labelStyle: defaultLabelStyle(),
 		derivedFrom: source.name,
 		geometryTypes: [],
@@ -784,6 +787,8 @@ export function commitTextFeatures(
 // geometryId mint) like every other geometry op.
 export interface LabelEdits {
 	moves?: Map<number, [number, number]>;
+	// Curved labels: lon/lat delta added to every vertex of the line (whole-line translate).
+	lineMoves?: Map<number, [number, number]>;
 	deletes?: Set<number>;
 	texts?: Map<number, string>;
 	rotations?: Map<number, number>;
@@ -811,6 +816,27 @@ export function applyLabelEdits(layerId: string, edits: LabelEdits, onComplete?:
 		for (const [i, coord] of edits.moves) {
 			const g = geometries[i];
 			if (g?.type === 'Point') g.coordinates = [coord[0], coord[1]];
+		}
+	}
+	if (edits.lineMoves) {
+		// Label-layer lines each own their arc (createLabelLayer builds one per line),
+		// so translating a feature's arcs can't disturb a neighbor. The Set guards the
+		// degenerate case of one geometry referencing the same arc twice.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const arcs = (topo as any).arcs as [number, number][][];
+		for (const [i, [dlon, dlat]] of edits.lineMoves) {
+			const g = geometries[i];
+			if (g?.type !== 'LineString' || !Array.isArray(g.arcs)) continue;
+			const translated = new Set<number>();
+			for (const a of g.arcs as number[]) {
+				const idx = a < 0 ? ~a : a;
+				if (translated.has(idx) || !arcs[idx]) continue;
+				translated.add(idx);
+				for (const pt of arcs[idx]) {
+					pt[0] += dlon;
+					pt[1] += dlat;
+				}
+			}
 		}
 	}
 	const attr = layers.find((l) => l.id === layerId)?.labelAttribute;
