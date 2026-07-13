@@ -272,10 +272,19 @@ of new text paths. Users never drag raw vertices:
 - **Commit bakes in screen space**: sample the on-screen cubic densely, unproject the
   samples, write as the feature's new LineString via applyLabelEdits. What you sculpted
   is what you get under the projection you sculpted it in.
-- **Authoring**: a TextBar toggle ("place text on path"); with it on, clicking empty map
-  creates a DEFAULT path (gentle arc at the click) with handles + the inline editor —
-  no click-drag path drawing. Rejected: draw-the-path gestures; multi-segment pen-tool
-  splines (revisit if single cubics prove limiting).
+- **Authoring — revised 2026-07-12**: "On path" is a per-mark TOGGLE, not a placement
+  mode. Clicks always place point boxes; selecting any text mark shows an "On path"
+  toggle in the TextBar. Commit bakes conversions as geometry-type changes
+  (Point ↔ LineString) via pathReplaces/straightens in applyLabelEdits.
+  **Position and on-path status are independent — toggling never moves the text**:
+  the default arc threads its on-curve midpoint through the label's position (anchors
+  37.5px below, knobs 12.5px above); OFF lands the label at the curve's current
+  midpoint (session move for stored Points, straighten anchor for stored Lines);
+  toggling a straightened line back ON restores its original curve translated to
+  wherever the label now sits (lineMoves delta); dragging a straightened label updates
+  its straighten anchor. Rejected: the earlier placement-mode toggle (built, then
+  replaced); "off unwinds to the pre-conversion position" (jumped); click-drag path
+  drawing; multi-segment pen-tool splines (revisit if single cubics prove limiting).
 
 ### Step 3 details (decided 2026-07-07)
 

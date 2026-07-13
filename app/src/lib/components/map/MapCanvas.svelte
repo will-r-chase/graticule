@@ -8,9 +8,9 @@
 	import type { PathCommand } from '$lib/workers/types';
 	import type { Layer, LayerProcessing } from '$lib/types';
 	import { applyTextTransform, LABEL_ANCHOR_DIR, labelFontString, wrapLabelLines } from '$lib/utils/labels';
-	import { layoutGlyphsAlongPath, splitGraphemes, type GlyphPlacement } from '$lib/utils/curvedText';
+	import { layoutGlyphsAlongPath, splitGraphemes, sampleCubic, fitCubicToPolyline, type GlyphPlacement, type CubicBezier } from '$lib/utils/curvedText';
 	import { fonts, ensureFontLoaded } from '$lib/stores/fonts.svelte';
-	import { textSession, getNewTextFeatures, placeText, updateNewText, finishEditingNew, commitText, resetTextTarget, setTextTarget, editorJustClosed, sessionMovedCoord, sessionLineDelta, sessionDeleted, sessionTextOverride, sessionRotationOverride, sessionWrapOverride, moveLabel, moveLine, moveNewText, deleteSelected, beginEditingExisting, finishEditingExisting, currentEditingText, setLabelText, setSelectedWrapWidth, type TextSelection } from '$lib/stores/textSession.svelte';
+	import { textSession, getNewTextFeatures, placeText, setNewPath, setDefaultPathMaker, updateNewText, finishEditingNew, commitText, resetTextTarget, setTextTarget, editorJustClosed, sessionMovedCoord, sessionLineDelta, sessionPathEdit, sessionStraighten, setPathEdit, setPathBaker, sessionDeleted, sessionTextOverride, sessionRotationOverride, sessionWrapOverride, moveLabel, moveLine, moveNewText, deleteSelected, beginEditingExisting, finishEditingExisting, currentEditingText, setLabelText, setSelectedWrapWidth, type TextSelection } from '$lib/stores/textSession.svelte';
 	import { layers, workingTopologyData, layerDrag, deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures, defaultLabelStyle } from '$lib/stores/layers.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
 	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
@@ -376,7 +376,10 @@
 		startCursor: { x: number; y: number };
 		startAnchor: { x: number; y: number };
 		moved: boolean;
-		curved?: { startGeo: [number, number]; baseDelta: [number, number] };
+		// baseCubic set = the label is mid-sculpt (session path edit exists): body
+		// drags translate the cubic's control points instead of writing a lineMove
+		// the painter would ignore.
+		curved?: { startGeo: [number, number]; baseDelta: [number, number]; baseCubic?: CubicBezier };
 	} | null = null;
 	let overLabel = $state(false);
 	let hoveredLabel = $state<TextSelection | null>(null);
@@ -389,6 +392,23 @@
 	// Wrap-handle drag: resizes the selected label's wrap width. Width is measured in
 	// the label's unrotated frame from the box's (fixed) left edge to the cursor.
 	let wrapDrag: { boxLeft: number; ax: number; ay: number; rot: number } | null = null;
+
+	// Bezier path sculpting on the selected curved label (D10). selectedCubicScreen
+	// is refreshed every paint (session cubic if sculpting has begun, else a display
+	// fit to the baseline) — pointer handlers hit-test against what was last drawn,
+	// same convention as labelHitBoxes. The base cubic is captured at mousedown and
+	// only written to the session once the drag actually moves (≥3px), so a stray
+	// click on a handle doesn't rewrite the path with the fit.
+	let selectedCubicScreen: CubicBezier | null = null;
+	let pathHandleDrag: {
+		sel: TextSelection;
+		which: keyof CubicBezier;
+		startCursor: { x: number; y: number };
+		startGeo: [number, number];
+		base: CubicBezier; // lon/lat
+		moved: boolean;
+	} | null = null;
+	let overPathHandle = $state(false);
 	let overHandle = $state(false);
 	// Currently hovered point + the selected point set (for marker styling). Keyed "fi:pi".
 	let hoveredPoint = $state<string | null>(null);
@@ -515,6 +535,41 @@
 		return out;
 	}
 	setDrawDensifier(densifyForCommit);
+
+	// D10 bake: sample the sculpted cubic exactly as it was seen — project the
+	// control points, walk the on-screen curve, unproject the samples. Samples that
+	// fail to unproject (off-globe) drop out; under 2 survivors falls back to the
+	// session's lon/lat evaluation.
+	setPathBaker((cubic) => {
+		const sc = cubicToScreen(cubic);
+		if (!sc) return null;
+		const out: [number, number][] = [];
+		for (const p of sampleCubic(sc, 64)) {
+			const geo = projection?.invert?.([(p[0] - tx) / mapScale, (p[1] - ty) / mapScale]);
+			if (geo) out.push([geo[0], geo[1]]);
+		}
+		return out.length >= 2 ? out : null;
+	});
+
+	// Default path for "On path" toggled onto a straight label: a gentle arc, sized
+	// in screen px, whose ON-CURVE midpoint sits exactly at the label's position —
+	// toggling must never move the text (cubic midpoint = (p0 + 3p1 + 3p2 + p3)/8,
+	// so anchors ride 37.5px below the label and knobs 12.5px above).
+	setDefaultPathMaker((coord) => {
+		const pt = projection?.(coord);
+		if (!pt) return null;
+		const cx = pt[0] * mapScale + tx;
+		const cy = pt[1] * mapScale + ty;
+		const inv = (sx: number, sy: number): [number, number] | null => {
+			const g = projection?.invert?.([(sx - tx) / mapScale, (sy - ty) / mapScale]) ?? null;
+			return g ? [g[0], g[1]] : null;
+		};
+		const p0 = inv(cx - 120, cy + 37.5);
+		const p1 = inv(cx - 40, cy - 12.5);
+		const p2 = inv(cx + 40, cy - 12.5);
+		const p3 = inv(cx + 120, cy + 37.5);
+		return p0 && p1 && p2 && p3 ? { p0, p1, p2, p3 } : null;
+	});
 
 	// Angle snapping: with Shift held while drawing a line/polygon, locks the edge from the last
 	// placed vertex to the given canvas-space point onto the nearest 15° step. Snapping in screen
@@ -1317,6 +1372,30 @@
 			const rect = canvasEl.getBoundingClientRect();
 			const cx = e.clientX - rect.left;
 			const cy = e.clientY - rect.top;
+			// Bezier handles on the selected curved label win over everything (D10).
+			// The session capture is deferred to the first real move — see pointermove.
+			if (textSession.selected && selectedCubicScreen) {
+				const which = hitPathHandle(cx, cy);
+				if (which) {
+					const sel = textSession.selected;
+					const base = sel.kind === 'existing'
+						? sessionPathEdit(sel.layerId, sel.featureIndex) ?? cubicToGeo(selectedCubicScreen)
+						: getNewTextFeatures()[sel.index]?.path ?? null;
+					const geo = projection?.invert?.([(cx - tx) / mapScale, (cy - ty) / mapScale]) ?? null;
+					if (base && geo) {
+						pathHandleDrag = {
+							sel,
+							which,
+							startCursor: { x: e.clientX, y: e.clientY },
+							startGeo: [geo[0], geo[1]],
+							base,
+							moved: false,
+						};
+						(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+						return;
+					}
+				}
+			}
 			if (textSession.selected && overWrapHandle(cx, cy)) {
 				const b = hitBoxFor(textSession.selected);
 				if (b) {
@@ -1333,11 +1412,21 @@
 				if (hit.kind === 'existing') selectLayer(hit.layerId);
 				// Curved labels drag by delta from the cursor's geo position; if the
 				// cursor doesn't unproject (off-globe), select without arming a drag.
-				let curved: { startGeo: [number, number]; baseDelta: [number, number] } | undefined;
-				if (box?.baseline && hit.kind === 'existing') {
+				let curved: { startGeo: [number, number]; baseDelta: [number, number]; baseCubic?: CubicBezier } | undefined;
+				if (box?.baseline) {
 					const geo = projection?.invert?.([(cx - tx) / mapScale, (cy - ty) / mapScale]) ?? null;
 					if (!geo) return;
-					curved = { startGeo: [geo[0], geo[1]], baseDelta: sessionLineDelta(hit.layerId, hit.featureIndex) ?? [0, 0] };
+					if (hit.kind === 'existing') {
+						curved = {
+							startGeo: [geo[0], geo[1]],
+							baseDelta: sessionLineDelta(hit.layerId, hit.featureIndex) ?? [0, 0],
+							baseCubic: sessionPathEdit(hit.layerId, hit.featureIndex) ?? undefined,
+						};
+					} else {
+						// Uncommitted path box: its cubic IS the geometry.
+						const base = getNewTextFeatures()[hit.index]?.path;
+						if (base) curved = { startGeo: [geo[0], geo[1]], baseDelta: [0, 0], baseCubic: base };
+					}
 				}
 				labelDrag = {
 					sel: hit,
@@ -1488,6 +1577,34 @@
 			return;
 		}
 
+		// Dragging a bezier handle on the selected curved label (D10). Deltas keep
+		// the knob from jumping to the cursor center; anchors carry their tangent
+		// arm along, pen-tool style. The first real move writes the base cubic into
+		// the session — the opt-in moment where the path becomes a smooth curve.
+		if (pathHandleDrag && canvasEl) {
+			const d = pathHandleDrag;
+			if (!d.moved && Math.hypot(e.clientX - d.startCursor.x, e.clientY - d.startCursor.y) < 3) return;
+			d.moved = true;
+			const rect = canvasEl.getBoundingClientRect();
+			const geo = projection?.invert?.([
+				(e.clientX - rect.left - tx) / mapScale,
+				(e.clientY - rect.top - ty) / mapScale,
+			]) ?? null;
+			if (geo) {
+				const dlon = geo[0] - d.startGeo[0];
+				const dlat = geo[1] - d.startGeo[1];
+				const next: CubicBezier = { ...d.base };
+				next[d.which] = [d.base[d.which][0] + dlon, d.base[d.which][1] + dlat];
+				if (d.which === 'p0' || d.which === 'p3') {
+					const arm = d.which === 'p0' ? 'p1' : 'p2';
+					next[arm] = [d.base[arm][0] + dlon, d.base[arm][1] + dlat];
+				}
+				if (d.sel.kind === 'existing') setPathEdit(d.sel.layerId, d.sel.featureIndex, next);
+				else setNewPath(d.sel.index, next);
+			}
+			return;
+		}
+
 		// Dragging a label with the text tool — offset its anchor by the cursor delta.
 		// Curved labels translate their whole line by the cursor's geo delta instead.
 		if (labelDrag) {
@@ -1499,14 +1616,22 @@
 			const ny = (labelDrag.startAnchor.y + dy - ty) / mapScale;
 			const geo = projection?.invert?.([nx, ny]) ?? null;
 			if (geo) {
-				if (labelDrag.curved && labelDrag.sel.kind === 'existing') {
-					const { startGeo, baseDelta } = labelDrag.curved;
-					moveLine(
-						labelDrag.sel.layerId,
-						labelDrag.sel.featureIndex,
-						baseDelta[0] + geo[0] - startGeo[0],
-						baseDelta[1] + geo[1] - startGeo[1],
-					);
+				if (labelDrag.curved) {
+					const { startGeo, baseDelta, baseCubic } = labelDrag.curved;
+					const dlon = geo[0] - startGeo[0];
+					const dlat = geo[1] - startGeo[1];
+					if (baseCubic) {
+						const moved: CubicBezier = {
+							p0: [baseCubic.p0[0] + dlon, baseCubic.p0[1] + dlat],
+							p1: [baseCubic.p1[0] + dlon, baseCubic.p1[1] + dlat],
+							p2: [baseCubic.p2[0] + dlon, baseCubic.p2[1] + dlat],
+							p3: [baseCubic.p3[0] + dlon, baseCubic.p3[1] + dlat],
+						};
+						if (labelDrag.sel.kind === 'existing') setPathEdit(labelDrag.sel.layerId, labelDrag.sel.featureIndex, moved);
+						else setNewPath(labelDrag.sel.index, moved);
+					} else if (labelDrag.sel.kind === 'existing') {
+						moveLine(labelDrag.sel.layerId, labelDrag.sel.featureIndex, baseDelta[0] + dlon, baseDelta[1] + dlat);
+					}
 				} else if (labelDrag.sel.kind === 'existing') {
 					moveLabel(labelDrag.sel.layerId, labelDrag.sel.featureIndex, geo[0], geo[1]);
 				} else {
@@ -1523,13 +1648,15 @@
 			const rect = canvasEl.getBoundingClientRect();
 			const cx = e.clientX - rect.left;
 			const cy = e.clientY - rect.top;
-			overHandle = overWrapHandle(cx, cy);
-			const hover = overHandle ? null : hitTestLabel(cx, cy);
+			overPathHandle = hitPathHandle(cx, cy) !== null;
+			overHandle = !overPathHandle && overWrapHandle(cx, cy);
+			const hover = overHandle || overPathHandle ? null : hitTestLabel(cx, cy);
 			if (!sameSelection(hover, hoveredLabel)) hoveredLabel = hover;
 			overLabel = hover !== null;
-		} else if (overLabel || overHandle || hoveredLabel) {
+		} else if (overLabel || overHandle || overPathHandle || hoveredLabel) {
 			overLabel = false;
 			overHandle = false;
+			overPathHandle = false;
 			hoveredLabel = null;
 		}
 
@@ -1690,6 +1817,14 @@
 	}
 
 	function handlePointerUp() {
+		// End of a bezier-handle drag — swallow the trailing click if it sculpted
+		// (a press without movement never touched the session).
+		if (pathHandleDrag) {
+			if (pathHandleDrag.moved) suppressNextClick = true;
+			pathHandleDrag = null;
+			return;
+		}
+
 		// End of a wrap-handle drag — swallow the trailing click so it doesn't deselect.
 		if (wrapDrag) {
 			wrapDrag = null;
@@ -2698,6 +2833,64 @@
 		ctx.stroke();
 	}
 
+	// Projects a lon/lat cubic to screen px; null if any control point fails.
+	function cubicToScreen(c: CubicBezier): CubicBezier | null {
+		if (!projection) return null;
+		const out = {} as CubicBezier;
+		for (const k of ['p0', 'p1', 'p2', 'p3'] as const) {
+			const pt = projection(c[k]);
+			if (!pt) return null;
+			out[k] = [pt[0] * mapScale + tx, pt[1] * mapScale + ty];
+		}
+		return out;
+	}
+
+	// Unprojects a screen-px cubic to lon/lat; null if any control point fails.
+	function cubicToGeo(c: CubicBezier): CubicBezier | null {
+		const out = {} as CubicBezier;
+		for (const k of ['p0', 'p1', 'p2', 'p3'] as const) {
+			const geo = projection?.invert?.([(c[k][0] - tx) / mapScale, (c[k][1] - ty) / mapScale]) ?? null;
+			if (!geo) return null;
+			out[k] = [geo[0], geo[1]];
+		}
+		return out;
+	}
+
+	// Bezier handle furniture for the selected curved label: a tangent arm from
+	// each anchor (square) to its knob (circle). Screen-space CSS px.
+	function drawCubicHandles(ctx: CanvasRenderingContext2D, c: CubicBezier, accent: string): void {
+		ctx.strokeStyle = accent;
+		ctx.lineWidth = 1;
+		for (const [a, h] of [[c.p0, c.p1], [c.p3, c.p2]] as const) {
+			ctx.beginPath();
+			ctx.moveTo(a[0], a[1]);
+			ctx.lineTo(h[0], h[1]);
+			ctx.stroke();
+		}
+		ctx.fillStyle = '#ffffff';
+		for (const a of [c.p0, c.p3]) {
+			ctx.fillRect(a[0] - 3.5, a[1] - 3.5, 7, 7);
+			ctx.strokeRect(a[0] - 3.5, a[1] - 3.5, 7, 7);
+		}
+		for (const h of [c.p1, c.p2]) {
+			ctx.beginPath();
+			ctx.arc(h[0], h[1], 3.5, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.stroke();
+		}
+	}
+
+	// Which bezier handle of the selected curved label sits under the cursor.
+	// Knobs test before anchors — they're the finer adjustment and can overlap.
+	function hitPathHandle(cx: number, cy: number): keyof CubicBezier | null {
+		const c = selectedCubicScreen;
+		if (!c) return null;
+		for (const k of ['p1', 'p2', 'p0', 'p3'] as const) {
+			if (Math.hypot(c[k][0] - cx, c[k][1] - cy) <= 7) return k;
+		}
+		return null;
+	}
+
 	// Topmost label under a canvas-relative point, or null.
 	function hitTestLabel(cx: number, cy: number): TextSelection | null {
 		for (let i = labelHitBoxes.length - 1; i >= 0; i--) {
@@ -2783,14 +2976,17 @@
 		ls: Layer['labelStyle'],
 		text: string,
 		coords: [number, number][],
-		layerId: string,
+		layerId: string | null, // null = uncommitted path box (hit boxes key on index)
 		fi: number,
+		screenPath?: [number, number][] | null,
 	): void {
 		if (!projection) return;
-		const path: [number, number][] = [];
-		for (const c of coords) {
-			const pt = projection(c);
-			if (pt) path.push([pt[0] * mapScale + tx, pt[1] * mapScale + ty]);
+		const path: [number, number][] = screenPath ?? [];
+		if (!screenPath) {
+			for (const c of coords) {
+				const pt = projection(c);
+				if (pt) path.push([pt[0] * mapScale + tx, pt[1] * mapScale + ty]);
+			}
 		}
 		if (path.length < 2) return;
 
@@ -2893,13 +3089,36 @@
 				if (editingCurved && editingCurved.layerId === layer.id && editingCurved.featureIndex === fi) continue;
 				const raw = sessionTextOverride(layer.id, fi) ?? f.properties?.[attr];
 				if (raw === null || raw === undefined || raw === '') continue;
+				// "On path" toggled off this session: render straight at the anchor
+				// (the LineString converts to a Point on commit).
+				const straighten = sessionStraighten(layer.id, fi);
+				if (straighten) {
+					if (projCenter && d3.geoDistance(straighten, projCenter) >= Math.PI / 2) continue;
+					const spt = projection(straighten);
+					if (!spt) continue;
+					const srot = sessionRotationOverride(layer.id, fi) ?? 0;
+					const swrap = sessionWrapOverride(layer.id, fi);
+					const stext = applyTextTransform(String(raw), ls.textTransform);
+					const slines = swrap !== null ? wrapLabelLines(ctx, stext, swrap) : stext.split('\n');
+					paintLabel(ctx, ls, slines, spt[0], spt[1], srot);
+					recordLabelHitBox(ctx, ls, slines, spt[0] * mapScale + tx, spt[1] * mapScale + ty, layer.id, fi, srot);
+					continue;
+				}
 				let coords = geom.coordinates as [number, number][];
 				if (coords.length < 2) continue;
-				// An in-progress drag translates the whole line live.
-				const delta = sessionLineDelta(layer.id, fi);
-				if (delta) coords = coords.map(([x, y]) => [x + delta[0], y + delta[1]] as [number, number]);
-				if (projCenter && d3.geoDistance(coords[Math.floor(coords.length / 2)], projCenter) >= Math.PI / 2) continue;
-				paintCurvedLabel(ctx, ls, applyTextTransform(String(raw), ls.textTransform), coords, layer.id, fi);
+				// An in-progress drag translates the whole line live; an in-progress
+				// path sculpt (D10) replaces it with the sampled session cubic outright.
+				const pathEdit = sessionPathEdit(layer.id, fi);
+				const screenCubic = pathEdit ? cubicToScreen(pathEdit) : null;
+				if (!pathEdit) {
+					const delta = sessionLineDelta(layer.id, fi);
+					if (delta) coords = coords.map(([x, y]) => [x + delta[0], y + delta[1]] as [number, number]);
+					if (projCenter && d3.geoDistance(coords[Math.floor(coords.length / 2)], projCenter) >= Math.PI / 2) continue;
+				}
+				paintCurvedLabel(
+					ctx, ls, applyTextTransform(String(raw), ls.textTransform), coords, layer.id, fi,
+					screenCubic ? sampleCubic(screenCubic, 64) : null,
+				);
 				continue;
 			}
 			if (geom.type !== 'Point') continue;
@@ -2909,13 +3128,23 @@
 			if (sessionDeleted(layer.id, fi)) continue;
 			const editing = textSession.editingExisting;
 			if (editing && editing.layerId === layer.id && editing.featureIndex === fi) continue;
+			const raw = sessionTextOverride(layer.id, fi) ?? f.properties?.[attr];
+			if (raw === null || raw === undefined || raw === '') continue;
+			// "On path" toggled on this session: the point renders curved along the
+			// session cubic (converts to a LineString on commit).
+			const convertedCubic = sessionPathEdit(layer.id, fi);
+			if (convertedCubic) {
+				const sc = cubicToScreen(convertedCubic);
+				if (sc) {
+					paintCurvedLabel(ctx, ls, applyTextTransform(String(raw), ls.textTransform), [], layer.id, fi, sampleCubic(sc, 64));
+				}
+				continue;
+			}
 			const coord = sessionMovedCoord(layer.id, fi) ?? (geom.coordinates as [number, number]);
 			if (projCenter && d3.geoDistance(coord, projCenter) >= Math.PI / 2) continue;
 			const pt = projection(coord);
 			if (!pt) continue;
 
-			const raw = sessionTextOverride(layer.id, fi) ?? f.properties?.[attr];
-			if (raw === null || raw === undefined || raw === '') continue;
 			const props = f.properties as Record<string, unknown> | undefined;
 			const rot = sessionRotationOverride(layer.id, fi) ?? numberProp(props?.__rotation) ?? 0;
 			const wrap = sessionWrapOverride(layer.id, fi) ?? numberProp(props?.__wrapWidth);
@@ -2949,6 +3178,15 @@
 			if (i === textSession.editingNew) continue;
 			const f = feats[i];
 			if (f.text === '') continue;
+			// Path boxes (D10) ghost as curved text; unprojectable control points
+			// (off-globe) drop the ghost this frame, which is also the backface cull.
+			if (f.path) {
+				const sc = cubicToScreen(f.path);
+				if (sc) {
+					paintCurvedLabel(ctx, ls, applyTextTransform(f.text, ls.textTransform), [], null, i, sampleCubic(sc, 64));
+				}
+				continue;
+			}
 			if (projCenter && d3.geoDistance(f.coord, projCenter) >= Math.PI / 2) continue;
 			const pt = projection(f.coord);
 			if (!pt) continue;
@@ -3388,7 +3626,9 @@
 
 		// Selection outline + wrap handle for the text tool — drawn in screen space
 		// (boxes are CSS px), rotated about the label's anchor like the label itself.
-		// Curved labels: accent baseline stroke with end dots; no box, no wrap handle.
+		// Curved labels: accent baseline stroke + bezier handles (D10); no box, no
+		// wrap handle.
+		selectedCubicScreen = null;
 		if (toolState.active === 'text' && textSession.selected) {
 			const box = hitBoxFor(textSession.selected);
 			if (box) {
@@ -3401,12 +3641,15 @@
 				ctx.setLineDash([]);
 				if (box.baseline) {
 					strokePolyline(ctx, box.baseline);
-					ctx.fillStyle = accent;
-					for (const [ex, ey] of [box.baseline[0], box.baseline[box.baseline.length - 1]]) {
-						ctx.beginPath();
-						ctx.arc(ex, ey, 2.5, 0, Math.PI * 2);
-						ctx.fill();
-					}
+					// Handles come from the session cubic once sculpting has begun (or
+					// the box's own cubic for uncommitted path text), else a display fit
+					// to the baseline (geometry untouched until a handle is dragged).
+					const sel = textSession.selected;
+					const geoCubic = sel.kind === 'existing'
+						? sessionPathEdit(sel.layerId, sel.featureIndex)
+						: getNewTextFeatures()[sel.index]?.path ?? null;
+					selectedCubicScreen = (geoCubic ? cubicToScreen(geoCubic) : null) ?? fitCubicToPolyline(box.baseline);
+					if (selectedCubicScreen) drawCubicHandles(ctx, selectedCubicScreen, accent);
 				} else {
 					ctx.translate(box.ax, box.ay);
 					if (box.rot) ctx.rotate((box.rot * Math.PI) / 180);
@@ -3974,6 +4217,7 @@
 			class:text-mode={toolState.active === 'text' && !spacePanning}
 			class:label-hover={toolState.active === 'text' && overLabel && !spacePanning}
 			class:handle-hover={toolState.active === 'text' && overHandle && !spacePanning}
+			class:path-handle-hover={toolState.active === 'text' && overPathHandle && !spacePanning}
 			class:vertex-grab={toolState.active === 'edit' && overVertex && !vertexDrag && !spacePanning && !metaHeld}
 			class:insert-ghost-hover={toolState.active === 'edit' && overInsertGhost && !vertexDrag && !spacePanning && !metaHeld}
 			class:vertex-grabbing={vertexDrag !== null || pointDrag !== null}
@@ -4103,6 +4347,10 @@
 
 	canvas.text-mode.handle-hover {
 		cursor: ew-resize;
+	}
+
+	canvas.text-mode.path-handle-hover {
+		cursor: move;
 	}
 
 	.text-editor-overlay {

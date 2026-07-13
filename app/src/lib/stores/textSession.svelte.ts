@@ -8,15 +8,20 @@
 //   - EDITS to existing labels: per-layer move/delete maps that the label painter
 //     consults live, applied via replaceLayerGeometry on commit (one mint per layer)
 
+import { feature as topoFeature } from 'topojson-client';
 import { layers, workingTopologyData, commitTextFeatures, applyLabelEdits } from './layers.svelte';
 import { selectLayer } from './layerSelection.svelte';
 import { pushSnapshot } from './history.svelte';
+import { sampleCubic, type CubicBezier } from '$lib/utils/curvedText';
 
 export interface NewTextFeature {
-	coord: [number, number]; // lon/lat
+	coord: [number, number]; // lon/lat; for path text, kept at the anchors' midpoint
 	text: string;
 	rotation?: number; // degrees clockwise; absent = 0
 	wrapWidth?: number; // px; absent = no auto-wrap
+	// Text-on-path box (D10): the cubic in lon/lat. When present, rotation/wrapWidth
+	// don't apply and commit bakes a LineString instead of a Point.
+	path?: CubicBezier;
 }
 
 // What the text tool has selected: an existing label (by layer + feature index) or an
@@ -34,10 +39,167 @@ let moves = new Map<string, Map<number, [number, number]>>();
 // Curved (line-geometry) labels move by a lon/lat DELTA applied to every vertex,
 // not an absolute coord — the whole line translates, keeping its shape.
 let lineMoves = new Map<string, Map<number, [number, number]>>();
+// Curved labels whose path is being resculpted (D10): the cubic's control points
+// in lon/lat. Present once a handle has been dragged, or when a straight label is
+// toggled onto a path (the cubic on a stored-Point feature = pending conversion).
+// Supersedes the stored geometry (and any lineMove) for painting and commit.
+let pathEdits = new Map<string, Map<number, CubicBezier>>();
+// Curved labels toggled OFF their path: the lon/lat anchor where the straight
+// label lands (the curve's midpoint at toggle time). Mutually exclusive with a
+// pathEdit on the same feature. Commit converts the LineString to a Point.
+let straightens = new Map<string, Map<number, [number, number]>>();
 let deletes = new Map<string, Set<number>>();
 let textEdits = new Map<string, Map<number, string>>();
 let rotations = new Map<string, Map<number, number>>();
 let wrapWidths = new Map<string, Map<number, number>>();
+
+// Bakes a lon/lat cubic into a lon/lat polyline for commit. Registered by
+// MapCanvas (it owns the live projection): project the control points, sample the
+// on-screen curve, unproject the samples — D10's "what you sculpted is what you
+// get". The fallback (no baker registered, or projection failure) evaluates the
+// cubic directly in lon/lat, which can deviate slightly from the on-screen shape.
+export type PathBaker = (cubic: CubicBezier) => [number, number][] | null;
+let pathBaker: PathBaker | null = null;
+export function setPathBaker(fn: PathBaker): void {
+	pathBaker = fn;
+}
+// Builds the default path for a label toggled onto a path: a gentle arc centered
+// on the given lon/lat, sized in screen px. Registered by MapCanvas (it owns the
+// projection). Null = the position doesn't project (off-globe).
+export type DefaultPathMaker = (coord: [number, number]) => CubicBezier | null;
+let defaultPathMaker: DefaultPathMaker | null = null;
+export function setDefaultPathMaker(fn: DefaultPathMaker): void {
+	defaultPathMaker = fn;
+}
+
+// The stored topology geometry of an existing label feature (or null).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function storedGeometry(layerId: string, featureIndex: number): any {
+	const topo = workingTopologyData.get(layerId);
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const anyTopo = topo as any;
+	const objName = anyTopo ? Object.keys(anyTopo.objects)[0] : null;
+	return objName ? anyTopo.objects[objName]?.geometries?.[featureIndex] ?? null : null;
+}
+
+// The "On path" toggle for the selected text mark (D10). Position and on-path
+// status are INDEPENDENT properties: toggling never moves the text. ON threads
+// the default arc through the label's current position (or, for a straightened
+// line, restores its original curve translated to where the label now sits);
+// OFF lands the label at the curve's current on-screen midpoint. Commit bakes
+// conversions into the geometry type.
+export function setSelectedOnPath(on: boolean): void {
+	const sel = textSession.selected;
+	if (!sel || on === selectedIsCurved()) return;
+
+	if (sel.kind === 'new') {
+		const f = newFeatures[sel.index];
+		if (!f) return;
+		if (on) {
+			const cubic = defaultPathMaker?.(f.coord);
+			if (!cubic) return;
+			f.path = cubic;
+		} else {
+			// coord already tracks the on-curve midpoint (setNewPath/moveNewText).
+			f.path = undefined;
+		}
+		bump();
+		return;
+	}
+
+	const { layerId, featureIndex } = sel;
+	const geom = storedGeometry(layerId, featureIndex);
+	if (!geom) return;
+
+	if (on) {
+		const st = straightens.get(layerId);
+		const anchor = st?.get(featureIndex);
+		if (anchor && geom.type === 'LineString') {
+			// Straightened line: bring the original curve back where the label now
+			// sits — a drag in the straight state survives as a whole-line translate.
+			st!.delete(featureIndex);
+			const line = lineCoords(layerId, featureIndex);
+			const mid = line[Math.floor(line.length / 2)];
+			if (mid && Math.hypot(anchor[0] - mid[0], anchor[1] - mid[1]) > 1e-9) {
+				let lm = lineMoves.get(layerId);
+				if (!lm) { lm = new Map(); lineMoves.set(layerId, lm); }
+				lm.set(featureIndex, [anchor[0] - mid[0], anchor[1] - mid[1]]);
+			}
+			bump();
+			return;
+		}
+		if (geom.type !== 'Point') return;
+		const coord = sessionMovedCoord(layerId, featureIndex) ?? (geom.coordinates as [number, number]);
+		const cubic = defaultPathMaker?.(coord);
+		if (!cubic) return;
+		moves.get(layerId)?.delete(featureIndex); // the cubic carries position now
+		setPathEdit(layerId, featureIndex, cubic);
+		return; // setPathEdit bumps
+	}
+
+	// OFF: the label flattens wherever its curve's midpoint currently is.
+	const pe = pathEdits.get(layerId);
+	const pending = pe?.get(featureIndex) ?? null;
+	if (pending) pe!.delete(featureIndex);
+	if (geom.type === 'Point') {
+		// Converted-then-unconverted point: keep the curve's position as a move
+		// (skip the no-op when it never left its spot).
+		if (pending) {
+			const coord = cubicMid(pending);
+			const orig = geom.coordinates as [number, number];
+			if (Math.hypot(coord[0] - orig[0], coord[1] - orig[1]) > 1e-9) {
+				let m = moves.get(layerId);
+				if (!m) { m = new Map(); moves.set(layerId, m); }
+				m.set(featureIndex, coord);
+			} else {
+				moves.get(layerId)?.delete(featureIndex);
+			}
+		}
+		bump();
+		return;
+	}
+	if (geom.type === 'LineString') {
+		let coord: [number, number];
+		if (pending) {
+			coord = cubicMid(pending);
+		} else {
+			const line = lineCoords(layerId, featureIndex);
+			if (line.length === 0) return;
+			const delta = sessionLineDelta(layerId, featureIndex) ?? [0, 0];
+			const mid = line[Math.floor(line.length / 2)];
+			coord = [mid[0] + delta[0], mid[1] + delta[1]];
+		}
+		lineMoves.get(layerId)?.delete(featureIndex); // the straighten carries position
+		let st = straightens.get(layerId);
+		if (!st) { st = new Map(); straightens.set(layerId, st); }
+		st.set(featureIndex, coord);
+		bump();
+	}
+}
+
+// The lon/lat vertices of a LineString label feature, decoded via topojson-client
+// so quantized/delta-encoded topologies come out absolute.
+function lineCoords(layerId: string, featureIndex: number): [number, number][] {
+	const topo = workingTopologyData.get(layerId);
+	if (!topo) return [];
+	const objName = Object.keys(topo.objects)[0];
+	if (!objName) return [];
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const fc = topoFeature(topo, topo.objects[objName]) as any;
+	const g = fc?.features?.[featureIndex]?.geometry;
+	return g?.type === 'LineString' ? (g.coordinates as [number, number][]) : [];
+}
+
+function bakeCubic(cubic: CubicBezier): [number, number][] {
+	const line = pathBaker?.(cubic);
+	return line && line.length >= 2 ? line : sampleCubic(cubic, 64);
+}
+function bakePathEdits(m: Map<number, CubicBezier> | undefined): Map<number, [number, number][]> | undefined {
+	if (!m || m.size === 0) return undefined;
+	const out = new Map<number, [number, number][]>();
+	for (const [i, cubic] of m) out.set(i, bakeCubic(cubic));
+	return out;
+}
 
 // When the inline editor closes it records the time; MapCanvas uses this so the
 // canvas click that dismissed the editor doesn't also place a new box.
@@ -75,6 +237,22 @@ export function sessionMovedCoord(layerId: string, featureIndex: number): [numbe
 export function sessionLineDelta(layerId: string, featureIndex: number): [number, number] | null {
 	return lineMoves.get(layerId)?.get(featureIndex) ?? null;
 }
+export function sessionPathEdit(layerId: string, featureIndex: number): CubicBezier | null {
+	return pathEdits.get(layerId)?.get(featureIndex) ?? null;
+}
+export function sessionStraighten(layerId: string, featureIndex: number): [number, number] | null {
+	return straightens.get(layerId)?.get(featureIndex) ?? null;
+}
+// Captures/updates a path resculpt. A path edit is absolute (whole cubic in lon/lat),
+// so it also clears any pending whole-line translate for the feature — the cubic
+// carries its own position.
+export function setPathEdit(layerId: string, featureIndex: number, cubic: CubicBezier): void {
+	let m = pathEdits.get(layerId);
+	if (!m) { m = new Map(); pathEdits.set(layerId, m); }
+	m.set(featureIndex, cubic);
+	lineMoves.get(layerId)?.delete(featureIndex);
+	bump();
+}
 export function sessionDeleted(layerId: string, featureIndex: number): boolean {
 	return deletes.get(layerId)?.has(featureIndex) ?? false;
 }
@@ -93,6 +271,8 @@ function bump(): void {
 	let edits = 0;
 	for (const m of moves.values()) edits += m.size;
 	for (const m of lineMoves.values()) edits += m.size;
+	for (const m of pathEdits.values()) edits += m.size;
+	for (const m of straightens.values()) edits += m.size;
 	for (const s of deletes.values()) edits += s.size;
 	for (const t of textEdits.values()) edits += t.size;
 	for (const r of rotations.values()) edits += r.size;
@@ -106,6 +286,21 @@ export function placeText(lon: number, lat: number): void {
 	newFeatures.push({ coord: [lon, lat], text: '' });
 	textSession.editingNew = newFeatures.length - 1;
 	bump();
+}
+
+// Reshapes an uncommitted path box (handle drag before commit).
+export function setNewPath(index: number, cubic: CubicBezier): void {
+	const f = newFeatures[index];
+	if (!f || !f.path) return;
+	f.path = cubic;
+	f.coord = cubicMid(cubic);
+	bump();
+}
+
+// The on-curve midpoint (t = 0.5) — where the text visually centers, and where a
+// label lands when toggled off its path (position survives the toggle, D10).
+function cubicMid(c: CubicBezier): [number, number] {
+	return sampleCubic(c, 2)[1];
 }
 
 // Live text updates from the inline editor.
@@ -188,12 +383,12 @@ function selectedProp(sel: TextSelection, key: '__rotation' | '__wrapWidth'): nu
 // wrap width don't apply to text-on-a-path, so the bar hides those controls.
 export function selectedIsCurved(): boolean {
 	const sel = textSession.selected;
-	if (!sel || sel.kind !== 'existing') return false;
-	const topo = workingTopologyData.get(sel.layerId);
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	const anyTopo = topo as any;
-	const objName = anyTopo ? Object.keys(anyTopo.objects)[0] : null;
-	return objName ? anyTopo.objects[objName]?.geometries?.[sel.featureIndex]?.type === 'LineString' : false;
+	if (!sel) return false;
+	if (sel.kind === 'new') return newFeatures[sel.index]?.path !== undefined;
+	// Session conversions win over the stored geometry type.
+	if (sessionPathEdit(sel.layerId, sel.featureIndex)) return true;
+	if (sessionStraighten(sel.layerId, sel.featureIndex)) return false;
+	return storedGeometry(sel.layerId, sel.featureIndex)?.type === 'LineString';
 }
 
 export function selectedRotation(): number {
@@ -235,7 +430,15 @@ export function setSelectedWrapWidth(px: number): void {
 }
 
 // Moves an existing label (live during drag; applied to the layer on commit).
+// A straightened line's position lives in its straighten anchor, not in moves —
+// the painter (and the eventual Point conversion) read it from there.
 export function moveLabel(layerId: string, featureIndex: number, lon: number, lat: number): void {
+	const st = straightens.get(layerId);
+	if (st?.has(featureIndex)) {
+		st.set(featureIndex, [lon, lat]);
+		bump();
+		return;
+	}
 	let m = moves.get(layerId);
 	if (!m) { m = new Map(); moves.set(layerId, m); }
 	m.set(featureIndex, [lon, lat]);
@@ -252,10 +455,17 @@ export function moveLine(layerId: string, featureIndex: number, dlon: number, dl
 	bump();
 }
 
-// Moves an uncommitted new box (drag before commit).
+// Moves an uncommitted new box (drag before commit). A path box translates its
+// whole cubic; coord rides along at the on-curve midpoint.
 export function moveNewText(index: number, lon: number, lat: number): void {
 	const f = newFeatures[index];
 	if (!f) return;
+	if (f.path) {
+		const dlon = lon - f.coord[0];
+		const dlat = lat - f.coord[1];
+		const t = (p: [number, number]): [number, number] => [p[0] + dlon, p[1] + dlat];
+		f.path = { p0: t(f.path.p0), p1: t(f.path.p1), p2: t(f.path.p2), p3: t(f.path.p3) };
+	}
 	f.coord = [lon, lat];
 	bump();
 }
@@ -273,6 +483,8 @@ export function deleteSelected(): void {
 		// Pending edits on a deleted label are moot.
 		moves.get(sel.layerId)?.delete(sel.featureIndex);
 		lineMoves.get(sel.layerId)?.delete(sel.featureIndex);
+		pathEdits.get(sel.layerId)?.delete(sel.featureIndex);
+		straightens.get(sel.layerId)?.delete(sel.featureIndex);
 		textEdits.get(sel.layerId)?.delete(sel.featureIndex);
 		rotations.get(sel.layerId)?.delete(sel.featureIndex);
 		wrapWidths.get(sel.layerId)?.delete(sel.featureIndex);
@@ -290,10 +502,12 @@ export function discardText(): void {
 	textSession.editingNew = null;
 	textSession.editingExisting = null;
 	textSession.selected = null;
-	if (newFeatures.length === 0 && moves.size === 0 && lineMoves.size === 0 && deletes.size === 0 && textEdits.size === 0 && rotations.size === 0 && wrapWidths.size === 0) return;
+	if (newFeatures.length === 0 && moves.size === 0 && lineMoves.size === 0 && pathEdits.size === 0 && straightens.size === 0 && deletes.size === 0 && textEdits.size === 0 && rotations.size === 0 && wrapWidths.size === 0) return;
 	newFeatures = [];
 	moves = new Map();
 	lineMoves = new Map();
+	pathEdits = new Map();
+	straightens = new Map();
 	deletes = new Map();
 	textEdits = new Map();
 	rotations = new Map();
@@ -310,11 +524,13 @@ export function commitText(): void {
 	finishEditingNew();
 	finishEditingExisting();
 	textSession.selected = null;
-	if (newFeatures.length === 0 && moves.size === 0 && lineMoves.size === 0 && deletes.size === 0 && textEdits.size === 0 && rotations.size === 0 && wrapWidths.size === 0) return;
+	if (newFeatures.length === 0 && moves.size === 0 && lineMoves.size === 0 && pathEdits.size === 0 && straightens.size === 0 && deletes.size === 0 && textEdits.size === 0 && rotations.size === 0 && wrapWidths.size === 0) return;
 
 	const feats = newFeatures;
 	const mv = moves;
 	const lmv = lineMoves;
+	const pe = pathEdits;
+	const st = straightens;
 	const del = deletes;
 	const txt = textEdits;
 	const rot = rotations;
@@ -322,13 +538,15 @@ export function commitText(): void {
 	newFeatures = [];
 	moves = new Map();
 	lineMoves = new Map();
+	pathEdits = new Map();
+	straightens = new Map();
 	deletes = new Map();
 	textEdits = new Map();
 	rotations = new Map();
 	wrapWidths = new Map();
 	bump();
 
-	const editedLayerIds = [...new Set([...mv.keys(), ...lmv.keys(), ...del.keys(), ...txt.keys(), ...rot.keys(), ...wrap.keys()])]
+	const editedLayerIds = [...new Set([...mv.keys(), ...lmv.keys(), ...pe.keys(), ...st.keys(), ...del.keys(), ...txt.keys(), ...rot.keys(), ...wrap.keys()])]
 		.filter((id) => layers.some((l) => l.id === id)); // skip layers deleted mid-session
 	let pending = editedLayerIds.length + (feats.length > 0 ? 1 : 0);
 	if (pending === 0) return;
@@ -338,6 +556,8 @@ export function commitText(): void {
 		applyLabelEdits(layerId, {
 			moves: mv.get(layerId),
 			lineMoves: lmv.get(layerId),
+			pathReplaces: bakePathEdits(pe.get(layerId)),
+			straightens: st.get(layerId),
 			deletes: del.get(layerId),
 			texts: txt.get(layerId),
 			rotations: rot.get(layerId),
@@ -349,7 +569,11 @@ export function commitText(): void {
 		// Fall back to a new layer if the target was deleted out from under us.
 		let target = textSession.targetLayerId;
 		if (target !== null && !layers.find((l) => l.id === target)) target = null;
-		const id = commitTextFeatures(target, feats, done);
+		// Path boxes bake their cubic into a line here; point boxes pass through.
+		const baked = feats.map((f) =>
+			f.path ? { coord: f.coord, text: f.text, line: bakeCubic(f.path) } : f
+		);
+		const id = commitTextFeatures(target, baked, done);
 		textSession.targetLayerId = id;
 		// Targeting follows the layers-panel selection, so select the layer new boxes
 		// just landed in — continued placement keeps adding there.

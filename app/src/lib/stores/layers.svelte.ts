@@ -730,7 +730,9 @@ function addEmptyTextLayer(): string {
 // on-screen topology and funnel through replaceLayerGeometry (one geometryId mint).
 export function commitTextFeatures(
 	targetLayerId: string | null,
-	features: readonly { coord: [number, number]; text: string; rotation?: number; wrapWidth?: number }[],
+	// `line` present = a baked text-on-path box (D10): lands as a LineString; coord
+	// and the point-only fields (rotation/wrapWidth) are ignored for it.
+	features: readonly { coord: [number, number]; text: string; rotation?: number; wrapWidth?: number; line?: [number, number][] }[],
 	onComplete?: () => void,
 ): string {
 	const layerId = targetLayerId ?? addEmptyTextLayer();
@@ -763,6 +765,14 @@ export function commitTextFeatures(
 
 	for (const f of features) {
 		const properties: Record<string, unknown> = { ...nullProps(), text: f.text };
+		if (f.line) {
+			geometries.push({
+				type: 'LineString',
+				arcs: [(topo.arcs as [number, number][][]).push(f.line.map((c) => [c[0], c[1]] as [number, number])) - 1],
+				properties,
+			});
+			continue;
+		}
 		if (f.rotation !== undefined && f.rotation !== 0) properties.__rotation = f.rotation;
 		if (f.wrapWidth !== undefined) properties.__wrapWidth = f.wrapWidth;
 		geometries.push({
@@ -789,6 +799,11 @@ export interface LabelEdits {
 	moves?: Map<number, [number, number]>;
 	// Curved labels: lon/lat delta added to every vertex of the line (whole-line translate).
 	lineMoves?: Map<number, [number, number]>;
+	// Curved labels: the line's coordinates replaced outright (baked path sculpt, D10).
+	// On a Point feature this CONVERTS it to a LineString ("On path" toggled on).
+	pathReplaces?: Map<number, [number, number][]>;
+	// Curved labels toggled off their path: the LineString converts to a Point here.
+	straightens?: Map<number, [number, number]>;
 	deletes?: Set<number>;
 	texts?: Map<number, string>;
 	rotations?: Map<number, number>;
@@ -818,12 +833,12 @@ export function applyLabelEdits(layerId: string, edits: LabelEdits, onComplete?:
 			if (g?.type === 'Point') g.coordinates = [coord[0], coord[1]];
 		}
 	}
+	// Label-layer lines each own their arc (createLabelLayer builds one per line),
+	// so mutating a feature's arcs can't disturb a neighbor.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const arcs = (topo as any).arcs as [number, number][][];
 	if (edits.lineMoves) {
-		// Label-layer lines each own their arc (createLabelLayer builds one per line),
-		// so translating a feature's arcs can't disturb a neighbor. The Set guards the
-		// degenerate case of one geometry referencing the same arc twice.
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const arcs = (topo as any).arcs as [number, number][][];
+		// The Set guards the degenerate case of one geometry referencing the same arc twice.
 		for (const [i, [dlon, dlat]] of edits.lineMoves) {
 			const g = geometries[i];
 			if (g?.type !== 'LineString' || !Array.isArray(g.arcs)) continue;
@@ -837,6 +852,39 @@ export function applyLabelEdits(layerId: string, edits: LabelEdits, onComplete?:
 					pt[1] += dlat;
 				}
 			}
+		}
+	}
+	if (edits.pathReplaces) {
+		// The sculpted line lands in the feature's first arc; extra arc references
+		// (never produced by createLabelLayer) are dropped and left orphaned, same
+		// as deletions leave orphaned arcs — harmless. A Point feature converts to
+		// a LineString with a fresh arc ("On path" toggled on).
+		for (const [i, coords] of edits.pathReplaces) {
+			const g = geometries[i];
+			if (!g) continue;
+			const line = coords.map((c) => [c[0], c[1]] as [number, number]);
+			if (g.type === 'Point') {
+				g.type = 'LineString';
+				delete g.coordinates;
+				g.arcs = [arcs.push(line) - 1];
+			} else if (g.type === 'LineString' && Array.isArray(g.arcs) && g.arcs.length > 0) {
+				const first = g.arcs[0] as number;
+				const idx = first < 0 ? ~first : first;
+				if (!arcs[idx]) continue;
+				arcs[idx] = line;
+				g.arcs = [idx];
+			}
+		}
+	}
+	if (edits.straightens) {
+		// The reverse conversion: the line's arc is orphaned, the label becomes a
+		// plain point where its curve's midpoint sat.
+		for (const [i, coord] of edits.straightens) {
+			const g = geometries[i];
+			if (g?.type !== 'LineString') continue;
+			g.type = 'Point';
+			g.coordinates = [coord[0], coord[1]];
+			delete g.arcs;
 		}
 	}
 	const attr = layers.find((l) => l.id === layerId)?.labelAttribute;

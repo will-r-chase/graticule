@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Plus, Check, X, ArrowClockwise } from 'phosphor-svelte';
-	import { textSession, commitText, discardText, selectedRotation, setSelectedRotation, selectedIsCurved } from '$lib/stores/textSession.svelte';
+	import { Plus, Check, X, ArrowClockwise, BezierCurve } from 'phosphor-svelte';
+	import { textSession, commitText, discardText, selectedRotation, setSelectedRotation, selectedIsCurved, setSelectedOnPath } from '$lib/stores/textSession.svelte';
 	import { layerSelection, clearLayerSelection, selectLayer } from '$lib/stores/layerSelection.svelte';
 	import { layers, createLabelLayer } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -70,19 +70,32 @@
 			</button>
 			<div class="bar-divider"></div>
 		{/if}
-		{#if textSession.selected && !curved}
-			<span class="rotate-field" use:tooltip={{ text: 'Rotate the selected label', placement: 'up' }}>
-				<ArrowClockwise size={14} />
-				<input
-					class="rotate-input"
-					type="number"
-					step="1"
-					value={rotation}
-					oninput={(e) => setSelectedRotation(Number((e.currentTarget as HTMLInputElement).value))}
-					aria-label="Rotation in degrees"
-				/>
-				<span class="deg">°</span>
-			</span>
+		{#if textSession.selected}
+			<button
+				class="bar-btn"
+				class:toggled={curved}
+				onclick={() => setSelectedOnPath(!curved)}
+				aria-label="Toggle text on path for the selected label"
+				aria-pressed={curved}
+				use:tooltip={{ text: curved ? 'Straighten this label' : 'Put this label on a curved path', placement: 'up' }}
+			>
+				<BezierCurve size={14} />
+				<span>On path</span>
+			</button>
+			{#if !curved}
+				<span class="rotate-field" use:tooltip={{ text: 'Rotate the selected label', placement: 'up' }}>
+					<ArrowClockwise size={14} />
+					<input
+						class="rotate-input"
+						type="number"
+						step="1"
+						value={rotation}
+						oninput={(e) => setSelectedRotation(Number((e.currentTarget as HTMLInputElement).value))}
+						aria-label="Rotation in degrees"
+					/>
+					<span class="deg">°</span>
+				</span>
+			{/if}
 			<div class="bar-divider"></div>
 		{/if}
 		<span class="status status--strong">{statusText}</span>
@@ -163,6 +176,15 @@
 
 	.bar-btn:hover {
 		background: var(--color-surface-secondary);
+	}
+
+	.bar-btn.toggled {
+		background: var(--color-surface-secondary);
+		color: var(--color-accent);
+	}
+
+	.bar-btn.toggled :global(svg) {
+		color: var(--color-accent);
 	}
 
 	.bar-divider {

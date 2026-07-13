@@ -156,6 +156,128 @@ function smoothPath(pts: [number, number][], k: number): [number, number][] {
 	return cur;
 }
 
+// --- Cubic bezier text paths (docs/labels-plan.md, D10) ------------------------
+// The EDITING representation of a curved label's path: two anchors + two tangent
+// handles. Pure math over whatever space the caller works in (the editor fits and
+// evaluates in screen px; the session stores control points in lon/lat).
+
+export interface CubicBezier {
+	p0: [number, number]; // start anchor
+	p1: [number, number]; // start handle
+	p2: [number, number]; // end handle
+	p3: [number, number]; // end anchor
+}
+
+// Evaluates the cubic at n uniform t-steps → an (n+1)-point polyline. Uniform t is
+// fine here: layoutGlyphsAlongPath re-parameterizes by arc length anyway.
+export function sampleCubic(c: CubicBezier, n: number): [number, number][] {
+	const out: [number, number][] = [];
+	for (let i = 0; i <= n; i++) {
+		const t = i / n;
+		const s = 1 - t;
+		const b0 = s * s * s;
+		const b1 = 3 * t * s * s;
+		const b2 = 3 * t * t * s;
+		const b3 = t * t * t;
+		out.push([
+			b0 * c.p0[0] + b1 * c.p1[0] + b2 * c.p2[0] + b3 * c.p3[0],
+			b0 * c.p0[1] + b1 * c.p1[1] + b2 * c.p2[1] + b3 * c.p3[1],
+		]);
+	}
+	return out;
+}
+
+// Fits a display cubic to a polyline: anchors pinned to the ends, tangent
+// directions from a short window at each end (3% of arc length), handle LENGTHS
+// solved by least squares against chord-length-parameterized points (Schneider's
+// method with fixed anchors/tangents). Expects a reasonably smooth polyline —
+// feed it the render baseline, not raw river data. The fit is a starting shape
+// for hand-sculpting, not a faithful reproduction (~2-4% max deviation on
+// arcs/S-curves). Returns null for degenerate input.
+export function fitCubicToPolyline(path: [number, number][]): CubicBezier | null {
+	const pts = dedupe(path);
+	if (pts.length < 2) return null;
+	const p0 = pts[0];
+	const p3 = pts[pts.length - 1];
+
+	const cum = [0];
+	for (let i = 1; i < pts.length; i++) {
+		cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+	}
+	const total = cum[cum.length - 1];
+	if (total === 0) return null;
+
+	const t0 = unitTowards(pts, cum, total * 0.03, true);
+	const t3 = unitTowards(pts, cum, total * 0.03, false);
+	const fallback = (): CubicBezier => ({
+		p0,
+		p1: [p0[0] + (t0[0] * total) / 3, p0[1] + (t0[1] * total) / 3],
+		p2: [p3[0] + (t3[0] * total) / 3, p3[1] + (t3[1] * total) / 3],
+		p3,
+	});
+	if (pts.length === 2) return fallback();
+
+	// Least squares over the interior points for the two handle lengths α0, α1:
+	// curve(u) = p0·B0 + (p0+α0·t0)·B1 + (p3+α1·t3)·B2 + p3·B3, u = chord param.
+	let c00 = 0;
+	let c01 = 0;
+	let c11 = 0;
+	let x0 = 0;
+	let x1 = 0;
+	for (let i = 1; i < pts.length - 1; i++) {
+		const u = cum[i] / total;
+		const s = 1 - u;
+		const b0 = s * s * s;
+		const b1 = 3 * u * s * s;
+		const b2 = 3 * u * u * s;
+		const b3 = u * u * u;
+		const a0: [number, number] = [t0[0] * b1, t0[1] * b1];
+		const a1: [number, number] = [t3[0] * b2, t3[1] * b2];
+		const rx = pts[i][0] - (b0 + b1) * p0[0] - (b2 + b3) * p3[0];
+		const ry = pts[i][1] - (b0 + b1) * p0[1] - (b2 + b3) * p3[1];
+		c00 += a0[0] * a0[0] + a0[1] * a0[1];
+		c01 += a0[0] * a1[0] + a0[1] * a1[1];
+		c11 += a1[0] * a1[0] + a1[1] * a1[1];
+		x0 += a0[0] * rx + a0[1] * ry;
+		x1 += a1[0] * rx + a1[1] * ry;
+	}
+	const det = c00 * c11 - c01 * c01;
+	if (Math.abs(det) < 1e-12) return fallback();
+	const alpha0 = (x0 * c11 - x1 * c01) / det;
+	const alpha1 = (c00 * x1 - c01 * x0) / det;
+	// Non-positive or wild handle lengths mean the solve degenerated (near-straight
+	// or self-crossing data) — the ⅓-length heuristic is more trustworthy.
+	if (alpha0 <= 0 || alpha1 <= 0 || alpha0 > total * 2 || alpha1 > total * 2) return fallback();
+	return {
+		p0,
+		p1: [p0[0] + t0[0] * alpha0, p0[1] + t0[1] * alpha0],
+		p2: [p3[0] + t3[0] * alpha1, p3[1] + t3[1] * alpha1],
+		p3,
+	};
+}
+
+// Unit vector pointing INTO the path from one end: from the first point towards
+// the point at arc distance d (fromStart), or from the last point backwards.
+function unitTowards(
+	pts: [number, number][],
+	cum: number[],
+	d: number,
+	fromStart: boolean
+): [number, number] {
+	const total = cum[cum.length - 1];
+	const target = fromStart ? Math.min(d, total) : Math.max(total - d, 0);
+	let i = 0;
+	while (i < cum.length - 2 && cum[i + 1] < target) i++;
+	const t = (target - cum[i]) / (cum[i + 1] - cum[i] || 1);
+	const px = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t;
+	const py = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t;
+	const end = fromStart ? pts[0] : pts[pts.length - 1];
+	const dx = px - end[0];
+	const dy = py - end[1];
+	const len = Math.hypot(dx, dy) || 1;
+	return [dx / len, dy / len];
+}
+
 // Consecutive duplicate points would make zero-length segments (and NaN tangents);
 // also copies, so the caller's array survives the flip-reverse.
 function dedupe(path: [number, number][]): [number, number][] {
