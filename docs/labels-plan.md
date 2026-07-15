@@ -175,7 +175,10 @@ Each step is usable on its own before the next starts:
    2026-07-11; orphaned arcs left behind by label deletes (harmless, minor topology bloat).
 5. **Export** — `<text>`/`<textPath>` in SVG export. Decisions in D11 (note: PNG turned
    out to rasterize the SVG string, so labels reach PNG via the SVG path too).
-   **BUILT 2026-07-13 (pending verification)**: 5a straight labels (halo copy under fill
+   **DONE + verified 2026-07-13, committed 5fbc1d7** (verified: straight labels, Exact
+   curved mode, Flat text in Figma, SVG clipping; Text-on-path spot-checked in Chrome,
+   Illustrator/Inkscape import unverified). "Clip to current viewport" defaults ON.
+   Slices: 5a straight labels (halo copy under fill
    copy, tspan lines, measured baseline shift — no dominant-baseline); 5b faithful
    per-glyph curved serializer (layout in final px, per-glyph translate/scale/rotate,
    spaces skipped); 5c `<textPath>` editable variant over the smoothed baseline
