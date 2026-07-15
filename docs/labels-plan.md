@@ -173,7 +173,15 @@ Each step is usable on its own before the next starts:
    feature's arcs; rotation input hidden for curved selections (`selectedIsCurved`), wrap
    handle suppressed. Deferred: curve reshaping (path editing) — discussion started
    2026-07-11; orphaned arcs left behind by label deletes (harmless, minor topology bloat).
-5. **Export** — `<text>`/`<textPath>` in SVG export; PNG needs nothing (labels are on canvas).
+5. **Export** — `<text>`/`<textPath>` in SVG export. Decisions in D11 (note: PNG turned
+   out to rasterize the SVG string, so labels reach PNG via the SVG path too).
+   **BUILT 2026-07-13 (pending verification)**: 5a straight labels (halo copy under fill
+   copy, tspan lines, measured baseline shift — no dominant-baseline); 5b faithful
+   per-glyph curved serializer (layout in final px, per-glyph translate/scale/rotate,
+   spaces skipped); 5c `<textPath>` editable variant over the smoothed baseline
+   (startOffset 50%, perpendicular dy for the middle baseline, href + xlink:href) +
+   "Curved labels: Exact / Editable" radio in the export modal (SVG only; PNG always
+   exact). Label layers no longer export their anchor geometry as dots/lines.
 
 ### Step 1 details (decided 2026-07-06)
 
@@ -285,6 +293,32 @@ of new text paths. Users never drag raw vertices:
   its straighten anchor. Rejected: the earlier placement-mode toggle (built, then
   replaced); "off unwinds to the pre-conversion position" (jumped); click-drag path
   drawing; multi-segment pen-tool splines (revisit if single cubics prove limiting).
+
+### D11: Labels in export (decided 2026-07-12)
+
+Corrections to earlier assumptions discovered in export.ts: PNG export rasterizes the
+SVG string via an <img> (it is NOT canvas-based), and label layers previously exported
+their anchor geometry as symbol dots / stroked lines (fixed by this step).
+
+- **Straight labels**: one `<text>` per label (multi-line via `<tspan>`), 9-way anchor,
+  rotation, wrap widths measured on an offscreen canvas ctx so they match the app.
+- **Curved labels — user picks at export** (three modes, revised 2026-07-13 after
+  Figma testing — Figma's SVG importer silently drops `<textPath>` and has no native
+  text-on-path): "Exact" = per-glyph rotated `<text>` from the same layout the canvas
+  uses (pixel-accurate: smoothing, auto-flip, overflow, secant angles); "Text on path"
+  = `<textPath>` over the smoothed baseline (editable type-on-path in
+  Illustrator/Inkscape; centering via startOffset=50%, overflow clips); "Flat text" =
+  one straight editable `<text>` at the curve's midpoint rotated to its overall
+  direction (works everywhere incl. Figma; the curve is discarded).
+  Also fixed 2026-07-13: "Clip to current viewport" now applies to SVG export too
+  (was PNG-only; exportSVG hardcoded full extent).
+- **Halos**: stacked text copies (stroked under filled), mirroring the canvas's two
+  passes — chosen over `paint-order="stroke"` for vector-editor compatibility.
+- **PNG + webfonts**: accepted caveat — `<img>` rasterization can't load external
+  fonts, so Google Fonts fall back in PNG output (fine in SVG). Documented in the
+  export modal; data-URI embedding or canvas-based PNG are follow-ups if it bites.
+- Fonts referenced by family name in v1 (D8); the Google Fonts `@import` embed for
+  SVG portability is a follow-up.
 
 ### Step 3 details (decided 2026-07-07)
 

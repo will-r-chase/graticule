@@ -6,10 +6,14 @@
 	let { onclose }: { onclose: () => void } = $props();
 
 	let format = $state<'svg' | 'png'>('svg');
-	let clipToViewport = $state(false);
+	let clipToViewport = $state(true);
+	// D11: curved labels serialize as exact rotated glyphs, as editable
+	// text-on-path runs (Illustrator/Inkscape — Figma drops textPath), or as flat
+	// editable text (any tool; curve discarded). PNG always rasterizes exact.
+	let curvedText = $state<'glyphs' | 'textpath' | 'flat'>('glyphs');
 
 	function handleExport() {
-		if (format === 'svg') exportSVG();
+		if (format === 'svg') exportSVG(clipToViewport, curvedText);
 		else exportPNG(clipToViewport);
 		onclose();
 	}
@@ -27,11 +31,26 @@
 				PNG
 			</label>
 		</div>
-		{#if format === 'png'}
-			<label class="checkbox-row mono-small">
-				<input type="checkbox" bind:checked={clipToViewport} />
-				Clip to current viewport
-			</label>
+		<label class="checkbox-row mono-small">
+			<input type="checkbox" bind:checked={clipToViewport} />
+			Clip to current viewport
+		</label>
+		{#if format === 'svg'}
+			<div class="curved-group mono-small">
+				<span class="group-label">Curved labels</span>
+				<label class="radio-row">
+					<input type="radio" name="curvedText" value="glyphs" bind:group={curvedText} />
+					Exact (positioned letters)
+				</label>
+				<label class="radio-row">
+					<input type="radio" name="curvedText" value="textpath" bind:group={curvedText} />
+					Text on path (Illustrator, Inkscape)
+				</label>
+				<label class="radio-row">
+					<input type="radio" name="curvedText" value="flat" bind:group={curvedText} />
+					Flat text (Figma-safe, loses curve)
+				</label>
+			</div>
 		{/if}
 	{/snippet}
 
@@ -61,6 +80,17 @@
 		gap: var(--space-s);
 		color: var(--color-text-primary);
 		cursor: pointer;
+	}
+
+	.curved-group {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-s);
+		margin-top: var(--space-m);
+	}
+
+	.group-label {
+		color: var(--color-text-secondary);
 	}
 
 	.radio-row input[type="radio"],

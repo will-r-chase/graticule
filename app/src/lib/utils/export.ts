@@ -3,10 +3,13 @@ import * as d3gp from 'd3-geo-projection';
 import * as d3shape from 'd3-shape';
 import { feature } from 'topojson-client';
 import type { Feature, FeatureCollection } from 'geojson';
+import type { Layer } from '$lib/types';
 import { layers, workingTopologyData } from '$lib/stores/layers.svelte';
 import { projection as projectionStore } from '$lib/stores/projection.svelte';
 import { canvasStyles } from '$lib/stores/canvasStyles.svelte';
 import { mapState } from '$lib/stores/mapState.svelte';
+import { applyTextTransform, LABEL_ANCHOR_DIR, labelFontString, wrapLabelLines } from '$lib/utils/labels';
+import { layoutGlyphsAlongPath, splitGraphemes } from '$lib/utils/curvedText';
 
 const allProjections = { ...d3, ...d3gp } as Record<string, unknown>;
 
@@ -23,6 +26,10 @@ const shapeMap: Record<string, d3shape.SymbolType> = {
 
 function sanitizeId(str: string): string {
 	return str.trim().replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^([^a-zA-Z_])/, '_$1');
+}
+
+function escapeXml(str: string): string {
+	return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 const NAME_KEYS = ['name', 'NAME', 'Name', 'label', 'LABEL', 'Label'];
@@ -66,8 +73,217 @@ function triggerDownload(blob: Blob, filename: string): void {
 	URL.revokeObjectURL(url);
 }
 
+// ── Label layers (docs/labels-plan.md, D11) ────────────────────────────────
+// Emitted as real SVG text, mirroring the canvas renderer's math (paintLabel /
+// setLabelContext in MapCanvas). Wrap widths and baseline offsets are measured
+// on an offscreen 2D context so the export matches the app. Halos are stacked
+// text copies (stroked under filled) rather than paint-order, for vector-editor
+// compatibility. LineString (curved) labels arrive with the 5b/5c slices.
+
+let measureCtx: CanvasRenderingContext2D | null = null;
+function getMeasureCtx(): CanvasRenderingContext2D | null {
+	if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d');
+	return measureCtx;
+}
+
+function fmt(n: number): string {
+	return String(Math.round(n * 1000) / 1000);
+}
+
+// scale compensates for a wrapping zoom transform when the element can't carry
+// its own counter-scale (the textPath variant); withSpacing is off for per-glyph
+// output, where spacing is baked into the positions.
+function labelTextAttrs(ls: Layer['labelStyle'], scale = 1, withSpacing = true): string {
+	let s = ` font-family="${escapeXml(ls.fontFamily)}" font-size="${fmt(ls.fontSize * scale)}px"`;
+	if (ls.fontWeight === 'bold') s += ' font-weight="bold"';
+	if (ls.italic) s += ' font-style="italic"';
+	if (withSpacing && ls.letterSpacing) s += ` letter-spacing="${fmt(ls.letterSpacing * scale)}px"`;
+	return s;
+}
+
+// One curved label (D11): glyph layout runs in FINAL rendered pixels — the same
+// space the canvas uses — then positions convert back to the local (pre-zoom-
+// transform) frame for emission, mirroring paintCurvedLabel's inverse-scale trick.
+function curvedLabelSVG(
+	ls: Layer['labelStyle'],
+	ctx: CanvasRenderingContext2D | null,
+	text: string,
+	coords: [number, number][],
+	proj: d3.GeoProjection,
+	options: SVGOptions,
+	pathId: string,
+	baselineShift: number,
+): string[] {
+	if (!ctx) return [];
+	const { tx, ty, mapScale } = mapState;
+	const cs = options.clip ? 1 / mapScale : 1;
+	const toFinal = (p: [number, number]): [number, number] =>
+		options.clip ? [p[0] * mapScale + tx, p[1] * mapScale + ty] : p;
+	const toLocal = (p: [number, number]): [number, number] =>
+		options.clip ? [(p[0] - tx) / mapScale, (p[1] - ty) / mapScale] : p;
+
+	const path: [number, number][] = [];
+	for (const c of coords) {
+		const pt = proj(c);
+		if (pt) path.push(toFinal(pt as [number, number]));
+	}
+	if (path.length < 2) return [];
+
+	// Measure with zero context letter spacing, like the canvas — spacing is the
+	// layout's job. (The straight-label caller restores its own spacing after.)
+	(ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = '0px';
+	const single = text.split('\n').join(' ');
+	const glyphs = splitGraphemes(single).map((glyph) => ({ glyph, width: ctx.measureText(glyph).width }));
+	const { placements, baseline } = layoutGlyphsAlongPath(path, glyphs, ls.letterSpacing, ls.fontSize);
+	if (placements.length === 0) return [];
+
+	const out: string[] = [];
+	out.push(`    <g opacity="${ls.colorOpacity}">`);
+
+	if (options.curvedText === 'flat') {
+		// One straight, fully editable text run: at the baseline's midpoint, rotated
+		// to the curve's overall direction (start→end secant; the baseline is
+		// already flipped to read left-to-right, so the angle stays upright).
+		const mid = toLocal(baseline[Math.floor(baseline.length / 2)]);
+		const a = baseline[0];
+		const b = baseline[baseline.length - 1];
+		const deg = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
+		const transform =
+			`translate(${fmt(mid[0])},${fmt(mid[1])})` +
+			(cs !== 1 ? ` scale(${fmt(cs)})` : '') +
+			(deg ? ` rotate(${fmt(deg)})` : '');
+		const attrs = ` transform="${transform}" text-anchor="middle"${labelTextAttrs(ls)}`;
+		const content = `<tspan x="0" y="${fmt(baselineShift)}">${escapeXml(single)}</tspan>`;
+		if (ls.haloWidth > 0) {
+			out.push(`      <text${attrs} fill="none" stroke="${ls.haloColor}" stroke-width="${fmt(ls.haloWidth * 2)}" stroke-linejoin="round">${content}</text>`);
+		}
+		out.push(`      <text${attrs} fill="${ls.color}">${content}</text>`);
+	} else if (options.curvedText === 'textpath') {
+		const d = 'M' + baseline.map((p) => toLocal(p).map(fmt).join(',')).join('L');
+		out.push(`      <path id="${pathId}" d="${d}" fill="none" stroke="none" />`);
+		const attrs = labelTextAttrs(ls, cs);
+		// dy inside a textPath offsets perpendicular to the path — same job as the
+		// canvas's middle baseline.
+		const content =
+			`<textPath href="#${pathId}" xlink:href="#${pathId}" startOffset="50%" text-anchor="middle">` +
+			`<tspan dy="${fmt(baselineShift * cs)}">${escapeXml(single)}</tspan></textPath>`;
+		if (ls.haloWidth > 0) {
+			out.push(`      <text${attrs} fill="none" stroke="${ls.haloColor}" stroke-width="${fmt(ls.haloWidth * 2 * cs)}" stroke-linejoin="round">${content}</text>`);
+		}
+		out.push(`      <text${attrs} fill="${ls.color}">${content}</text>`);
+	} else {
+		const attrs = labelTextAttrs(ls, 1, false);
+		const glyphEl = (p: { glyph: string; x: number; y: number; angle: number }, paint: string): string => {
+			const [lx, ly] = toLocal([p.x, p.y]);
+			const deg = (p.angle * 180) / Math.PI;
+			const transform =
+				`translate(${fmt(lx)},${fmt(ly)})` +
+				(cs !== 1 ? ` scale(${fmt(cs)})` : '') +
+				(deg ? ` rotate(${fmt(deg)})` : '');
+			return `      <text transform="${transform}" text-anchor="middle"${attrs} ${paint}><tspan y="${fmt(baselineShift)}">${escapeXml(p.glyph)}</tspan></text>`;
+		};
+		const visible = placements.filter((p) => p.glyph.trim() !== '');
+		// All halos under all fills, mirroring the canvas's two passes.
+		if (ls.haloWidth > 0) {
+			for (const p of visible) {
+				out.push(glyphEl(p, `fill="none" stroke="${ls.haloColor}" stroke-width="${fmt(ls.haloWidth * 2)}" stroke-linejoin="round"`));
+			}
+		}
+		for (const p of visible) out.push(glyphEl(p, `fill="${ls.color}"`));
+	}
+
+	out.push('    </g>');
+	return out;
+}
+
+function buildLabelLayerSVG(
+	layer: Layer,
+	data: FeatureCollection,
+	proj: d3.GeoProjection,
+	options: SVGOptions,
+): string[] {
+	const attr = layer.labelAttribute;
+	if (!attr) return [];
+	const ls = layer.labelStyle;
+	const ctx = getMeasureCtx();
+	if (ctx) {
+		ctx.font = labelFontString(ls);
+		(ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${ls.letterSpacing}px`;
+	}
+
+	// Canvas draws with a middle baseline; SVG text sits on the alphabetic one.
+	// Measure the difference (fallback: the classic 0.35em approximation) instead
+	// of using dominant-baseline, which vector editors handle inconsistently.
+	let baselineShift = ls.fontSize * 0.35;
+	if (ctx) {
+		const m = ctx.measureText('x');
+		if (m.fontBoundingBoxAscent !== undefined && m.fontBoundingBoxDescent !== undefined) {
+			baselineShift = (m.fontBoundingBoxAscent - m.fontBoundingBoxDescent) / 2;
+		}
+	}
+
+	const dir = LABEL_ANCHOR_DIR[ls.anchor];
+	const anchorAttr = dir.x === -1 ? 'end' : dir.x === 1 ? 'start' : 'middle';
+	const gap = dir.x === 0 && dir.y === 0 ? 0 : ls.fontSize * 0.3 + ls.haloWidth;
+	const lineH = ls.fontSize * ls.lineHeight;
+	const counterScale = options.clip ? 1 / mapState.mapScale : 1;
+
+	const out: string[] = [];
+	for (let fi = 0; fi < data.features.length; fi++) {
+		const f = data.features[fi];
+		const geom = f?.geometry as { type?: string; coordinates?: unknown } | null;
+		const props = f.properties as Record<string, unknown> | null;
+		const raw = props?.[attr];
+		if (raw === null || raw === undefined || raw === '') continue;
+		if (geom?.type === 'LineString') {
+			out.push(...curvedLabelSVG(
+				ls, ctx,
+				applyTextTransform(String(raw), ls.textTransform),
+				geom.coordinates as [number, number][],
+				proj, options,
+				`label_${sanitizeId(layer.id)}_${fi}`,
+				baselineShift,
+			));
+			// curvedLabelSVG measures with zero spacing; put ours back for wraps.
+			if (ctx) (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${ls.letterSpacing}px`;
+			continue;
+		}
+		if (!geom || geom.type !== 'Point') continue;
+		const pt = proj(geom.coordinates as [number, number]);
+		if (!pt) continue;
+		const rot = typeof props?.__rotation === 'number' && Number.isFinite(props.__rotation) ? props.__rotation : 0;
+		const wrapW = typeof props?.__wrapWidth === 'number' && Number.isFinite(props.__wrapWidth) ? props.__wrapWidth : null;
+		const transformed = applyTextTransform(String(raw), ls.textTransform);
+		const lines = wrapW !== null && ctx ? wrapLabelLines(ctx, transformed, wrapW) : transformed.split('\n');
+
+		// Same placement math as paintLabel: coordinates in the label's local
+		// (unscaled, unrotated) frame, middle baselines throughout.
+		const x = dir.x * gap;
+		const y0 =
+			dir.y === 0 ? -((lines.length - 1) / 2) * lineH
+			: dir.y === -1 ? -gap - ls.fontSize / 2 - (lines.length - 1) * lineH
+			: gap + ls.fontSize / 2;
+
+		const tspans = lines
+			.map((line, i) => `<tspan x="${fmt(x)}" y="${fmt(y0 + i * lineH + baselineShift)}">${escapeXml(line)}</tspan>`)
+			.join('');
+		const transform =
+			`translate(${fmt(pt[0])},${fmt(pt[1])})` +
+			(counterScale !== 1 ? ` scale(${fmt(counterScale)})` : '') +
+			(rot ? ` rotate(${fmt(rot)})` : '');
+		const common = `text-anchor="${anchorAttr}"${labelTextAttrs(ls)}`;
+		out.push(`    <g transform="${transform}" opacity="${ls.colorOpacity}">`);
+		if (ls.haloWidth > 0) {
+			out.push(`      <text ${common} fill="none" stroke="${ls.haloColor}" stroke-width="${fmt(ls.haloWidth * 2)}" stroke-linejoin="round">${tspans}</text>`);
+		}
+		out.push(`      <text ${common} fill="${ls.color}">${tspans}</text>`);
+		out.push('    </g>');
+	}
+	return out;
+}
+
 export function exportPNG(clip: boolean): void {
-	const svgString = buildSVGString({ clip });
+	const svgString = buildSVGString({ clip, curvedText: 'glyphs' });
 	if (!svgString) return;
 
 	const { width, height } = mapState;
@@ -93,6 +309,14 @@ export function exportPNG(clip: boolean): void {
 
 interface SVGOptions {
 	clip: boolean;
+	// How curved labels serialize (D11): 'glyphs' = per-glyph rotated <text>,
+	// pixel-faithful to the canvas; 'textpath' = <textPath> over the smoothed
+	// baseline, editable type-on-path in Illustrator/Inkscape (Figma's importer
+	// drops textPath); 'flat' = one straight editable <text> per label at the
+	// curve's midpoint, rotated to the overall direction — the curve is discarded
+	// but every tool including Figma can retype it. PNG always uses 'glyphs'
+	// (it rasterizes, so fidelity is all that matters).
+	curvedText: 'glyphs' | 'textpath' | 'flat';
 }
 
 function buildSVGString(options: SVGOptions): string | null {
@@ -106,7 +330,8 @@ function buildSVGString(options: SVGOptions): string | null {
 	const pathGenerator = d3.geoPath(proj);
 
 	const parts: string[] = [
-		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" overflow="hidden">`,
+		// xmlns:xlink for the textPath href fallback older vector editors expect.
+		`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" overflow="hidden">`,
 	];
 
 	// Background rect — included only when the user has it enabled in the Canvas panel.
@@ -130,6 +355,14 @@ function buildSVGString(options: SVGOptions): string | null {
 		const objectName = Object.keys(topo.objects)[0];
 		const data = feature(topo, topo.objects[objectName]) as FeatureCollection;
 		if (!data) continue;
+
+		// Label layers export as text, never as geometry (D11).
+		if (layer.kind === 'label') {
+			parts.push(`  <g id="${sanitizeId(layer.name)}">`);
+			parts.push(...buildLabelLayerSVG(layer, data, proj, options));
+			parts.push(`  </g>`);
+			continue;
+		}
 
 		const { fill, fillOpacity, stroke, strokeOpacity, strokeWidth, strokeDashed, strokeDash, strokeGap } = layer.style;
 		const effectiveStrokeWidth = options.clip ? strokeWidth / mapScale : strokeWidth;
@@ -204,8 +437,8 @@ function buildSVGString(options: SVGOptions): string | null {
 	return parts.join('\n');
 }
 
-export function exportSVG(): void {
-	const svgString = buildSVGString({ clip: false });
+export function exportSVG(clip: boolean, curvedText: SVGOptions['curvedText'] = 'glyphs'): void {
+	const svgString = buildSVGString({ clip, curvedText });
 	if (!svgString) return;
 	const blob = new Blob([svgString], { type: 'image/svg+xml' });
 	triggerDownload(blob, 'map.svg');
