@@ -194,7 +194,7 @@ export function labelFontString(style: LabelStyle): string {
 		style.fontFamily.includes(' ') && !style.fontFamily.includes(',') && !style.fontFamily.includes('"')
 			? `"${style.fontFamily}"`
 			: style.fontFamily;
-	return `${style.italic ? 'italic ' : ''}${style.fontWeight === 'bold' ? 'bold ' : ''}${style.fontSize}px ${family}`;
+	return `${style.italic ? 'italic ' : ''}${style.fontWeight !== 400 ? `${style.fontWeight} ` : ''}${style.fontSize}px ${family}`;
 }
 
 function maxBy<T>(items: T[], measure: (item: T) => number): T | null {

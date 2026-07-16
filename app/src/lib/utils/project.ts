@@ -52,6 +52,12 @@ interface ProjectFile {
 	uploadedDatasets: SavedUploadedDataset[];
 }
 
+// Files saved before numeric weights carry fontWeight: 'normal' | 'bold'.
+function migrateLabelStyle(saved: LabelStyle): LabelStyle {
+	const w = saved.fontWeight as number | 'normal' | 'bold';
+	return { ...saved, fontWeight: w === 'bold' ? 700 : w === 'normal' ? 400 : w };
+}
+
 // ---------------------------------------------------------------------------
 // Save
 // ---------------------------------------------------------------------------
@@ -173,7 +179,7 @@ export function loadProject(json: string): void {
 					if (saved.processing) Object.assign(l.processing, saved.processing);
 					l.kind = saved.kind ?? 'geometry';
 					l.labelAttribute = saved.labelAttribute ?? null;
-					if (saved.labelStyle) Object.assign(l.labelStyle, saved.labelStyle);
+					if (saved.labelStyle) Object.assign(l.labelStyle, migrateLabelStyle(saved.labelStyle));
 					l.derivedFrom = saved.derivedFrom ?? null;
 				}
 			}
@@ -197,7 +203,7 @@ export function loadProject(json: string): void {
 				processing: saved.processing ? { ...saved.processing } : defaultProcessing(),
 				kind: saved.kind ?? 'geometry',
 				labelAttribute: saved.labelAttribute ?? null,
-				labelStyle: saved.labelStyle ? { ...saved.labelStyle } : defaultLabelStyle(),
+				labelStyle: saved.labelStyle ? migrateLabelStyle(saved.labelStyle) : defaultLabelStyle(),
 				derivedFrom: saved.derivedFrom ?? null,
 				geometryTypes: [],
 				bezierCacheKey: 0,
@@ -224,7 +230,7 @@ export function loadProject(json: string): void {
 				processing: saved.processing ? { ...saved.processing } : defaultProcessing(),
 				kind: saved.kind ?? 'geometry',
 				labelAttribute: saved.labelAttribute ?? null,
-				labelStyle: saved.labelStyle ? { ...saved.labelStyle } : defaultLabelStyle(),
+				labelStyle: saved.labelStyle ? migrateLabelStyle(saved.labelStyle) : defaultLabelStyle(),
 				derivedFrom: saved.derivedFrom ?? null,
 				geometryTypes: [],
 				bezierCacheKey: 0,

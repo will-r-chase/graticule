@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
-	import { X, TextB, TextItalic, TextAlignLeft, TextAlignCenter, TextAlignRight } from 'phosphor-svelte';
+	import { X, TextAlignLeft, TextAlignCenter, TextAlignRight } from 'phosphor-svelte';
 	import ColorPickerPopup from '$lib/components/ui/ColorPickerPopup.svelte';
 	import Combobox from '$lib/components/ui/Combobox.svelte';
 	import { updateLayerLabelStyle } from '$lib/stores/layers.svelte';
-	import { fonts, ensureFontLoaded, loadGoogleFontList, requestLocalFonts, CURATED_SYSTEM_FONTS } from '$lib/stores/fonts.svelte';
+	import { fonts, ensureFontLoaded, loadGoogleFontList, requestLocalFonts, variantsForFamily, CURATED_SYSTEM_FONTS } from '$lib/stores/fonts.svelte';
+	import type { FontVariant } from '$lib/stores/fonts.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import type { Layer, LabelAnchor, LabelTextTransform } from '$lib/types';
 
@@ -47,7 +48,7 @@
 	// $state, not derived, so there's no reactive loop).
 	let fontFamily = $state(layer.labelStyle.fontFamily);
 	let fontSize = $state(layer.labelStyle.fontSize);
-	let bold = $state(layer.labelStyle.fontWeight === 'bold');
+	let fontWeight = $state(layer.labelStyle.fontWeight);
 	let italic = $state(layer.labelStyle.italic);
 	let letterSpacing = $state(layer.labelStyle.letterSpacing);
 	let textTransform = $state(layer.labelStyle.textTransform);
@@ -60,6 +61,42 @@
 	let anchor = $state(layer.labelStyle.anchor);
 	let lineHeight = $state(layer.labelStyle.lineHeight);
 	let textAlign = $state(layer.labelStyle.textAlign);
+
+	// Weight/style options for the current family, encoded as "weight|italic" ids
+	// so the Combobox (string-only value/id) can round-trip both fields at once.
+	const styleOptions = $derived(
+		variantsForFamily(fontFamily).map((v) => ({
+			id: `${v.weight}|${v.italic}`,
+			label: v.label,
+			italic: v.italic,
+		}))
+	);
+	const styleValue = $derived(`${fontWeight}|${italic}`);
+
+	// Picks the closest available variant when the current weight/italic combo
+	// doesn't exist in a newly-selected family (prefers matching italic, then
+	// closest weight).
+	function nearestVariant(variants: FontVariant[], weight: number, italic: boolean): FontVariant {
+		const pool = variants.filter((v) => v.italic === italic);
+		const candidates = pool.length > 0 ? pool : variants;
+		return candidates.reduce((best, v) =>
+			Math.abs(v.weight - weight) < Math.abs(best.weight - weight) ? v : best
+		);
+	}
+
+	function selectStyle(id: string) {
+		const [weightStr, italicStr] = id.split('|');
+		const weight = Number(weightStr);
+		const isItalic = italicStr === 'true';
+		// Same pattern as the family picker: wait for the face to be usable before
+		// applying, so the label never repaints in a fallback weight mid-load.
+		ensureFontLoaded(fontFamily, weight, isItalic).then(() => {
+			fontWeight = weight;
+			italic = isItalic;
+			updateLayerLabelStyle(layer.id, { fontWeight, italic });
+			pushSnapshot();
+		});
+	}
 
 	let activePicker = $state<'color' | 'halo' | null>(null);
 	let panelEl = $state<HTMLDivElement | null>(null);
@@ -156,9 +193,18 @@
 				value={fontFamily}
 				placeholder="Search fonts"
 				onchange={(id) => {
+					// The new family may not offer the current weight/italic combo —
+					// snap to the closest one it does have.
+					const match = nearestVariant(variantsForFamily(id), fontWeight, italic);
 					// Wait for the webfont before applying, so labels never repaint
 					// in the fallback font mid-load.
-					ensureFontLoaded(id).then(() => { fontFamily = id; pushSnapshot(); });
+					ensureFontLoaded(id, match.weight, match.italic).then(() => {
+						fontFamily = id;
+						fontWeight = match.weight;
+						italic = match.italic;
+						updateLayerLabelStyle(layer.id, { fontWeight, italic });
+						pushSnapshot();
+					});
 				}}
 			/>
 		</div>
@@ -178,7 +224,19 @@
 		</div>
 	{/if}
 
-	<!-- Size + weight + italic -->
+	<!-- Weight + italic -->
+	<div class="style-row">
+		<span class="label mono-small">Style</span>
+		<div class="controls">
+			<Combobox
+				options={styleOptions}
+				value={styleValue}
+				onchange={selectStyle}
+			/>
+		</div>
+	</div>
+
+	<!-- Size -->
 	<div class="style-row">
 		<span class="label mono-small">Size</span>
 		<div class="controls">
@@ -188,24 +246,6 @@
 				bind:value={fontSize}
 				onblur={() => pushSnapshot()}
 			/>
-			<button
-				class="glyph-btn"
-				class:on={bold}
-				aria-label="Bold"
-				title="Bold"
-				onclick={() => { bold = !bold; updateLayerLabelStyle(layer.id, { fontWeight: bold ? 'bold' : 'normal' }); pushSnapshot(); }}
-			>
-				<TextB size={14} weight={bold ? 'bold' : 'regular'} />
-			</button>
-			<button
-				class="glyph-btn"
-				class:on={italic}
-				aria-label="Italic"
-				title="Italic"
-				onclick={() => { italic = !italic; updateLayerLabelStyle(layer.id, { italic }); pushSnapshot(); }}
-			>
-				<TextItalic size={14} weight={italic ? 'bold' : 'regular'} />
-			</button>
 		</div>
 	</div>
 

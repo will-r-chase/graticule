@@ -65,7 +65,7 @@ export type LabelAnchor =
 export interface LabelStyle {
 	fontFamily: string;
 	fontSize: number;
-	fontWeight: 'normal' | 'bold';
+	fontWeight: number;        // CSS weight, 100–900
 	italic: boolean;
 	letterSpacing: number;     // px
 	textTransform: LabelTextTransform;

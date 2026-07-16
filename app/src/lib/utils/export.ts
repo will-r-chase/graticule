@@ -95,7 +95,7 @@ function fmt(n: number): string {
 // output, where spacing is baked into the positions.
 function labelTextAttrs(ls: Layer['labelStyle'], scale = 1, withSpacing = true): string {
 	let s = ` font-family="${escapeXml(ls.fontFamily)}" font-size="${fmt(ls.fontSize * scale)}px"`;
-	if (ls.fontWeight === 'bold') s += ' font-weight="bold"';
+	if (ls.fontWeight !== 400) s += ` font-weight="${ls.fontWeight}"`;
 	if (ls.italic) s += ' font-style="italic"';
 	if (withSpacing && ls.letterSpacing) s += ` letter-spacing="${fmt(ls.letterSpacing * scale)}px"`;
 	return s;

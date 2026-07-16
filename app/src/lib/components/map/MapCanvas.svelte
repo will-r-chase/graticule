@@ -3151,7 +3151,7 @@
 		const ls = layer.labelStyle;
 		// Kick off the webfont load if needed (idempotent); when it arrives,
 		// fonts.version bumps and the repaint effect re-renders with the real face.
-		ensureFontLoaded(ls.fontFamily);
+		ensureFontLoaded(ls.fontFamily, ls.fontWeight, ls.italic);
 
 		// Same back-hemisphere culling as point symbols: projection(coord) bypasses
 		// d3's stream preclip in rotate mode, so check visibility explicitly.
@@ -3253,7 +3253,7 @@
 
 		const target = layers.find((l) => l.id === textSession.targetLayerId);
 		const ls = target ? target.labelStyle : defaultLabelStyle();
-		ensureFontLoaded(ls.fontFamily);
+		ensureFontLoaded(ls.fontFamily, ls.fontWeight, ls.italic);
 
 		const projCenter: [number, number] | null = interactionMode === 'rotate'
 			? [-projectionStore.rotate[0], -projectionStore.rotate[1]]

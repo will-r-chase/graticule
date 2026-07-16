@@ -81,7 +81,7 @@ export function defaultLabelStyle(): LabelStyle {
 	return {
 		fontFamily: 'Arial',
 		fontSize: 14,
-		fontWeight: 'normal',
+		fontWeight: 400,
 		italic: false,
 		letterSpacing: 0,
 		textTransform: 'none',
