@@ -19,6 +19,8 @@ export interface GlyphPlacement {
 export interface CurvedLayout {
 	placements: GlyphPlacement[]; // one per input glyph, same order
 	baseline: [number, number][]; // the smoothed path the text follows, screen px
+	anchor: [number, number]; // the text's on-path center (D12)
+	anchorAngle: number; // path tangent at the anchor, radians — offsets the slide handle
 }
 
 // Splits text into user-perceived characters (grapheme clusters) so emoji and
@@ -51,15 +53,17 @@ export function layoutGlyphsAlongPath(
 	path: [number, number][],
 	glyphs: MeasuredGlyph[],
 	letterSpacing: number,
-	fontSize: number
+	fontSize: number,
+	offset = 0.5 // text center as a fraction of arc length, reading direction (D12)
 ): CurvedLayout {
+	const empty: CurvedLayout = { placements: [], baseline: [], anchor: [0, 0], anchorAngle: 0 };
 	let pts = dedupe(path);
-	if (pts.length < 2 || glyphs.length === 0) return { placements: [], baseline: [] };
+	if (pts.length < 2 || glyphs.length === 0) return empty;
 	if (pts[pts.length - 1][0] < pts[0][0]) pts.reverse();
 
 	const step = fontSize / 2;
 	pts = dedupe(smoothPath(resamplePath(pts, step), Math.round((fontSize * 1.5) / step)));
-	if (pts.length < 2) return { placements: [], baseline: [] };
+	if (pts.length < 2) return empty;
 
 	// Cumulative arc length at each vertex.
 	const cum = [0];
@@ -90,8 +94,9 @@ export function layoutGlyphsAlongPath(
 		];
 	};
 
+	const center = clampedPathCenter(offset, total, advance);
 	const out: GlyphPlacement[] = [];
-	let s = total / 2 - advance / 2;
+	let s = center - advance / 2;
 	for (const g of glyphs) {
 		const center = s + g.width / 2;
 		// Angle from the secant across the glyph's own width (min 1px so thin
@@ -103,7 +108,54 @@ export function layoutGlyphsAlongPath(
 		out.push({ glyph: g.glyph, x: p[0], y: p[1], angle: Math.atan2(b[1] - a[1], b[0] - a[0]) });
 		s += g.width + letterSpacing;
 	}
-	return { placements: out, baseline: pts };
+	const ca = pointAt(center - 1);
+	const cb = pointAt(center + 1);
+	return {
+		placements: out,
+		baseline: pts,
+		anchor: pointAt(center),
+		anchorAngle: Math.atan2(cb[1] - ca[1], cb[0] - ca[0]),
+	};
+}
+
+// The clamped text-center distance for a path offset (D12): the text's ends stay
+// on the path, so the usable range shrinks as the text grows; text longer than
+// the whole path pins to the middle (D9 overflow splits evenly). Clamping happens
+// at render time — zoom changes text-vs-path proportions, so a stored fraction
+// can need re-clamping every frame.
+export function clampedPathCenter(offset: number, total: number, advance: number): number {
+	if (advance >= total) return total / 2;
+	return Math.min(Math.max(offset * total, advance / 2), total - advance / 2);
+}
+
+// Arc-length fraction of the polyline point nearest to a screen point — how a
+// slide-handle drag turns a cursor position into a path offset. Assumes the
+// (short) baselines this serves; a plain per-segment scan.
+export function nearestPathFraction(path: [number, number][], p: [number, number]): number {
+	let best = Infinity;
+	let bestDist = 0;
+	let walked = 0;
+	let total = 0;
+	for (let i = 1; i < path.length; i++) {
+		const ax = path[i - 1][0];
+		const ay = path[i - 1][1];
+		const dx = path[i][0] - ax;
+		const dy = path[i][1] - ay;
+		const len = Math.hypot(dx, dy);
+		if (len > 0) {
+			const t = Math.min(Math.max(((p[0] - ax) * dx + (p[1] - ay) * dy) / (len * len), 0), 1);
+			const qx = ax + dx * t;
+			const qy = ay + dy * t;
+			const d = Math.hypot(p[0] - qx, p[1] - qy);
+			if (d < best) {
+				best = d;
+				bestDist = walked + len * t;
+			}
+			walked += len;
+		}
+		total = walked;
+	}
+	return total > 0 ? bestDist / total : 0.5;
 }
 
 // Uniform arc-length resample so the box filter below has a predictable window

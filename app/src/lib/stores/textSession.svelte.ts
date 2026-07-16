@@ -22,6 +22,9 @@ export interface NewTextFeature {
 	// Text-on-path box (D10): the cubic in lon/lat. When present, rotation/wrapWidth
 	// don't apply and commit bakes a LineString instead of a Point.
 	path?: CubicBezier;
+	// Where along the path the text centers, as an arc-length fraction (D12);
+	// absent = 0.5. Only meaningful with `path`.
+	pathOffset?: number;
 }
 
 // What the text tool has selected: an existing label (by layer + feature index) or an
@@ -48,6 +51,9 @@ let pathEdits = new Map<string, Map<number, CubicBezier>>();
 // label lands (the curve's midpoint at toggle time). Mutually exclusive with a
 // pathEdit on the same feature. Commit converts the LineString to a Point.
 let straightens = new Map<string, Map<number, [number, number]>>();
+// Where along its path a curved label's text centers (D12): arc-length fraction,
+// written to the reserved `__pathOffset` property on commit.
+let pathOffsets = new Map<string, Map<number, number>>();
 let deletes = new Map<string, Set<number>>();
 let textEdits = new Map<string, Map<number, string>>();
 let rotations = new Map<string, Map<number, number>>();
@@ -99,9 +105,11 @@ export function setSelectedOnPath(on: boolean): void {
 			const cubic = defaultPathMaker?.(f.coord);
 			if (!cubic) return;
 			f.path = cubic;
+			f.pathOffset = undefined; // fresh default arc centers the text at coord
 		} else {
-			// coord already tracks the on-curve midpoint (setNewPath/moveNewText).
+			// coord already tracks the text's on-path center (pathBoxCoord).
 			f.path = undefined;
+			f.pathOffset = undefined;
 		}
 		bump();
 		return;
@@ -133,6 +141,11 @@ export function setSelectedOnPath(on: boolean): void {
 		const cubic = defaultPathMaker?.(coord);
 		if (!cubic) return;
 		moves.get(layerId)?.delete(featureIndex); // the cubic carries position now
+		// A dormant slide offset from an earlier on-path life would shove the text
+		// away from coord on the fresh default arc — recenter it (D12 no-jump).
+		if ((sessionPathOffset(layerId, featureIndex) ?? storedPathOffset(geom)) !== null) {
+			setPathOffset(layerId, featureIndex, 0.5);
+		}
 		setPathEdit(layerId, featureIndex, cubic);
 		return; // setPathEdit bumps
 	}
@@ -142,10 +155,11 @@ export function setSelectedOnPath(on: boolean): void {
 	const pending = pe?.get(featureIndex) ?? null;
 	if (pending) pe!.delete(featureIndex);
 	if (geom.type === 'Point') {
-		// Converted-then-unconverted point: keep the curve's position as a move
-		// (skip the no-op when it never left its spot).
+		// Converted-then-unconverted point: keep the text's on-path center (its
+		// slide offset included) as a move — skip the no-op when it never moved.
 		if (pending) {
-			const coord = cubicMid(pending);
+			const t = sessionPathOffset(layerId, featureIndex) ?? 0.5;
+			const coord = walkFraction(sampleCubic(pending, 32), t);
 			const orig = geom.coordinates as [number, number];
 			if (Math.hypot(coord[0] - orig[0], coord[1] - orig[1]) > 1e-9) {
 				let m = moves.get(layerId);
@@ -159,15 +173,19 @@ export function setSelectedOnPath(on: boolean): void {
 		return;
 	}
 	if (geom.type === 'LineString') {
+		// Land at the TEXT's current center: its slide offset walked along the
+		// curve (raw fraction — the render-time clamp can deviate slightly for
+		// text near the ends; accepted).
+		const t = sessionPathOffset(layerId, featureIndex) ?? storedPathOffset(geom) ?? 0.5;
 		let coord: [number, number];
 		if (pending) {
-			coord = cubicMid(pending);
+			coord = walkFraction(sampleCubic(pending, 32), t);
 		} else {
 			const line = lineCoords(layerId, featureIndex);
 			if (line.length === 0) return;
 			const delta = sessionLineDelta(layerId, featureIndex) ?? [0, 0];
-			const mid = line[Math.floor(line.length / 2)];
-			coord = [mid[0] + delta[0], mid[1] + delta[1]];
+			const p = walkFraction(line, t);
+			coord = [p[0] + delta[0], p[1] + delta[1]];
 		}
 		lineMoves.get(layerId)?.delete(featureIndex); // the straighten carries position
 		let st = straightens.get(layerId);
@@ -175,6 +193,13 @@ export function setSelectedOnPath(on: boolean): void {
 		st.set(featureIndex, coord);
 		bump();
 	}
+}
+
+// A feature's stored `__pathOffset` (D12), or null.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function storedPathOffset(geom: any): number | null {
+	const raw = geom?.properties?.__pathOffset;
+	return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
 }
 
 // The lon/lat vertices of a LineString label feature, decoded via topojson-client
@@ -243,6 +268,23 @@ export function sessionPathEdit(layerId: string, featureIndex: number): CubicBez
 export function sessionStraighten(layerId: string, featureIndex: number): [number, number] | null {
 	return straightens.get(layerId)?.get(featureIndex) ?? null;
 }
+export function sessionPathOffset(layerId: string, featureIndex: number): number | null {
+	return pathOffsets.get(layerId)?.get(featureIndex) ?? null;
+}
+export function setPathOffset(layerId: string, featureIndex: number, t: number): void {
+	if (!Number.isFinite(t)) return;
+	let m = pathOffsets.get(layerId);
+	if (!m) { m = new Map(); pathOffsets.set(layerId, m); }
+	m.set(featureIndex, Math.min(Math.max(t, 0), 1));
+	bump();
+}
+export function setNewPathOffset(index: number, t: number): void {
+	const f = newFeatures[index];
+	if (!f || !f.path || !Number.isFinite(t)) return;
+	f.pathOffset = Math.min(Math.max(t, 0), 1);
+	f.coord = pathBoxCoord(f);
+	bump();
+}
 // Captures/updates a path resculpt. A path edit is absolute (whole cubic in lon/lat),
 // so it also clears any pending whole-line translate for the feature — the cubic
 // carries its own position.
@@ -273,6 +315,7 @@ function bump(): void {
 	for (const m of lineMoves.values()) edits += m.size;
 	for (const m of pathEdits.values()) edits += m.size;
 	for (const m of straightens.values()) edits += m.size;
+	for (const m of pathOffsets.values()) edits += m.size;
 	for (const s of deletes.values()) edits += s.size;
 	for (const t of textEdits.values()) edits += t.size;
 	for (const r of rotations.values()) edits += r.size;
@@ -293,14 +336,35 @@ export function setNewPath(index: number, cubic: CubicBezier): void {
 	const f = newFeatures[index];
 	if (!f || !f.path) return;
 	f.path = cubic;
-	f.coord = cubicMid(cubic);
+	f.coord = pathBoxCoord(f);
 	bump();
 }
 
-// The on-curve midpoint (t = 0.5) — where the text visually centers, and where a
-// label lands when toggled off its path (position survives the toggle, D10).
-function cubicMid(c: CubicBezier): [number, number] {
-	return sampleCubic(c, 2)[1];
+// A path box's coord: the text's on-path center (its D12 offset walked along the
+// sampled cubic) — where the editor opens and where the label lands when toggled
+// off its path (position survives the toggle, D10).
+function pathBoxCoord(f: NewTextFeature): [number, number] {
+	return walkFraction(sampleCubic(f.path!, 32), f.pathOffset ?? 0.5);
+}
+
+// The point at arc-length fraction t of a polyline (planar walk over lon/lat —
+// fine for anchor placement).
+function walkFraction(pts: [number, number][], t: number): [number, number] {
+	const cum = [0];
+	for (let i = 1; i < pts.length; i++) {
+		cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+	}
+	const total = cum[cum.length - 1];
+	if (total === 0) return [pts[0][0], pts[0][1]];
+	const d = Math.min(Math.max(t, 0), 1) * total;
+	let i = 0;
+	while (i < pts.length - 2 && cum[i + 1] < d) i++;
+	const seg = cum[i + 1] - cum[i];
+	const u = seg > 0 ? (d - cum[i]) / seg : 0;
+	return [
+		pts[i][0] + (pts[i + 1][0] - pts[i][0]) * u,
+		pts[i][1] + (pts[i + 1][1] - pts[i][1]) * u,
+	];
 }
 
 // Live text updates from the inline editor.
@@ -485,6 +549,7 @@ export function deleteSelected(): void {
 		lineMoves.get(sel.layerId)?.delete(sel.featureIndex);
 		pathEdits.get(sel.layerId)?.delete(sel.featureIndex);
 		straightens.get(sel.layerId)?.delete(sel.featureIndex);
+		pathOffsets.get(sel.layerId)?.delete(sel.featureIndex);
 		textEdits.get(sel.layerId)?.delete(sel.featureIndex);
 		rotations.get(sel.layerId)?.delete(sel.featureIndex);
 		wrapWidths.get(sel.layerId)?.delete(sel.featureIndex);
@@ -502,12 +567,13 @@ export function discardText(): void {
 	textSession.editingNew = null;
 	textSession.editingExisting = null;
 	textSession.selected = null;
-	if (newFeatures.length === 0 && moves.size === 0 && lineMoves.size === 0 && pathEdits.size === 0 && straightens.size === 0 && deletes.size === 0 && textEdits.size === 0 && rotations.size === 0 && wrapWidths.size === 0) return;
+	if (newFeatures.length === 0 && moves.size === 0 && lineMoves.size === 0 && pathEdits.size === 0 && straightens.size === 0 && pathOffsets.size === 0 && deletes.size === 0 && textEdits.size === 0 && rotations.size === 0 && wrapWidths.size === 0) return;
 	newFeatures = [];
 	moves = new Map();
 	lineMoves = new Map();
 	pathEdits = new Map();
 	straightens = new Map();
+	pathOffsets = new Map();
 	deletes = new Map();
 	textEdits = new Map();
 	rotations = new Map();
@@ -524,13 +590,14 @@ export function commitText(): void {
 	finishEditingNew();
 	finishEditingExisting();
 	textSession.selected = null;
-	if (newFeatures.length === 0 && moves.size === 0 && lineMoves.size === 0 && pathEdits.size === 0 && straightens.size === 0 && deletes.size === 0 && textEdits.size === 0 && rotations.size === 0 && wrapWidths.size === 0) return;
+	if (newFeatures.length === 0 && moves.size === 0 && lineMoves.size === 0 && pathEdits.size === 0 && straightens.size === 0 && pathOffsets.size === 0 && deletes.size === 0 && textEdits.size === 0 && rotations.size === 0 && wrapWidths.size === 0) return;
 
 	const feats = newFeatures;
 	const mv = moves;
 	const lmv = lineMoves;
 	const pe = pathEdits;
 	const st = straightens;
+	const po = pathOffsets;
 	const del = deletes;
 	const txt = textEdits;
 	const rot = rotations;
@@ -540,13 +607,14 @@ export function commitText(): void {
 	lineMoves = new Map();
 	pathEdits = new Map();
 	straightens = new Map();
+	pathOffsets = new Map();
 	deletes = new Map();
 	textEdits = new Map();
 	rotations = new Map();
 	wrapWidths = new Map();
 	bump();
 
-	const editedLayerIds = [...new Set([...mv.keys(), ...lmv.keys(), ...pe.keys(), ...st.keys(), ...del.keys(), ...txt.keys(), ...rot.keys(), ...wrap.keys()])]
+	const editedLayerIds = [...new Set([...mv.keys(), ...lmv.keys(), ...pe.keys(), ...st.keys(), ...po.keys(), ...del.keys(), ...txt.keys(), ...rot.keys(), ...wrap.keys()])]
 		.filter((id) => layers.some((l) => l.id === id)); // skip layers deleted mid-session
 	let pending = editedLayerIds.length + (feats.length > 0 ? 1 : 0);
 	if (pending === 0) return;
@@ -558,6 +626,7 @@ export function commitText(): void {
 			lineMoves: lmv.get(layerId),
 			pathReplaces: bakePathEdits(pe.get(layerId)),
 			straightens: st.get(layerId),
+			pathOffsets: po.get(layerId),
 			deletes: del.get(layerId),
 			texts: txt.get(layerId),
 			rotations: rot.get(layerId),
@@ -571,7 +640,7 @@ export function commitText(): void {
 		if (target !== null && !layers.find((l) => l.id === target)) target = null;
 		// Path boxes bake their cubic into a line here; point boxes pass through.
 		const baked = feats.map((f) =>
-			f.path ? { coord: f.coord, text: f.text, line: bakeCubic(f.path) } : f
+			f.path ? { coord: f.coord, text: f.text, line: bakeCubic(f.path), pathOffset: f.pathOffset } : f
 		);
 		const id = commitTextFeatures(target, baked, done);
 		textSession.targetLayerId = id;

@@ -732,7 +732,7 @@ export function commitTextFeatures(
 	targetLayerId: string | null,
 	// `line` present = a baked text-on-path box (D10): lands as a LineString; coord
 	// and the point-only fields (rotation/wrapWidth) are ignored for it.
-	features: readonly { coord: [number, number]; text: string; rotation?: number; wrapWidth?: number; line?: [number, number][] }[],
+	features: readonly { coord: [number, number]; text: string; rotation?: number; wrapWidth?: number; line?: [number, number][]; pathOffset?: number }[],
 	onComplete?: () => void,
 ): string {
 	const layerId = targetLayerId ?? addEmptyTextLayer();
@@ -766,6 +766,7 @@ export function commitTextFeatures(
 	for (const f of features) {
 		const properties: Record<string, unknown> = { ...nullProps(), text: f.text };
 		if (f.line) {
+			if (f.pathOffset !== undefined && f.pathOffset !== 0.5) properties.__pathOffset = f.pathOffset;
 			geometries.push({
 				type: 'LineString',
 				arcs: [(topo.arcs as [number, number][][]).push(f.line.map((c) => [c[0], c[1]] as [number, number])) - 1],
@@ -804,6 +805,8 @@ export interface LabelEdits {
 	pathReplaces?: Map<number, [number, number][]>;
 	// Curved labels toggled off their path: the LineString converts to a Point here.
 	straightens?: Map<number, [number, number]>;
+	// Where along its path a curved label's text centers (arc-length fraction, D12).
+	pathOffsets?: Map<number, number>;
 	deletes?: Set<number>;
 	texts?: Map<number, string>;
 	rotations?: Map<number, number>;
@@ -893,6 +896,9 @@ export function applyLabelEdits(layerId: string, edits: LabelEdits, onComplete?:
 	}
 	if (edits.rotations) {
 		for (const [i, deg] of edits.rotations) setProp(i, '__rotation', deg);
+	}
+	if (edits.pathOffsets) {
+		for (const [i, t] of edits.pathOffsets) setProp(i, '__pathOffset', t);
 	}
 	if (edits.wrapWidths) {
 		for (const [i, px] of edits.wrapWidths) setProp(i, '__wrapWidth', px);

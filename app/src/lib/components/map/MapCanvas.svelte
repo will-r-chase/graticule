@@ -8,9 +8,9 @@
 	import type { PathCommand } from '$lib/workers/types';
 	import type { Layer, LayerProcessing } from '$lib/types';
 	import { applyTextTransform, LABEL_ANCHOR_DIR, labelFontString, wrapLabelLines } from '$lib/utils/labels';
-	import { layoutGlyphsAlongPath, splitGraphemes, sampleCubic, fitCubicToPolyline, type GlyphPlacement, type CubicBezier } from '$lib/utils/curvedText';
+	import { layoutGlyphsAlongPath, splitGraphemes, sampleCubic, fitCubicToPolyline, nearestPathFraction, type GlyphPlacement, type CubicBezier } from '$lib/utils/curvedText';
 	import { fonts, ensureFontLoaded } from '$lib/stores/fonts.svelte';
-	import { textSession, getNewTextFeatures, placeText, setNewPath, setDefaultPathMaker, updateNewText, finishEditingNew, commitText, resetTextTarget, setTextTarget, editorJustClosed, sessionMovedCoord, sessionLineDelta, sessionPathEdit, sessionStraighten, setPathEdit, setPathBaker, sessionDeleted, sessionTextOverride, sessionRotationOverride, sessionWrapOverride, moveLabel, moveLine, moveNewText, deleteSelected, beginEditingExisting, finishEditingExisting, currentEditingText, setLabelText, setSelectedWrapWidth, type TextSelection } from '$lib/stores/textSession.svelte';
+	import { textSession, getNewTextFeatures, placeText, setNewPath, setDefaultPathMaker, updateNewText, finishEditingNew, commitText, resetTextTarget, setTextTarget, editorJustClosed, sessionMovedCoord, sessionLineDelta, sessionPathEdit, sessionStraighten, setPathEdit, setPathBaker, sessionPathOffset, setPathOffset, setNewPathOffset, sessionDeleted, sessionTextOverride, sessionRotationOverride, sessionWrapOverride, moveLabel, moveLine, moveNewText, deleteSelected, beginEditingExisting, finishEditingExisting, currentEditingText, setLabelText, setSelectedWrapWidth, type TextSelection } from '$lib/stores/textSession.svelte';
 	import { layers, workingTopologyData, layerDrag, deleteSelectedFeatures, extractSelectedFeatures, mergeSelectedFeatures, defaultLabelStyle } from '$lib/stores/layers.svelte';
 	import { toolState } from '$lib/stores/tool.svelte';
 	import { selection, selectFeature, clearSelection } from '$lib/stores/selection.svelte';
@@ -409,6 +409,13 @@
 		moved: boolean;
 	} | null = null;
 	let overPathHandle = $state(false);
+	// Which curve handle the cursor rests on ($state: the paint effect reads it, so
+	// hovering restyles the handle). Grabbed state comes from the drag vars.
+	type CurveHandle = keyof CubicBezier | 'slide';
+	let hoveredCurveHandle: CurveHandle | null = $state(null);
+	// Sliding a curved label's text along its path (D12): drag state for the
+	// diamond handle; the cursor projects onto the baseline each move.
+	let slideDrag: { sel: TextSelection; startCursor: { x: number; y: number }; moved: boolean } | null = null;
 	let overHandle = $state(false);
 	// Currently hovered point + the selected point set (for marker styling). Keyed "fi:pi".
 	let hoveredPoint = $state<string | null>(null);
@@ -1396,6 +1403,12 @@
 					}
 				}
 			}
+			// Slide handle (D12): drag the diamond to move the text along its path.
+			if (textSession.selected && overSlideHandle(cx, cy)) {
+				slideDrag = { sel: textSession.selected, startCursor: { x: e.clientX, y: e.clientY }, moved: false };
+				(e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+				return;
+			}
 			if (textSession.selected && overWrapHandle(cx, cy)) {
 				const b = hitBoxFor(textSession.selected);
 				if (b) {
@@ -1577,6 +1590,22 @@
 			return;
 		}
 
+		// Sliding text along its path (D12): project the cursor onto the label's
+		// baseline and store the arc-length fraction; the render-time clamp keeps
+		// the text's ends on the path.
+		if (slideDrag && canvasEl) {
+			if (!slideDrag.moved && Math.hypot(e.clientX - slideDrag.startCursor.x, e.clientY - slideDrag.startCursor.y) < 3) return;
+			slideDrag.moved = true;
+			const baseline = hitBoxFor(slideDrag.sel)?.baseline;
+			if (baseline && baseline.length >= 2) {
+				const rect = canvasEl.getBoundingClientRect();
+				const t = nearestPathFraction(baseline, [e.clientX - rect.left, e.clientY - rect.top]);
+				if (slideDrag.sel.kind === 'existing') setPathOffset(slideDrag.sel.layerId, slideDrag.sel.featureIndex, t);
+				else setNewPathOffset(slideDrag.sel.index, t);
+			}
+			return;
+		}
+
 		// Dragging a bezier handle on the selected curved label (D10). Deltas keep
 		// the knob from jumping to the cursor center; anchors carry their tangent
 		// arm along, pen-tool style. The first real move writes the base cubic into
@@ -1648,15 +1677,19 @@
 			const rect = canvasEl.getBoundingClientRect();
 			const cx = e.clientX - rect.left;
 			const cy = e.clientY - rect.top;
-			overPathHandle = hitPathHandle(cx, cy) !== null;
+			// Same precedence as pointerdown: bezier handles, then the slide diamond.
+			const nextHover: CurveHandle | null = hitPathHandle(cx, cy) ?? (overSlideHandle(cx, cy) ? 'slide' : null);
+			if (nextHover !== hoveredCurveHandle) hoveredCurveHandle = nextHover;
+			overPathHandle = nextHover !== null;
 			overHandle = !overPathHandle && overWrapHandle(cx, cy);
 			const hover = overHandle || overPathHandle ? null : hitTestLabel(cx, cy);
 			if (!sameSelection(hover, hoveredLabel)) hoveredLabel = hover;
 			overLabel = hover !== null;
-		} else if (overLabel || overHandle || overPathHandle || hoveredLabel) {
+		} else if (overLabel || overHandle || overPathHandle || hoveredLabel || hoveredCurveHandle) {
 			overLabel = false;
 			overHandle = false;
 			overPathHandle = false;
+			hoveredCurveHandle = null;
 			hoveredLabel = null;
 		}
 
@@ -1817,6 +1850,13 @@
 	}
 
 	function handlePointerUp() {
+		// End of a slide-handle drag — swallow the trailing click if it moved.
+		if (slideDrag) {
+			if (slideDrag.moved) suppressNextClick = true;
+			slideDrag = null;
+			return;
+		}
+
 		// End of a bezier-handle drag — swallow the trailing click if it sculpted
 		// (a press without movement never touched the session).
 		if (pathHandleDrag) {
@@ -2769,6 +2809,10 @@
 		// target; its presence is also how downstream code recognizes a curved label
 		// (outline = baseline stroke, no wrap handle, no move drag until 4c-drag).
 		baseline?: [number, number][];
+		// Curved labels only: where the slide handle sits (D12) — offset below the
+		// text, perpendicular to the path at the text's center, so it never covers
+		// the glyphs and grabbing it is unambiguous vs. a body drag.
+		slideHandle?: [number, number];
 	}
 	let labelHitBoxes: LabelHitBox[] = [];
 
@@ -2857,8 +2901,15 @@
 	}
 
 	// Bezier handle furniture for the selected curved label: a tangent arm from
-	// each anchor (square) to its knob (circle). Screen-space CSS px.
-	function drawCubicHandles(ctx: CanvasRenderingContext2D, c: CubicBezier, accent: string): void {
+	// each anchor (circle, on the line's endpoint) to its knob (diamond). Screen-
+	// space CSS px. Hovered handles invert to accent fill; grabbed ones also grow.
+	function drawCubicHandles(
+		ctx: CanvasRenderingContext2D,
+		c: CubicBezier,
+		accent: string,
+		hovered: CurveHandle | null,
+		grabbed: CurveHandle | null,
+	): void {
 		ctx.strokeStyle = accent;
 		ctx.lineWidth = 1;
 		for (const [a, h] of [[c.p0, c.p1], [c.p3, c.p2]] as const) {
@@ -2867,17 +2918,42 @@
 			ctx.lineTo(h[0], h[1]);
 			ctx.stroke();
 		}
-		ctx.fillStyle = '#ffffff';
-		for (const a of [c.p0, c.p3]) {
-			ctx.fillRect(a[0] - 3.5, a[1] - 3.5, 7, 7);
-			ctx.strokeRect(a[0] - 3.5, a[1] - 3.5, 7, 7);
-		}
-		for (const h of [c.p1, c.p2]) {
+		const setPaint = (k: keyof CubicBezier): number => {
+			const active = grabbed === k || (grabbed === null && hovered === k);
+			ctx.fillStyle = active ? accent : '#ffffff';
+			ctx.strokeStyle = active ? '#ffffff' : accent;
+			return grabbed === k ? 5 : active ? 4.5 : 3.5; // half-size / radius
+		};
+		for (const k of ['p0', 'p3'] as const) {
+			const r = setPaint(k);
 			ctx.beginPath();
-			ctx.arc(h[0], h[1], 3.5, 0, Math.PI * 2);
+			ctx.arc(c[k][0], c[k][1], r, 0, Math.PI * 2);
 			ctx.fill();
 			ctx.stroke();
 		}
+		for (const k of ['p1', 'p2'] as const) {
+			// Diamonds get a bit more radius than the circles — equal-radius diamonds
+			// read smaller (half the area).
+			const r = setPaint(k) + 1;
+			ctx.beginPath();
+			ctx.moveTo(c[k][0], c[k][1] - r);
+			ctx.lineTo(c[k][0] + r, c[k][1]);
+			ctx.lineTo(c[k][0], c[k][1] + r);
+			ctx.lineTo(c[k][0] - r, c[k][1]);
+			ctx.closePath();
+			ctx.fill();
+			ctx.stroke();
+		}
+	}
+
+	// Whether the cursor sits on the selected curved label's slide handle (the
+	// diamond hanging below the text's center, D12).
+	function overSlideHandle(cx: number, cy: number): boolean {
+		const sel = textSession.selected;
+		if (!sel) return false;
+		const b = hitBoxFor(sel);
+		if (!b?.slideHandle) return false;
+		return Math.hypot(b.slideHandle[0] - cx, b.slideHandle[1] - cy) <= 8;
 	}
 
 	// Which bezier handle of the selected curved label sits under the cursor.
@@ -2979,6 +3055,7 @@
 		layerId: string | null, // null = uncommitted path box (hit boxes key on index)
 		fi: number,
 		screenPath?: [number, number][] | null,
+		pathOffset = 0.5,
 	): void {
 		if (!projection) return;
 		const path: [number, number][] = screenPath ?? [];
@@ -2998,7 +3075,15 @@
 			glyph,
 			width: ctx.measureText(glyph).width,
 		}));
-		const { placements, baseline } = layoutGlyphsAlongPath(path, glyphs, ls.letterSpacing, ls.fontSize);
+		const { placements, baseline, anchor, anchorAngle } = layoutGlyphsAlongPath(path, glyphs, ls.letterSpacing, ls.fontSize, pathOffset);
+
+		// The slide handle hangs below the text: along the path normal at the text's
+		// center, flipped to the screen-down side, clear of glyphs and halo.
+		const handleGap = ls.fontSize / 2 + ls.haloWidth + 8;
+		let nx = -Math.sin(anchorAngle);
+		let ny = Math.cos(anchorAngle);
+		if (ny < 0) { nx = -nx; ny = -ny; }
+		const slideHandle: [number, number] = [anchor[0] + nx * handleGap, anchor[1] + ny * handleGap];
 
 		// One hit box per glyph (all carrying the shared baseline), so clicking any
 		// letter — or the gap of a space — targets the label.
@@ -3011,7 +3096,7 @@
 				x0: p.x - half - pad, y0: p.y - ls.fontSize / 2 - pad,
 				x1: p.x + half + pad, y1: p.y + ls.fontSize / 2 + pad,
 				ax: p.x, ay: p.y, rot: (p.angle * 180) / Math.PI,
-				baseline,
+				baseline, slideHandle,
 			});
 		}
 
@@ -3115,9 +3200,11 @@
 					if (delta) coords = coords.map(([x, y]) => [x + delta[0], y + delta[1]] as [number, number]);
 					if (projCenter && d3.geoDistance(coords[Math.floor(coords.length / 2)], projCenter) >= Math.PI / 2) continue;
 				}
+				const props = f.properties as Record<string, unknown> | undefined;
 				paintCurvedLabel(
 					ctx, ls, applyTextTransform(String(raw), ls.textTransform), coords, layer.id, fi,
 					screenCubic ? sampleCubic(screenCubic, 64) : null,
+					sessionPathOffset(layer.id, fi) ?? numberProp(props?.__pathOffset) ?? 0.5,
 				);
 				continue;
 			}
@@ -3183,7 +3270,7 @@
 			if (f.path) {
 				const sc = cubicToScreen(f.path);
 				if (sc) {
-					paintCurvedLabel(ctx, ls, applyTextTransform(f.text, ls.textTransform), [], null, i, sampleCubic(sc, 64));
+					paintCurvedLabel(ctx, ls, applyTextTransform(f.text, ls.textTransform), [], null, i, sampleCubic(sc, 64), f.pathOffset ?? 0.5);
 				}
 				continue;
 			}
@@ -3649,7 +3736,29 @@
 						? sessionPathEdit(sel.layerId, sel.featureIndex)
 						: getNewTextFeatures()[sel.index]?.path ?? null;
 					selectedCubicScreen = (geoCubic ? cubicToScreen(geoCubic) : null) ?? fitCubicToPolyline(box.baseline);
-					if (selectedCubicScreen) drawCubicHandles(ctx, selectedCubicScreen, accent);
+					if (selectedCubicScreen) {
+						drawCubicHandles(ctx, selectedCubicScreen, accent, hoveredCurveHandle, pathHandleDrag?.which ?? (slideDrag ? 'slide' : null));
+					}
+					// Slide handle (D12): an accent diamond hanging below the text.
+					if (box.slideHandle) {
+						const grabbedSlide = slideDrag !== null;
+						const hoverSlide = !pathHandleDrag && !grabbedSlide && hoveredCurveHandle === 'slide';
+						const r = grabbedSlide ? 7.5 : hoverSlide ? 6.5 : 5;
+						const [dx, dy] = box.slideHandle;
+						ctx.beginPath();
+						ctx.moveTo(dx, dy - r);
+						ctx.lineTo(dx + r, dy);
+						ctx.lineTo(dx, dy + r);
+						ctx.lineTo(dx - r, dy);
+						ctx.closePath();
+						ctx.fillStyle = accent;
+						ctx.fill();
+						ctx.strokeStyle = '#ffffff';
+						ctx.lineWidth = grabbedSlide || hoverSlide ? 1.5 : 1;
+						ctx.stroke();
+						ctx.strokeStyle = accent;
+						ctx.lineWidth = 1;
+					}
 				} else {
 					ctx.translate(box.ax, box.ay);
 					if (box.rot) ctx.rotate((box.rot * Math.PI) / 180);

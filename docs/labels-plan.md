@@ -323,6 +323,31 @@ their anchor geometry as symbol dots / stroked lines (fixed by this step).
 - Fonts referenced by family name in v1 (D8); the Google Fonts `@import` embed for
   SVG portability is a follow-up.
 
+### D12: Position along the path (decided 2026-07-13)
+
+Curved labels can slide along their line instead of always centering at the arc-length
+midpoint (D9's default becomes the starting value).
+
+- **Stored as a fraction** t ∈ [0,1] of arc length in a reserved per-feature property
+  `__pathOffset` (default 0.5) — anchored to the geography, stable across zoom and
+  resculpts. Measured in the READING direction (post-auto-flip).
+- **Clamped so the text stays on the path**: the text's ends can't slide past the
+  line's ends (range shrinks for long text); text longer than the whole path stays
+  pinned at center per D9. The raw fraction is stored unclamped-at-[0,1] and re-clamped
+  at every render, so zoom changes (which alter text-length-vs-path-length) never push
+  text off the line.
+- **Handle**: an accent diamond hanging BELOW the text (offset along the path normal
+  at the text's center, screen-down side, past glyphs + halo) so it never covers the
+  text and grabbing it is unambiguous vs. body-drag-to-translate; dragging projects
+  the cursor onto the curve. Circles = path endpoints, diamonds on arms = tangent
+  knobs, accent diamond below the text = slide (knobs are white-filled at rest, so
+  the two diamond kinds stay distinguishable). All five curve handles have hover
+  (accent fill, white ring) and grabbed (same, larger) states. Session map + one
+  commit, like every edit.
+- Toggling a slid label off its path flattens it at the text's current center
+  (position-independence, D10). Exports honor the offset in all three modes
+  (textPath via startOffset).
+
 ### Step 3 details (decided 2026-07-07)
 
 - **Session model**: `textSession` mirrors drawSession (non-reactive data + `version`

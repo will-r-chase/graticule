@@ -9,7 +9,7 @@ import { projection as projectionStore } from '$lib/stores/projection.svelte';
 import { canvasStyles } from '$lib/stores/canvasStyles.svelte';
 import { mapState } from '$lib/stores/mapState.svelte';
 import { applyTextTransform, LABEL_ANCHOR_DIR, labelFontString, wrapLabelLines } from '$lib/utils/labels';
-import { layoutGlyphsAlongPath, splitGraphemes } from '$lib/utils/curvedText';
+import { layoutGlyphsAlongPath, splitGraphemes, clampedPathCenter } from '$lib/utils/curvedText';
 
 const allProjections = { ...d3, ...d3gp } as Record<string, unknown>;
 
@@ -113,6 +113,7 @@ function curvedLabelSVG(
 	options: SVGOptions,
 	pathId: string,
 	baselineShift: number,
+	pathOffset: number,
 ): string[] {
 	if (!ctx) return [];
 	const { tx, ty, mapScale } = mapState;
@@ -134,20 +135,18 @@ function curvedLabelSVG(
 	(ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = '0px';
 	const single = text.split('\n').join(' ');
 	const glyphs = splitGraphemes(single).map((glyph) => ({ glyph, width: ctx.measureText(glyph).width }));
-	const { placements, baseline } = layoutGlyphsAlongPath(path, glyphs, ls.letterSpacing, ls.fontSize);
+	const { placements, baseline, anchor } = layoutGlyphsAlongPath(path, glyphs, ls.letterSpacing, ls.fontSize, pathOffset);
 	if (placements.length === 0) return [];
 
 	const out: string[] = [];
 	out.push(`    <g opacity="${ls.colorOpacity}">`);
 
 	if (options.curvedText === 'flat') {
-		// One straight, fully editable text run: at the baseline's midpoint, rotated
-		// to the curve's overall direction (start→end secant; the baseline is
-		// already flipped to read left-to-right, so the angle stays upright).
-		const mid = toLocal(baseline[Math.floor(baseline.length / 2)]);
-		const a = baseline[0];
-		const b = baseline[baseline.length - 1];
-		const deg = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
+		// One straight, fully editable text run: at the text's on-path center
+		// (honors the D12 slide offset), rotated to the middle glyph's direction
+		// (the baseline is already flipped to read left-to-right, so it's upright).
+		const mid = toLocal(anchor);
+		const deg = (placements[Math.floor(placements.length / 2)].angle * 180) / Math.PI;
 		const transform =
 			`translate(${fmt(mid[0])},${fmt(mid[1])})` +
 			(cs !== 1 ? ` scale(${fmt(cs)})` : '') +
@@ -162,10 +161,19 @@ function curvedLabelSVG(
 		const d = 'M' + baseline.map((p) => toLocal(p).map(fmt).join(',')).join('L');
 		out.push(`      <path id="${pathId}" d="${d}" fill="none" stroke="none" />`);
 		const attrs = labelTextAttrs(ls, cs);
+		// startOffset carries the D12 slide position, clamped the way the canvas
+		// clamps (text ends stay on the path).
+		let total = 0;
+		for (let i = 1; i < baseline.length; i++) {
+			total += Math.hypot(baseline[i][0] - baseline[i - 1][0], baseline[i][1] - baseline[i - 1][1]);
+		}
+		let advance = -ls.letterSpacing;
+		for (const g of glyphs) advance += g.width + ls.letterSpacing;
+		const centerPct = total > 0 ? (clampedPathCenter(pathOffset, total, advance) / total) * 100 : 50;
 		// dy inside a textPath offsets perpendicular to the path — same job as the
 		// canvas's middle baseline.
 		const content =
-			`<textPath href="#${pathId}" xlink:href="#${pathId}" startOffset="50%" text-anchor="middle">` +
+			`<textPath href="#${pathId}" xlink:href="#${pathId}" startOffset="${fmt(centerPct)}%" text-anchor="middle">` +
 			`<tspan dy="${fmt(baselineShift * cs)}">${escapeXml(single)}</tspan></textPath>`;
 		if (ls.haloWidth > 0) {
 			out.push(`      <text${attrs} fill="none" stroke="${ls.haloColor}" stroke-width="${fmt(ls.haloWidth * 2 * cs)}" stroke-linejoin="round">${content}</text>`);
@@ -236,6 +244,7 @@ function buildLabelLayerSVG(
 		const raw = props?.[attr];
 		if (raw === null || raw === undefined || raw === '') continue;
 		if (geom?.type === 'LineString') {
+			const rawOffset = props?.__pathOffset;
 			out.push(...curvedLabelSVG(
 				ls, ctx,
 				applyTextTransform(String(raw), ls.textTransform),
@@ -243,6 +252,7 @@ function buildLabelLayerSVG(
 				proj, options,
 				`label_${sanitizeId(layer.id)}_${fi}`,
 				baselineShift,
+				typeof rawOffset === 'number' && Number.isFinite(rawOffset) ? rawOffset : 0.5,
 			));
 			// curvedLabelSVG measures with zero spacing; put ours back for wraps.
 			if (ctx) (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${ls.letterSpacing}px`;
