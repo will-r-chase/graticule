@@ -90,6 +90,30 @@ function fmt(n: number): string {
 	return String(Math.round(n * 1000) / 1000);
 }
 
+// Which half of a label the emitters produce, mirroring the canvas painter:
+// 'both' interleaves halo+fill per feature (no blur); with blur the layer runs
+// a 'halo' pass wrapped in one blur-filtered group — children composite before
+// the filter applies, so overlapping halos merge instead of stacking their soft
+// edges — then a 'fill' pass on top.
+type LabelPass = 'both' | 'halo' | 'fill';
+
+// left/center/right → how far along a width an alignment edge sits.
+const ALIGN_FACTOR = { left: 0, center: 0.5, right: 1 } as const;
+
+// Per-line x offsets for a multiline label, mirroring the canvas's
+// lineAlignOffsets: the anchor places the block, textAlign aligns narrower
+// lines within it. The ctx must carry the layer's font + letter spacing.
+function lineAlignOffsets(ctx: CanvasRenderingContext2D | null, ls: Layer['labelStyle'], lines: string[]): number[] {
+	if (!ctx || lines.length < 2) return lines.map(() => 0);
+	const dir = LABEL_ANCHOR_DIR[ls.anchor];
+	const anchorEdge = dir.x === -1 ? 'right' : dir.x === 1 ? 'left' : 'center';
+	const shift = ALIGN_FACTOR[ls.textAlign] - ALIGN_FACTOR[anchorEdge];
+	if (shift === 0) return lines.map(() => 0);
+	const widths = lines.map((line) => ctx.measureText(line).width);
+	const blockW = Math.max(...widths);
+	return widths.map((w) => shift * (blockW - w));
+}
+
 // scale compensates for a wrapping zoom transform when the element can't carry
 // its own counter-scale (the textPath variant); withSpacing is off for per-glyph
 // output, where spacing is baked into the positions.
@@ -114,6 +138,7 @@ function curvedLabelSVG(
 	pathId: string,
 	baselineShift: number,
 	pathOffset: number,
+	pass: LabelPass,
 ): string[] {
 	if (!ctx) return [];
 	const { tx, ty, mapScale } = mapState;
@@ -139,7 +164,9 @@ function curvedLabelSVG(
 	if (placements.length === 0) return [];
 
 	const out: string[] = [];
-	out.push(`    <g opacity="${ls.colorOpacity}">`);
+	// Split passes sit inside the layer-level opacity group; 'both' carries its
+	// own per-feature opacity, as always.
+	if (pass === 'both') out.push(`    <g opacity="${ls.colorOpacity}">`);
 
 	if (options.curvedText === 'flat') {
 		// One straight, fully editable text run: at the text's on-path center
@@ -153,13 +180,15 @@ function curvedLabelSVG(
 			(deg ? ` rotate(${fmt(deg)})` : '');
 		const attrs = ` transform="${transform}" text-anchor="middle"${labelTextAttrs(ls)}`;
 		const content = `<tspan x="0" y="${fmt(baselineShift)}">${escapeXml(single)}</tspan>`;
-		if (ls.haloWidth > 0) {
+		if (pass !== 'fill' && ls.haloWidth > 0) {
 			out.push(`      <text${attrs} fill="none" stroke="${ls.haloColor}" stroke-width="${fmt(ls.haloWidth * 2)}" stroke-linejoin="round">${content}</text>`);
 		}
-		out.push(`      <text${attrs} fill="${ls.color}">${content}</text>`);
+		if (pass !== 'halo') out.push(`      <text${attrs} fill="${ls.color}">${content}</text>`);
 	} else if (options.curvedText === 'textpath') {
 		const d = 'M' + baseline.map((p) => toLocal(p).map(fmt).join(',')).join('L');
-		out.push(`      <path id="${pathId}" d="${d}" fill="none" stroke="none" />`);
+		// The path def is shared by both passes' textPaths — emit it once (the
+		// halo pass runs first when split).
+		if (pass !== 'fill') out.push(`      <path id="${pathId}" d="${d}" fill="none" stroke="none" />`);
 		const attrs = labelTextAttrs(ls, cs);
 		// startOffset carries the D12 slide position, clamped the way the canvas
 		// clamps (text ends stay on the path).
@@ -175,10 +204,10 @@ function curvedLabelSVG(
 		const content =
 			`<textPath href="#${pathId}" xlink:href="#${pathId}" startOffset="${fmt(centerPct)}%" text-anchor="middle">` +
 			`<tspan dy="${fmt(baselineShift * cs)}">${escapeXml(single)}</tspan></textPath>`;
-		if (ls.haloWidth > 0) {
+		if (pass !== 'fill' && ls.haloWidth > 0) {
 			out.push(`      <text${attrs} fill="none" stroke="${ls.haloColor}" stroke-width="${fmt(ls.haloWidth * 2 * cs)}" stroke-linejoin="round">${content}</text>`);
 		}
-		out.push(`      <text${attrs} fill="${ls.color}">${content}</text>`);
+		if (pass !== 'halo') out.push(`      <text${attrs} fill="${ls.color}">${content}</text>`);
 	} else {
 		const attrs = labelTextAttrs(ls, 1, false);
 		const glyphEl = (p: { glyph: string; x: number; y: number; angle: number }, paint: string): string => {
@@ -192,15 +221,17 @@ function curvedLabelSVG(
 		};
 		const visible = placements.filter((p) => p.glyph.trim() !== '');
 		// All halos under all fills, mirroring the canvas's two passes.
-		if (ls.haloWidth > 0) {
+		if (pass !== 'fill' && ls.haloWidth > 0) {
 			for (const p of visible) {
 				out.push(glyphEl(p, `fill="none" stroke="${ls.haloColor}" stroke-width="${fmt(ls.haloWidth * 2)}" stroke-linejoin="round"`));
 			}
 		}
-		for (const p of visible) out.push(glyphEl(p, `fill="${ls.color}"`));
+		if (pass !== 'halo') {
+			for (const p of visible) out.push(glyphEl(p, `fill="${ls.color}"`));
+		}
 	}
 
-	out.push('    </g>');
+	if (pass === 'both') out.push('    </g>');
 	return out;
 }
 
@@ -236,59 +267,96 @@ function buildLabelLayerSVG(
 	const lineH = ls.fontSize * ls.lineHeight;
 	const counterScale = options.clip ? 1 / mapState.mapScale : 1;
 
+	const runPass = (pass: LabelPass): string[] => {
+		const out: string[] = [];
+		for (let fi = 0; fi < data.features.length; fi++) {
+			const f = data.features[fi];
+			const geom = f?.geometry as { type?: string; coordinates?: unknown } | null;
+			const props = f.properties as Record<string, unknown> | null;
+			const raw = props?.[attr];
+			if (raw === null || raw === undefined || raw === '') continue;
+			if (geom?.type === 'LineString') {
+				const rawOffset = props?.__pathOffset;
+				out.push(...curvedLabelSVG(
+					ls, ctx,
+					applyTextTransform(String(raw), ls.textTransform),
+					geom.coordinates as [number, number][],
+					proj, options,
+					`label_${sanitizeId(layer.id)}_${fi}`,
+					baselineShift,
+					typeof rawOffset === 'number' && Number.isFinite(rawOffset) ? rawOffset : 0.5,
+					pass,
+				));
+				// curvedLabelSVG measures with zero spacing; put ours back for wraps.
+				if (ctx) (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${ls.letterSpacing}px`;
+				continue;
+			}
+			if (!geom || geom.type !== 'Point') continue;
+			const pt = proj(geom.coordinates as [number, number]);
+			if (!pt) continue;
+			const rot = typeof props?.__rotation === 'number' && Number.isFinite(props.__rotation) ? props.__rotation : 0;
+			const wrapW = typeof props?.__wrapWidth === 'number' && Number.isFinite(props.__wrapWidth) ? props.__wrapWidth : null;
+			const transformed = applyTextTransform(String(raw), ls.textTransform);
+			const lines = wrapW !== null && ctx ? wrapLabelLines(ctx, transformed, wrapW) : transformed.split('\n');
+
+			// Same placement math as paintLabel: coordinates in the label's local
+			// (unscaled, unrotated) frame, middle baselines throughout.
+			const x = dir.x * gap;
+			const y0 =
+				dir.y === 0 ? -((lines.length - 1) / 2) * lineH
+				: dir.y === -1 ? -gap - ls.fontSize / 2 - (lines.length - 1) * lineH
+				: gap + ls.fontSize / 2;
+
+			const dx = lineAlignOffsets(ctx, ls, lines);
+			const tspans = lines
+				.map((line, i) => `<tspan x="${fmt(x + dx[i])}" y="${fmt(y0 + i * lineH + baselineShift)}">${escapeXml(line)}</tspan>`)
+				.join('');
+			const transform =
+				`translate(${fmt(pt[0])},${fmt(pt[1])})` +
+				(counterScale !== 1 ? ` scale(${fmt(counterScale)})` : '') +
+				(rot ? ` rotate(${fmt(rot)})` : '');
+			const common = `text-anchor="${anchorAttr}"${labelTextAttrs(ls)}`;
+			out.push(pass === 'both'
+				? `    <g transform="${transform}" opacity="${ls.colorOpacity}">`
+				: `    <g transform="${transform}">`);
+			if (pass !== 'fill' && ls.haloWidth > 0) {
+				out.push(`      <text ${common} fill="none" stroke="${ls.haloColor}" stroke-width="${fmt(ls.haloWidth * 2)}" stroke-linejoin="round">${tspans}</text>`);
+			}
+			if (pass !== 'halo') out.push(`      <text ${common} fill="${ls.color}">${tspans}</text>`);
+			out.push('    </g>');
+		}
+		return out;
+	};
+
+	// Plain opaque halo: one interleaved pass, structured exactly as before.
+	// Blurred and/or translucent halos: all halo elements go in one group that
+	// carries the blur filter and/or the halo opacity — children composite
+	// crisp and opaque first, so the effect hits the union once (matching the
+	// canvas buffer) — then fills on top, colorOpacity hoisted to the layer
+	// level. The filter's deviation lives in the layer group's user space,
+	// which under clip carries the zoom scale — the same counter-scale the
+	// stroke-widths use.
+	if (!(ls.haloWidth > 0 && (ls.haloBlur > 0 || ls.haloOpacity < 1))) return runPass('both');
+
 	const out: string[] = [];
-	for (let fi = 0; fi < data.features.length; fi++) {
-		const f = data.features[fi];
-		const geom = f?.geometry as { type?: string; coordinates?: unknown } | null;
-		const props = f.properties as Record<string, unknown> | null;
-		const raw = props?.[attr];
-		if (raw === null || raw === undefined || raw === '') continue;
-		if (geom?.type === 'LineString') {
-			const rawOffset = props?.__pathOffset;
-			out.push(...curvedLabelSVG(
-				ls, ctx,
-				applyTextTransform(String(raw), ls.textTransform),
-				geom.coordinates as [number, number][],
-				proj, options,
-				`label_${sanitizeId(layer.id)}_${fi}`,
-				baselineShift,
-				typeof rawOffset === 'number' && Number.isFinite(rawOffset) ? rawOffset : 0.5,
-			));
-			// curvedLabelSVG measures with zero spacing; put ours back for wraps.
-			if (ctx) (ctx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = `${ls.letterSpacing}px`;
-			continue;
-		}
-		if (!geom || geom.type !== 'Point') continue;
-		const pt = proj(geom.coordinates as [number, number]);
-		if (!pt) continue;
-		const rot = typeof props?.__rotation === 'number' && Number.isFinite(props.__rotation) ? props.__rotation : 0;
-		const wrapW = typeof props?.__wrapWidth === 'number' && Number.isFinite(props.__wrapWidth) ? props.__wrapWidth : null;
-		const transformed = applyTextTransform(String(raw), ls.textTransform);
-		const lines = wrapW !== null && ctx ? wrapLabelLines(ctx, transformed, wrapW) : transformed.split('\n');
-
-		// Same placement math as paintLabel: coordinates in the label's local
-		// (unscaled, unrotated) frame, middle baselines throughout.
-		const x = dir.x * gap;
-		const y0 =
-			dir.y === 0 ? -((lines.length - 1) / 2) * lineH
-			: dir.y === -1 ? -gap - ls.fontSize / 2 - (lines.length - 1) * lineH
-			: gap + ls.fontSize / 2;
-
-		const tspans = lines
-			.map((line, i) => `<tspan x="${fmt(x)}" y="${fmt(y0 + i * lineH + baselineShift)}">${escapeXml(line)}</tspan>`)
-			.join('');
-		const transform =
-			`translate(${fmt(pt[0])},${fmt(pt[1])})` +
-			(counterScale !== 1 ? ` scale(${fmt(counterScale)})` : '') +
-			(rot ? ` rotate(${fmt(rot)})` : '');
-		const common = `text-anchor="${anchorAttr}"${labelTextAttrs(ls)}`;
-		out.push(`    <g transform="${transform}" opacity="${ls.colorOpacity}">`);
-		if (ls.haloWidth > 0) {
-			out.push(`      <text ${common} fill="none" stroke="${ls.haloColor}" stroke-width="${fmt(ls.haloWidth * 2)}" stroke-linejoin="round">${tspans}</text>`);
-		}
-		out.push(`      <text ${common} fill="${ls.color}">${tspans}</text>`);
-		out.push('    </g>');
+	let haloGroupAttrs = '';
+	if (ls.haloBlur > 0) {
+		const blurId = `haloblur_${sanitizeId(layer.id)}`;
+		out.push(
+			`    <filter id="${blurId}" x="-50%" y="-50%" width="200%" height="200%">` +
+			`<feGaussianBlur stdDeviation="${fmt(ls.haloBlur * counterScale)}" /></filter>`
+		);
+		haloGroupAttrs += ` filter="url(#${blurId})"`;
 	}
+	if (ls.haloOpacity < 1) haloGroupAttrs += ` opacity="${fmt(ls.haloOpacity)}"`;
+	out.push(
+		`    <g opacity="${ls.colorOpacity}">`,
+		`    <g${haloGroupAttrs}>`,
+		...runPass('halo'),
+		'    </g>',
+		...runPass('fill'),
+		'    </g>',
+	);
 	return out;
 }
 

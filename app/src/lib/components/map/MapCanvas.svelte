@@ -2999,6 +2999,88 @@
 		);
 	}
 
+	// --- Blurred halo buffer ---------------------------------------------------
+	// Blurring each halo stroke separately stacks the soft edges' alpha wherever
+	// they overlap (adjacent lines, neighboring labels), reading as dark bands.
+	// Instead, a layer's halo strokes land crisp and opaque in this offscreen
+	// buffer — overlaps merge invisibly — and the union is composited onto the
+	// map through ONE blur, under the layer's fills.
+	let haloBufferEl: HTMLCanvasElement | null = null;
+
+	// Returns the halo buffer's ctx, cleared, sized to the main bitmap, carrying
+	// the main ctx's current transform so paint math lands identically.
+	function getHaloBuffer(ctx: CanvasRenderingContext2D): CanvasRenderingContext2D | null {
+		if (!haloBufferEl) haloBufferEl = document.createElement('canvas');
+		if (haloBufferEl.width !== ctx.canvas.width || haloBufferEl.height !== ctx.canvas.height) {
+			haloBufferEl.width = ctx.canvas.width;
+			haloBufferEl.height = ctx.canvas.height;
+		}
+		const hctx = haloBufferEl.getContext('2d');
+		if (!hctx) return null;
+		hctx.setTransform(1, 0, 0, 1, 0, 0);
+		hctx.clearRect(0, 0, haloBufferEl.width, haloBufferEl.height);
+		hctx.setTransform(ctx.getTransform());
+		return hctx;
+	}
+
+	// Text state doesn't travel with getTransform(); the buffer ctx needs the
+	// same text state as the ctx the layout math ran against. Set from the style
+	// (not read back from the source ctx — canvas text-state getters don't
+	// round-trip reliably), at full alpha: halo opacity applies at composite.
+	function setHaloBufferState(hctx: CanvasRenderingContext2D, ls: Layer['labelStyle']): void {
+		setLabelContext(hctx, ls, 1);
+		hctx.globalAlpha = 1;
+	}
+
+	// Whether a layer's halos need the union buffer: any effect that would stack
+	// where separate strokes overlap (blur's soft edges, semi-transparent halos)
+	// must be applied once to the merged whole instead of per stroke.
+	function needsHaloBuffer(ls: Layer['labelStyle']): boolean {
+		return ls.haloWidth > 0 && (ls.haloBlur > 0 || ls.haloOpacity < 1);
+	}
+
+	// Blur + opacity happen here, once for the whole layer. Drawn under a dpr-only
+	// transform (the buffer already contains pan/zoom), where blur units are CSS px
+	// — the same space the per-stroke filter used, so the strength matches.
+	function compositeHaloBuffer(ctx: CanvasRenderingContext2D, ls: Layer['labelStyle'], dim: number): void {
+		if (!haloBufferEl) return;
+		const dpr = window.devicePixelRatio || 1;
+		ctx.save();
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		ctx.globalAlpha = ls.colorOpacity * ls.haloOpacity * dim;
+		if (ls.haloBlur > 0) ctx.filter = `blur(${ls.haloBlur}px)`;
+		ctx.drawImage(haloBufferEl, 0, 0, haloBufferEl.width / dpr, haloBufferEl.height / dpr);
+		ctx.restore();
+	}
+
+	// Which half of a label paintLabel/paintCurvedLabel draws: 'both' interleaves
+	// like always (no blur); with blur the layer runs a 'halo' pass into the
+	// buffer, composites it, then a 'fill' pass on top.
+	type LabelPass = 'both' | 'halo' | 'fill';
+	interface LabelPaintOpts {
+		pass?: LabelPass;
+		haloCtx?: CanvasRenderingContext2D | null;
+	}
+
+	// left/center/right → how far along a width an alignment edge sits.
+	const ALIGN_FACTOR = { left: 0, center: 0.5, right: 1 } as const;
+
+	// Per-line x offsets for a multiline label: the anchor places the block (via
+	// the caller-set ctx.textAlign, keyed to the block's widest line), textAlign
+	// aligns the narrower lines within it. Offset = how far the line's reference
+	// edge must shift from the block's, which is the alignment difference times
+	// the width slack. Single-line labels get all zeros.
+	function lineAlignOffsets(ctx: CanvasRenderingContext2D, ls: Layer['labelStyle'], lines: string[]): number[] {
+		if (lines.length < 2) return lines.map(() => 0);
+		const dir = LABEL_ANCHOR_DIR[ls.anchor];
+		const anchorEdge = dir.x === -1 ? 'right' : dir.x === 1 ? 'left' : 'center';
+		const shift = ALIGN_FACTOR[ls.textAlign] - ALIGN_FACTOR[anchorEdge];
+		if (shift === 0) return lines.map(() => 0);
+		const widths = lines.map((line) => ctx.measureText(line).width);
+		const blockW = Math.max(...widths);
+		return widths.map((w) => shift * (blockW - w));
+	}
+
 	// Paints one label's text at a projected position. Expects ctx.font / textAlign /
 	// textBaseline / letterSpacing / globalAlpha already set by the caller (they're
 	// per-layer, set once outside the feature loop). Text renders zoom-independent
@@ -3010,7 +3092,10 @@
 		px: number,
 		py: number,
 		rot = 0,
+		opts: LabelPaintOpts = {},
 	): void {
+		const pass = opts.pass ?? 'both';
+		const haloCtx = opts.haloCtx ?? null;
 		const dir = LABEL_ANCHOR_DIR[ls.anchor];
 		const gap = dir.x === 0 && dir.y === 0 ? 0 : ls.fontSize * 0.3 + ls.haloWidth;
 		const lineH = ls.fontSize * ls.lineHeight;
@@ -3023,20 +3108,40 @@
 			dir.y === 0 ? -((lines.length - 1) / 2) * lineH
 			: dir.y === -1 ? -gap - ls.fontSize / 2 - (lines.length - 1) * lineH
 			: gap + ls.fontSize / 2;
+		// Measured before the transform dance — ctx already carries the layer's
+		// font and letter spacing, which the offsets depend on.
+		const dx = lineAlignOffsets(ctx, ls, lines);
 
 		ctx.save();
 		ctx.translate(px, py);
 		ctx.scale(1 / mapScale, 1 / mapScale);
 		if (rot) ctx.rotate((rot * Math.PI) / 180);
 
-		if (ls.haloWidth > 0) {
-			ctx.strokeStyle = ls.haloColor;
-			ctx.lineWidth = ls.haloWidth * 2;
-			ctx.lineJoin = 'round';
-			for (let i = 0; i < lines.length; i++) ctx.strokeText(lines[i], x, y0 + i * lineH);
+		if (pass !== 'fill' && ls.haloWidth > 0) {
+			if (haloCtx) {
+				// Union-buffer pass: crisp, full-alpha strokes; blur and opacity are
+				// applied once when the buffer composites.
+				haloCtx.save();
+				haloCtx.setTransform(ctx.getTransform());
+				setHaloBufferState(haloCtx, ls);
+				haloCtx.strokeStyle = ls.haloColor;
+				haloCtx.lineWidth = ls.haloWidth * 2;
+				haloCtx.lineJoin = 'round';
+				for (let i = 0; i < lines.length; i++) haloCtx.strokeText(lines[i], x + dx[i], y0 + i * lineH);
+				haloCtx.restore();
+			} else {
+				ctx.strokeStyle = ls.haloColor;
+				ctx.lineWidth = ls.haloWidth * 2;
+				ctx.lineJoin = 'round';
+				if (ls.haloBlur > 0) ctx.filter = `blur(${ls.haloBlur}px)`;
+				for (let i = 0; i < lines.length; i++) ctx.strokeText(lines[i], x + dx[i], y0 + i * lineH);
+				ctx.filter = 'none';
+			}
 		}
-		ctx.fillStyle = ls.color;
-		for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], x, y0 + i * lineH);
+		if (pass !== 'halo') {
+			ctx.fillStyle = ls.color;
+			for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], x + dx[i], y0 + i * lineH);
+		}
 
 		ctx.restore();
 	}
@@ -3056,8 +3161,11 @@
 		fi: number,
 		screenPath?: [number, number][] | null,
 		pathOffset = 0.5,
+		opts: LabelPaintOpts = {},
 	): void {
 		if (!projection) return;
+		const pass = opts.pass ?? 'both';
+		const haloCtx = opts.haloCtx ?? null;
 		const path: [number, number][] = screenPath ?? [];
 		if (!screenPath) {
 			for (const c of coords) {
@@ -3086,39 +3194,61 @@
 		const slideHandle: [number, number] = [anchor[0] + nx * handleGap, anchor[1] + ny * handleGap];
 
 		// One hit box per glyph (all carrying the shared baseline), so clicking any
-		// letter — or the gap of a space — targets the label.
-		const pad = 3;
-		for (let i = 0; i < placements.length; i++) {
-			const p = placements[i];
-			const half = glyphs[i].width / 2;
-			labelHitBoxes.push({
-				layerId, index: fi,
-				x0: p.x - half - pad, y0: p.y - ls.fontSize / 2 - pad,
-				x1: p.x + half + pad, y1: p.y + ls.fontSize / 2 + pad,
-				ax: p.x, ay: p.y, rot: (p.angle * 180) / Math.PI,
-				baseline, slideHandle,
-			});
+		// letter — or the gap of a space — targets the label. Registered once even
+		// when the label paints twice (halo pass skips).
+		if (pass !== 'halo') {
+			const pad = 3;
+			for (let i = 0; i < placements.length; i++) {
+				const p = placements[i];
+				const half = glyphs[i].width / 2;
+				labelHitBoxes.push({
+					layerId, index: fi,
+					x0: p.x - half - pad, y0: p.y - ls.fontSize / 2 - pad,
+					x1: p.x + half + pad, y1: p.y + ls.fontSize / 2 + pad,
+					ax: p.x, ay: p.y, rot: (p.angle * 180) / Math.PI,
+					baseline, slideHandle,
+				});
+			}
 		}
 
-		const drawGlyph = (p: GlyphPlacement, stroke: boolean): void => {
-			ctx.save();
-			ctx.translate((p.x - tx) / mapScale, (p.y - ty) / mapScale);
-			ctx.scale(1 / mapScale, 1 / mapScale);
-			ctx.rotate(p.angle);
-			if (stroke) ctx.strokeText(p.glyph, 0, 0);
-			else ctx.fillText(p.glyph, 0, 0);
-			ctx.restore();
+		const drawGlyph = (c: CanvasRenderingContext2D, p: GlyphPlacement, stroke: boolean): void => {
+			c.save();
+			c.translate((p.x - tx) / mapScale, (p.y - ty) / mapScale);
+			c.scale(1 / mapScale, 1 / mapScale);
+			c.rotate(p.angle);
+			if (stroke) c.strokeText(p.glyph, 0, 0);
+			else c.fillText(p.glyph, 0, 0);
+			c.restore();
 		};
 
 		// All halos under all fills, so a glyph's halo never overpaints its neighbor.
-		if (ls.haloWidth > 0) {
-			ctx.strokeStyle = ls.haloColor;
-			ctx.lineWidth = ls.haloWidth * 2;
-			ctx.lineJoin = 'round';
-			for (const p of placements) drawGlyph(p, true);
+		if (pass !== 'fill' && ls.haloWidth > 0) {
+			if (haloCtx) {
+				haloCtx.save();
+				haloCtx.setTransform(ctx.getTransform());
+				setHaloBufferState(haloCtx, ls);
+				// Same overrides paintCurvedLabel applies to the main ctx: spacing is
+				// baked into the glyph placements, alignment is per-glyph center.
+				haloCtx.textAlign = 'center';
+				(haloCtx as CanvasRenderingContext2D & { letterSpacing?: string }).letterSpacing = '0px';
+				haloCtx.strokeStyle = ls.haloColor;
+				haloCtx.lineWidth = ls.haloWidth * 2;
+				haloCtx.lineJoin = 'round';
+				for (const p of placements) drawGlyph(haloCtx, p, true);
+				haloCtx.restore();
+			} else {
+				ctx.strokeStyle = ls.haloColor;
+				ctx.lineWidth = ls.haloWidth * 2;
+				ctx.lineJoin = 'round';
+				if (ls.haloBlur > 0) ctx.filter = `blur(${ls.haloBlur}px)`;
+				for (const p of placements) drawGlyph(ctx, p, true);
+				ctx.filter = 'none';
+			}
 		}
-		ctx.fillStyle = ls.color;
-		for (const p of placements) drawGlyph(p, false);
+		if (pass !== 'halo') {
+			ctx.fillStyle = ls.color;
+			for (const p of placements) drawGlyph(ctx, p, false);
+		}
 		ctx.restore();
 	}
 
@@ -3147,6 +3277,8 @@
 			features?: { geometry?: { type?: string; coordinates?: unknown }; properties?: Record<string, unknown> }[];
 		};
 		if (!data?.features) return;
+		// Closure-safe alias: runPass below doesn't keep the narrowing above.
+		const features = data.features;
 
 		const ls = layer.labelStyle;
 		// Kick off the webfont load if needed (idempotent); when it arrives,
@@ -3162,83 +3294,100 @@
 		ctx.save();
 		setLabelContext(ctx, ls, dim);
 
-		for (let fi = 0; fi < data.features.length; fi++) {
-			const f = data.features[fi];
-			const geom = f?.geometry;
-			if (!geom) continue;
-			if (geom.type === 'LineString') {
-				// Curved label. Rotation and wrap width don't apply to text-on-a-path.
-				// Culling uses the middle vertex as a cheap stand-in for the path midpoint.
-				if (sessionDeleted(layer.id, fi)) continue;
-				const editingCurved = textSession.editingExisting;
-				if (editingCurved && editingCurved.layerId === layer.id && editingCurved.featureIndex === fi) continue;
-				const raw = sessionTextOverride(layer.id, fi) ?? f.properties?.[attr];
-				if (raw === null || raw === undefined || raw === '') continue;
-				// "On path" toggled off this session: render straight at the anchor
-				// (the LineString converts to a Point on commit).
-				const straighten = sessionStraighten(layer.id, fi);
-				if (straighten) {
-					if (projCenter && d3.geoDistance(straighten, projCenter) >= Math.PI / 2) continue;
-					const spt = projection(straighten);
-					if (!spt) continue;
-					const srot = sessionRotationOverride(layer.id, fi) ?? 0;
-					const swrap = sessionWrapOverride(layer.id, fi);
-					const stext = applyTextTransform(String(raw), ls.textTransform);
-					const slines = swrap !== null ? wrapLabelLines(ctx, stext, swrap) : stext.split('\n');
-					paintLabel(ctx, ls, slines, spt[0], spt[1], srot);
-					recordLabelHitBox(ctx, ls, slines, spt[0] * mapScale + tx, spt[1] * mapScale + ty, layer.id, fi, srot);
+		// Blurred/translucent halos run the features twice: a halo pass into the
+		// union buffer, one blurred composite, then a fill pass on top — so no
+		// fill is ever covered by a halo and overlapping strokes can't stack.
+		// Otherwise, a single interleaved pass, as always.
+		const haloCtx = needsHaloBuffer(ls) ? getHaloBuffer(ctx) : null;
+
+		const runPass = (pass: LabelPass): void => {
+			for (let fi = 0; fi < features.length; fi++) {
+				const f = features[fi];
+				const geom = f?.geometry;
+				if (!geom) continue;
+				if (geom.type === 'LineString') {
+					// Curved label. Rotation and wrap width don't apply to text-on-a-path.
+					// Culling uses the middle vertex as a cheap stand-in for the path midpoint.
+					if (sessionDeleted(layer.id, fi)) continue;
+					const editingCurved = textSession.editingExisting;
+					if (editingCurved && editingCurved.layerId === layer.id && editingCurved.featureIndex === fi) continue;
+					const raw = sessionTextOverride(layer.id, fi) ?? f.properties?.[attr];
+					if (raw === null || raw === undefined || raw === '') continue;
+					// "On path" toggled off this session: render straight at the anchor
+					// (the LineString converts to a Point on commit).
+					const straighten = sessionStraighten(layer.id, fi);
+					if (straighten) {
+						if (projCenter && d3.geoDistance(straighten, projCenter) >= Math.PI / 2) continue;
+						const spt = projection(straighten);
+						if (!spt) continue;
+						const srot = sessionRotationOverride(layer.id, fi) ?? 0;
+						const swrap = sessionWrapOverride(layer.id, fi);
+						const stext = applyTextTransform(String(raw), ls.textTransform);
+						const slines = swrap !== null ? wrapLabelLines(ctx, stext, swrap) : stext.split('\n');
+						paintLabel(ctx, ls, slines, spt[0], spt[1], srot, { pass, haloCtx });
+						if (pass !== 'halo') recordLabelHitBox(ctx, ls, slines, spt[0] * mapScale + tx, spt[1] * mapScale + ty, layer.id, fi, srot);
+						continue;
+					}
+					let coords = geom.coordinates as [number, number][];
+					if (coords.length < 2) continue;
+					// An in-progress drag translates the whole line live; an in-progress
+					// path sculpt (D10) replaces it with the sampled session cubic outright.
+					const pathEdit = sessionPathEdit(layer.id, fi);
+					const screenCubic = pathEdit ? cubicToScreen(pathEdit) : null;
+					if (!pathEdit) {
+						const delta = sessionLineDelta(layer.id, fi);
+						if (delta) coords = coords.map(([x, y]) => [x + delta[0], y + delta[1]] as [number, number]);
+						if (projCenter && d3.geoDistance(coords[Math.floor(coords.length / 2)], projCenter) >= Math.PI / 2) continue;
+					}
+					const props = f.properties as Record<string, unknown> | undefined;
+					paintCurvedLabel(
+						ctx, ls, applyTextTransform(String(raw), ls.textTransform), coords, layer.id, fi,
+						screenCubic ? sampleCubic(screenCubic, 64) : null,
+						sessionPathOffset(layer.id, fi) ?? numberProp(props?.__pathOffset) ?? 0.5,
+						{ pass, haloCtx },
+					);
 					continue;
 				}
-				let coords = geom.coordinates as [number, number][];
-				if (coords.length < 2) continue;
-				// An in-progress drag translates the whole line live; an in-progress
-				// path sculpt (D10) replaces it with the sampled session cubic outright.
-				const pathEdit = sessionPathEdit(layer.id, fi);
-				const screenCubic = pathEdit ? cubicToScreen(pathEdit) : null;
-				if (!pathEdit) {
-					const delta = sessionLineDelta(layer.id, fi);
-					if (delta) coords = coords.map(([x, y]) => [x + delta[0], y + delta[1]] as [number, number]);
-					if (projCenter && d3.geoDistance(coords[Math.floor(coords.length / 2)], projCenter) >= Math.PI / 2) continue;
+				if (geom.type !== 'Point') continue;
+				// An in-progress text session can move, retype, or delete labels; paint
+				// reflects it live. The label open in the inline editor is skipped — the
+				// textarea shows it.
+				if (sessionDeleted(layer.id, fi)) continue;
+				const editing = textSession.editingExisting;
+				if (editing && editing.layerId === layer.id && editing.featureIndex === fi) continue;
+				const raw = sessionTextOverride(layer.id, fi) ?? f.properties?.[attr];
+				if (raw === null || raw === undefined || raw === '') continue;
+				// "On path" toggled on this session: the point renders curved along the
+				// session cubic (converts to a LineString on commit).
+				const convertedCubic = sessionPathEdit(layer.id, fi);
+				if (convertedCubic) {
+					const sc = cubicToScreen(convertedCubic);
+					if (sc) {
+						paintCurvedLabel(ctx, ls, applyTextTransform(String(raw), ls.textTransform), [], layer.id, fi, sampleCubic(sc, 64), 0.5, { pass, haloCtx });
+					}
+					continue;
 				}
+				const coord = sessionMovedCoord(layer.id, fi) ?? (geom.coordinates as [number, number]);
+				if (projCenter && d3.geoDistance(coord, projCenter) >= Math.PI / 2) continue;
+				const pt = projection(coord);
+				if (!pt) continue;
+	
 				const props = f.properties as Record<string, unknown> | undefined;
-				paintCurvedLabel(
-					ctx, ls, applyTextTransform(String(raw), ls.textTransform), coords, layer.id, fi,
-					screenCubic ? sampleCubic(screenCubic, 64) : null,
-					sessionPathOffset(layer.id, fi) ?? numberProp(props?.__pathOffset) ?? 0.5,
-				);
-				continue;
+				const rot = sessionRotationOverride(layer.id, fi) ?? numberProp(props?.__rotation) ?? 0;
+				const wrap = sessionWrapOverride(layer.id, fi) ?? numberProp(props?.__wrapWidth);
+				const transformed = applyTextTransform(String(raw), ls.textTransform);
+				const lines = wrap !== null ? wrapLabelLines(ctx, transformed, wrap) : transformed.split('\n');
+				paintLabel(ctx, ls, lines, pt[0], pt[1], rot, { pass, haloCtx });
+				if (pass !== 'halo') recordLabelHitBox(ctx, ls, lines, pt[0] * mapScale + tx, pt[1] * mapScale + ty, layer.id, fi, rot);
 			}
-			if (geom.type !== 'Point') continue;
-			// An in-progress text session can move, retype, or delete labels; paint
-			// reflects it live. The label open in the inline editor is skipped — the
-			// textarea shows it.
-			if (sessionDeleted(layer.id, fi)) continue;
-			const editing = textSession.editingExisting;
-			if (editing && editing.layerId === layer.id && editing.featureIndex === fi) continue;
-			const raw = sessionTextOverride(layer.id, fi) ?? f.properties?.[attr];
-			if (raw === null || raw === undefined || raw === '') continue;
-			// "On path" toggled on this session: the point renders curved along the
-			// session cubic (converts to a LineString on commit).
-			const convertedCubic = sessionPathEdit(layer.id, fi);
-			if (convertedCubic) {
-				const sc = cubicToScreen(convertedCubic);
-				if (sc) {
-					paintCurvedLabel(ctx, ls, applyTextTransform(String(raw), ls.textTransform), [], layer.id, fi, sampleCubic(sc, 64));
-				}
-				continue;
-			}
-			const coord = sessionMovedCoord(layer.id, fi) ?? (geom.coordinates as [number, number]);
-			if (projCenter && d3.geoDistance(coord, projCenter) >= Math.PI / 2) continue;
-			const pt = projection(coord);
-			if (!pt) continue;
+		};
 
-			const props = f.properties as Record<string, unknown> | undefined;
-			const rot = sessionRotationOverride(layer.id, fi) ?? numberProp(props?.__rotation) ?? 0;
-			const wrap = sessionWrapOverride(layer.id, fi) ?? numberProp(props?.__wrapWidth);
-			const transformed = applyTextTransform(String(raw), ls.textTransform);
-			const lines = wrap !== null ? wrapLabelLines(ctx, transformed, wrap) : transformed.split('\n');
-			paintLabel(ctx, ls, lines, pt[0], pt[1], rot);
-			recordLabelHitBox(ctx, ls, lines, pt[0] * mapScale + tx, pt[1] * mapScale + ty, layer.id, fi, rot);
+		if (haloCtx) {
+			runPass('halo');
+			compositeHaloBuffer(ctx, ls, dim);
+			runPass('fill');
+		} else {
+			runPass('both');
 		}
 		ctx.restore();
 	}
@@ -3261,26 +3410,41 @@
 
 		ctx.save();
 		setLabelContext(ctx, ls, 1);
-		for (let i = 0; i < feats.length; i++) {
-			if (i === textSession.editingNew) continue;
-			const f = feats[i];
-			if (f.text === '') continue;
-			// Path boxes (D10) ghost as curved text; unprojectable control points
-			// (off-globe) drop the ghost this frame, which is also the backface cull.
-			if (f.path) {
-				const sc = cubicToScreen(f.path);
-				if (sc) {
-					paintCurvedLabel(ctx, ls, applyTextTransform(f.text, ls.textTransform), [], null, i, sampleCubic(sc, 64), f.pathOffset ?? 0.5);
+
+		// Same union-buffer two-pass as drawLabelLayer when the halo is blurred
+		// or translucent.
+		const haloCtx = needsHaloBuffer(ls) ? getHaloBuffer(ctx) : null;
+
+		const runPass = (pass: LabelPass): void => {
+			for (let i = 0; i < feats.length; i++) {
+				if (i === textSession.editingNew) continue;
+				const f = feats[i];
+				if (f.text === '') continue;
+				// Path boxes (D10) ghost as curved text; unprojectable control points
+				// (off-globe) drop the ghost this frame, which is also the backface cull.
+				if (f.path) {
+					const sc = cubicToScreen(f.path);
+					if (sc) {
+						paintCurvedLabel(ctx, ls, applyTextTransform(f.text, ls.textTransform), [], null, i, sampleCubic(sc, 64), f.pathOffset ?? 0.5, { pass, haloCtx });
+					}
+					continue;
 				}
-				continue;
+				if (projCenter && d3.geoDistance(f.coord, projCenter) >= Math.PI / 2) continue;
+				const pt = projection(f.coord);
+				if (!pt) continue;
+				const transformed = applyTextTransform(f.text, ls.textTransform);
+				const lines = f.wrapWidth !== undefined ? wrapLabelLines(ctx, transformed, f.wrapWidth) : transformed.split('\n');
+				paintLabel(ctx, ls, lines, pt[0], pt[1], f.rotation ?? 0, { pass, haloCtx });
+				if (pass !== 'halo') recordLabelHitBox(ctx, ls, lines, pt[0] * mapScale + tx, pt[1] * mapScale + ty, null, i, f.rotation ?? 0);
 			}
-			if (projCenter && d3.geoDistance(f.coord, projCenter) >= Math.PI / 2) continue;
-			const pt = projection(f.coord);
-			if (!pt) continue;
-			const transformed = applyTextTransform(f.text, ls.textTransform);
-			const lines = f.wrapWidth !== undefined ? wrapLabelLines(ctx, transformed, f.wrapWidth) : transformed.split('\n');
-			paintLabel(ctx, ls, lines, pt[0], pt[1], f.rotation ?? 0);
-			recordLabelHitBox(ctx, ls, lines, pt[0] * mapScale + tx, pt[1] * mapScale + ty, null, i, f.rotation ?? 0);
+		};
+
+		if (haloCtx) {
+			runPass('halo');
+			compositeHaloBuffer(ctx, ls, 1);
+			runPass('fill');
+		} else {
+			runPass('both');
 		}
 		ctx.restore();
 	}
@@ -4355,6 +4519,7 @@
 				style:color={textEditorStyle.color}
 				style:letter-spacing="{textEditorStyle.letterSpacing}px"
 				style:line-height={textEditorStyle.lineHeight}
+				style:text-align={textEditorStyle.textAlign}
 				rows="1"
 				spellcheck="false"
 				oninput={handleTextEditorInput}

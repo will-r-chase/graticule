@@ -52,10 +52,16 @@ interface ProjectFile {
 	uploadedDatasets: SavedUploadedDataset[];
 }
 
-// Files saved before numeric weights carry fontWeight: 'normal' | 'bold'.
+// Files saved before numeric weights carry fontWeight: 'normal' | 'bold'; files
+// older than a given style field lack it entirely, so saved values land on top
+// of current defaults.
 function migrateLabelStyle(saved: LabelStyle): LabelStyle {
 	const w = saved.fontWeight as number | 'normal' | 'bold';
-	return { ...saved, fontWeight: w === 'bold' ? 700 : w === 'normal' ? 400 : w };
+	return {
+		...defaultLabelStyle(),
+		...saved,
+		fontWeight: w === 'bold' ? 700 : w === 'normal' ? 400 : w,
+	};
 }
 
 // ---------------------------------------------------------------------------

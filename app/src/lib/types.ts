@@ -72,7 +72,9 @@ export interface LabelStyle {
 	color: string;
 	colorOpacity: number;
 	haloColor: string;
+	haloOpacity: number;       // 0–1
 	haloWidth: number;         // px, 0 = no halo
+	haloBlur: number;          // px gaussian blur on the halo, 0 = crisp
 	anchor: LabelAnchor;
 	lineHeight: number;        // multiplier
 	textAlign: 'left' | 'center' | 'right';

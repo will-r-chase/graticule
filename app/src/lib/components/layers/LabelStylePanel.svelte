@@ -56,8 +56,10 @@
 	let colorAlpha = $state(layer.labelStyle.colorOpacity);
 	let haloEnabled = $state(layer.labelStyle.haloWidth > 0);
 	let haloHex = $state(layer.labelStyle.haloColor);
+	let haloAlpha = $state(layer.labelStyle.haloOpacity);
 	// Remembered while the halo is toggled off so re-enabling restores it.
 	let haloWidth = $state(layer.labelStyle.haloWidth > 0 ? layer.labelStyle.haloWidth : 2);
+	let haloBlur = $state(layer.labelStyle.haloBlur);
 	let anchor = $state(layer.labelStyle.anchor);
 	let lineHeight = $state(layer.labelStyle.lineHeight);
 	let textAlign = $state(layer.labelStyle.textAlign);
@@ -139,8 +141,14 @@
 		if (!Number.isFinite(haloWidth)) return;
 		updateLayerLabelStyle(layer.id, {
 			haloColor: haloHex,
+			haloOpacity: haloAlpha,
 			haloWidth: haloEnabled ? haloWidth : 0,
 		});
+	});
+
+	$effect(() => {
+		if (!Number.isFinite(haloBlur) || haloBlur < 0) return;
+		updateLayerLabelStyle(layer.id, { haloBlur });
 	});
 
 	$effect(() => {
@@ -283,7 +291,7 @@
 			<button
 				class="swatch"
 				class:ring={activePicker === 'halo'}
-				style="--c: {toRgba(haloHex, 1)}; visibility: {haloEnabled ? 'visible' : 'hidden'}"
+				style="--c: {toRgba(haloHex, haloAlpha)}; visibility: {haloEnabled ? 'visible' : 'hidden'}"
 				onpointerdown={(e) => { e.stopPropagation(); togglePicker('halo'); }}
 				aria-label="Edit halo color"
 				tabindex={haloEnabled ? 0 : -1}
@@ -295,6 +303,16 @@
 				onblur={() => pushSnapshot()}
 				style="visibility: {haloEnabled ? 'visible' : 'hidden'}"
 				tabindex={haloEnabled ? 0 : -1}
+				title="Halo width"
+			/>
+			<input
+				class="width-input number-input"
+				type="number" min="0" step="0.5"
+				bind:value={haloBlur}
+				onblur={() => pushSnapshot()}
+				style="visibility: {haloEnabled ? 'visible' : 'hidden'}"
+				tabindex={haloEnabled ? 0 : -1}
+				title="Halo blur"
 			/>
 		</div>
 	</div>
@@ -390,7 +408,7 @@
 		{#if activePicker === 'color'}
 			<ColorPickerPopup bind:hex={colorHex} bind:alpha={colorAlpha} title="Text color" onclose={closePicker} />
 		{:else}
-			<ColorPickerPopup bind:hex={haloHex} alpha={1} title="Halo color" onclose={closePicker} />
+			<ColorPickerPopup bind:hex={haloHex} bind:alpha={haloAlpha} title="Halo color" onclose={closePicker} />
 		{/if}
 	</div>
 {/if}
