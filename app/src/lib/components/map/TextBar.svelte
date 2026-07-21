@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { Plus, Check, X, ArrowClockwise, BezierCurve } from 'phosphor-svelte';
-	import { textSession, commitText, discardText, selectedRotation, setSelectedRotation, selectedIsCurved, setSelectedOnPath } from '$lib/stores/textSession.svelte';
+	import { Plus, Check, X, Angle, BezierCurve, ArrowsInLineHorizontal } from 'phosphor-svelte';
+	import { textSession, commitText, discardText, selectedRotation, setSelectedRotation, selectedIsCurved, setSelectedOnPath, selectedWrapWidth, clearSelectedWrapWidth } from '$lib/stores/textSession.svelte';
 	import { layerSelection, clearLayerSelection, selectLayer } from '$lib/stores/layerSelection.svelte';
 	import { layers, createLabelLayer } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -12,7 +12,7 @@
 			: null
 	);
 
-	const statusText = $derived(targetName ? `Adding text to ${targetName}` : 'Adding text to new layer');
+	const statusText = $derived(targetName ? `Editing ${targetName}` : 'Editing new layer');
 	const hasWork = $derived(textSession.newCount > 0 || textSession.editCount > 0);
 
 	// A single selected GEOMETRY layer in text mode isn't a text target — offer to
@@ -43,6 +43,16 @@
 		void textSession.version;
 		void textSession.selected;
 		return selectedIsCurved();
+	});
+
+	// Wrap width of the selected label: null = auto-width (grows with typed text),
+	// a number = a fixed width from dragging the box (auto-height — wraps and
+	// grows down instead). Figma-style: dragging is the only way IN to auto-height;
+	// this button is the only way back out.
+	const wrapWidth = $derived.by(() => {
+		void textSession.version;
+		void textSession.selected;
+		return selectedWrapWidth();
 	});
 </script>
 
@@ -84,7 +94,7 @@
 			</button>
 			{#if !curved}
 				<span class="rotate-field" use:tooltip={{ text: 'Rotate the selected label', placement: 'up' }}>
-					<ArrowClockwise size={14} />
+					<Angle size={14} />
 					<input
 						class="rotate-input"
 						type="number"
@@ -95,13 +105,24 @@
 					/>
 					<span class="deg">°</span>
 				</span>
+				{#if wrapWidth !== null}
+					<button
+						class="bar-btn"
+						onclick={() => clearSelectedWrapWidth()}
+						aria-label="Reset to auto width"
+						use:tooltip={{ text: 'Reset to auto width (currently fixed from dragging)', placement: 'up' }}
+					>
+						<ArrowsInLineHorizontal size={14} />
+						<span>Reset width</span>
+					</button>
+				{/if}
 			{/if}
 			<div class="bar-divider"></div>
 		{/if}
 		<span class="status status--strong">{statusText}</span>
 	{/if}
 	{#if hasWork}
-		<div class="bar-divider"></div>
+		{#if selectedGeomLayer}<div class="bar-divider"></div>{/if}
 		<button
 			class="bar-btn"
 			onclick={() => commitText()}

@@ -2,6 +2,7 @@
 	import { updateLayerProcessing } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import { tooltip } from '$lib/actions/tooltip';
+	import Combobox from '$lib/components/ui/Combobox.svelte';
 	import type { Layer } from '$lib/types';
 
 	let { layer }: { layer: Layer } = $props();
@@ -37,16 +38,16 @@
 	}
 
 	const ALGORITHMS = [
-		{ value: 'weighted',    label: 'Weighted' },
-		{ value: 'visvalingam', label: 'Visvalingam' },
-		{ value: 'dp',          label: 'Douglas-Peucker' },
-	] as const;
+		{ id: 'weighted',    label: 'Weighted' },
+		{ id: 'visvalingam', label: 'Visvalingam' },
+		{ id: 'dp',          label: 'Douglas-Peucker' },
+	];
 
 	const CURVE_TYPES = [
-		{ value: 'catmull-rom', label: 'Catmull-Rom' },
-		{ value: 'bspline',     label: 'B-Spline' },
-		{ value: 'kb',          label: 'Kochanek-Bartels' },
-	] as const;
+		{ id: 'catmull-rom', label: 'Catmull-Rom' },
+		{ id: 'bspline',     label: 'B-Spline' },
+		{ id: 'kb',          label: 'Kochanek-Bartels' },
+	];
 </script>
 
 <div class="processing-panel">
@@ -74,15 +75,12 @@
 			<div class="style-row">
 				<span class="label mono-small" use:tooltip={"The method used to choose which points to remove. Weighted preserves visually important features. Visvalingam prioritises visual significance by area. Douglas-Peucker is fast and classic, but tends to produce spikier shapes."}
 				>Algorithm</span>
-				<select
-					class="select mono-small"
-					bind:value={simpAlgorithm}
-					onchange={() => { updateLayerProcessing(layer.id, { simpAlgorithm }, pushSnapshot); }}
-				>
-					{#each ALGORITHMS as algo}
-						<option value={algo.value}>{algo.label}</option>
-					{/each}
-				</select>
+				<Combobox
+					small
+					options={ALGORITHMS}
+					value={simpAlgorithm}
+					onchange={(id) => { simpAlgorithm = id as typeof simpAlgorithm; updateLayerProcessing(layer.id, { simpAlgorithm }, pushSnapshot); }}
+				/>
 			</div>
 
 			<div class="style-row">
@@ -196,15 +194,12 @@
 			<div class="style-row">
 				<span class="label mono-small" use:tooltip={"The spline algorithm used to fit curves. Catmull-Rom passes through original points. B-Spline is smoother but doesn't pass through points. Kochanek-Bartels allows asymmetric control over tension, continuity, and bias."}
 				>Curve</span>
-				<select
-					class="select mono-small"
-					bind:value={bezierCurveType}
-					onchange={() => { updateLayerProcessing(layer.id, { bezierCurveType }, pushSnapshot); }}
-				>
-					{#each CURVE_TYPES as ct}
-						<option value={ct.value}>{ct.label}</option>
-					{/each}
-				</select>
+				<Combobox
+					small
+					options={CURVE_TYPES}
+					value={bezierCurveType}
+					onchange={(id) => { bezierCurveType = id as typeof bezierCurveType; updateLayerProcessing(layer.id, { bezierCurveType }, pushSnapshot); }}
+				/>
 			</div>
 
 			<div class="style-row">
@@ -308,6 +303,10 @@
 		padding-left: var(--space-m);
 	}
 
+	.style-row :global(.combobox) {
+		flex: 1;
+	}
+
 	.label {
 		width: 80px;
 		flex-shrink: 0;
@@ -379,16 +378,6 @@
 
 	.value-input[type=number] {
 		-moz-appearance: textfield;
-	}
-
-	.select {
-		flex: 1;
-		height: 24px;
-		padding: 0 var(--space-s);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius);
-		background: var(--color-surface-primary);
-		color: var(--color-text-primary);
 	}
 
 	.width-input {

@@ -57,7 +57,10 @@ let pathOffsets = new Map<string, Map<number, number>>();
 let deletes = new Map<string, Set<number>>();
 let textEdits = new Map<string, Map<number, string>>();
 let rotations = new Map<string, Map<number, number>>();
-let wrapWidths = new Map<string, Map<number, number>>();
+// number = set to this width (auto-height); null = explicitly cleared back to
+// auto-width — distinct from "no entry", which falls through to the persisted
+// __wrapWidth property (see sessionWrapOverride).
+let wrapWidths = new Map<string, Map<number, number | null>>();
 
 // Bakes a lon/lat cubic into a lon/lat polyline for commit. Registered by
 // MapCanvas (it owns the live projection): project the control points, sample the
@@ -304,8 +307,11 @@ export function sessionTextOverride(layerId: string, featureIndex: number): stri
 export function sessionRotationOverride(layerId: string, featureIndex: number): number | null {
 	return rotations.get(layerId)?.get(featureIndex) ?? null;
 }
-export function sessionWrapOverride(layerId: string, featureIndex: number): number | null {
-	return wrapWidths.get(layerId)?.get(featureIndex) ?? null;
+// undefined = no override this session (caller falls through to the persisted
+// property); null = explicitly cleared to auto-width; number = set to this width.
+export function sessionWrapOverride(layerId: string, featureIndex: number): number | null | undefined {
+	const m = wrapWidths.get(layerId);
+	return m?.has(featureIndex) ? m.get(featureIndex) : undefined;
 }
 
 function bump(): void {
@@ -431,10 +437,15 @@ function selectedProp(sel: TextSelection, key: '__rotation' | '__wrapWidth'): nu
 		const f = newFeatures[sel.index];
 		return (key === '__rotation' ? f?.rotation : f?.wrapWidth) ?? null;
 	}
-	const override = key === '__rotation'
-		? sessionRotationOverride(sel.layerId, sel.featureIndex)
-		: sessionWrapOverride(sel.layerId, sel.featureIndex);
-	if (override !== null) return override;
+	if (key === '__wrapWidth') {
+		// undefined = no session override → fall through; null/number are both
+		// resolved values (explicitly cleared / explicitly set).
+		const override = sessionWrapOverride(sel.layerId, sel.featureIndex);
+		if (override !== undefined) return override;
+	} else {
+		const override = sessionRotationOverride(sel.layerId, sel.featureIndex);
+		if (override !== null) return override;
+	}
 	const topo = workingTopologyData.get(sel.layerId);
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	const anyTopo = topo as any;
@@ -489,6 +500,25 @@ export function setSelectedWrapWidth(px: number): void {
 		let m = wrapWidths.get(sel.layerId);
 		if (!m) { m = new Map(); wrapWidths.set(sel.layerId, m); }
 		m.set(sel.featureIndex, width);
+	}
+	bump();
+}
+
+// Resets the selection back to auto-width (Figma-style: dragging the box sets a
+// fixed width and switches to auto-height; this is the only way back). A 'new'
+// box just drops its draft width; an existing feature records an explicit null
+// override so a previously-committed __wrapWidth is cleared on commit rather
+// than re-read.
+export function clearSelectedWrapWidth(): void {
+	const sel = textSession.selected;
+	if (!sel) return;
+	if (sel.kind === 'new') {
+		const f = newFeatures[sel.index];
+		if (f) f.wrapWidth = undefined;
+	} else {
+		let m = wrapWidths.get(sel.layerId);
+		if (!m) { m = new Map(); wrapWidths.set(sel.layerId, m); }
+		m.set(sel.featureIndex, null);
 	}
 	bump();
 }

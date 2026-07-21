@@ -3323,7 +3323,7 @@
 						const srot = sessionRotationOverride(layer.id, fi) ?? 0;
 						const swrap = sessionWrapOverride(layer.id, fi);
 						const stext = applyTextTransform(String(raw), ls.textTransform);
-						const slines = swrap !== null ? wrapLabelLines(ctx, stext, swrap) : stext.split('\n');
+						const slines = swrap != null ? wrapLabelLines(ctx, stext, swrap) : stext.split('\n');
 						paintLabel(ctx, ls, slines, spt[0], spt[1], srot, { pass, haloCtx });
 						if (pass !== 'halo') recordLabelHitBox(ctx, ls, slines, spt[0] * mapScale + tx, spt[1] * mapScale + ty, layer.id, fi, srot);
 						continue;
@@ -3374,7 +3374,10 @@
 	
 				const props = f.properties as Record<string, unknown> | undefined;
 				const rot = sessionRotationOverride(layer.id, fi) ?? numberProp(props?.__rotation) ?? 0;
-				const wrap = sessionWrapOverride(layer.id, fi) ?? numberProp(props?.__wrapWidth);
+				// undefined = no session override this session → fall through to the
+				// persisted property; null/number are both resolved (cleared/set).
+				const wrapOverride = sessionWrapOverride(layer.id, fi);
+				const wrap = wrapOverride !== undefined ? wrapOverride : numberProp(props?.__wrapWidth);
 				const transformed = applyTextTransform(String(raw), ls.textTransform);
 				const lines = wrap !== null ? wrapLabelLines(ctx, transformed, wrap) : transformed.split('\n');
 				paintLabel(ctx, ls, lines, pt[0], pt[1], rot, { pass, haloCtx });

@@ -812,7 +812,9 @@ export interface LabelEdits {
 	deletes?: Set<number>;
 	texts?: Map<number, string>;
 	rotations?: Map<number, number>;
-	wrapWidths?: Map<number, number>;
+	// null = explicitly cleared back to auto-width (deletes the stored property
+	// rather than writing it), number = a fixed width from a drag.
+	wrapWidths?: Map<number, number | null>;
 }
 
 export function applyLabelEdits(layerId: string, edits: LabelEdits, onComplete?: () => void): void {
@@ -903,7 +905,10 @@ export function applyLabelEdits(layerId: string, edits: LabelEdits, onComplete?:
 		for (const [i, t] of edits.pathOffsets) setProp(i, '__pathOffset', t);
 	}
 	if (edits.wrapWidths) {
-		for (const [i, px] of edits.wrapWidths) setProp(i, '__wrapWidth', px);
+		for (const [i, px] of edits.wrapWidths) {
+			if (px === null) delete geometries[i]?.properties?.__wrapWidth;
+			else setProp(i, '__wrapWidth', px);
+		}
 	}
 	// Deletions last — the other edits index into the pre-filter positions.
 	if (edits.deletes && edits.deletes.size > 0) {

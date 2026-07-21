@@ -155,25 +155,23 @@
 	<div class="style-row">
 		<span class="label mono-small">Stroke</span>
 		<div class="controls">
-			{#if hasPoints}
-				<button
-					class="toggle-track"
-					class:on={strokeEnabled}
-					role="switch"
-					aria-checked={strokeEnabled}
-					onclick={() => {
-						strokeEnabled = !strokeEnabled;
-						if (!strokeEnabled && activePicker === 'stroke') {
-							activePicker = null;
-							styleCtx.setPickerOpen(false);
-						}
-						updateLayerStyle(layer.id, { stroke: strokeEnabled ? strokeHex : 'none', strokeOpacity: strokeAlpha });
-						pushSnapshot();
-					}}
-				>
-					<span class="toggle-thumb"></span>
-				</button>
-			{/if}
+			<button
+				class="toggle-track"
+				class:on={strokeEnabled}
+				role="switch"
+				aria-checked={strokeEnabled}
+				onclick={() => {
+					strokeEnabled = !strokeEnabled;
+					if (!strokeEnabled && activePicker === 'stroke') {
+						activePicker = null;
+						styleCtx.setPickerOpen(false);
+					}
+					updateLayerStyle(layer.id, { stroke: strokeEnabled ? strokeHex : 'none', strokeOpacity: strokeAlpha });
+					pushSnapshot();
+				}}
+			>
+				<span class="toggle-thumb"></span>
+			</button>
 			<button
 				class="swatch"
 				class:ring={activePicker === 'stroke'}
@@ -182,23 +180,25 @@
 				aria-label="Edit stroke color"
 				tabindex={strokeEnabled ? 0 : -1}
 			></button>
-			<input
-				class="width-input number-input"
-				type="number"
-				min="0"
-				step="0.1"
-				bind:value={strokeWidth}
-				onblur={() => { updateLayerStyle(layer.id, { strokeWidth }); pushSnapshot(); }}
-				style="visibility: {strokeEnabled ? 'visible' : 'hidden'}"
-				tabindex={strokeEnabled ? 0 : -1}
-			/>
+			<div class="notched-field" style="visibility: {strokeEnabled ? 'visible' : 'hidden'}">
+				<span class="notch-label">Width</span>
+				<input
+					class="width-input number-input"
+					type="number"
+					min="0"
+					step="0.1"
+					bind:value={strokeWidth}
+					onblur={() => { updateLayerStyle(layer.id, { strokeWidth }); pushSnapshot(); }}
+					tabindex={strokeEnabled ? 0 : -1}
+				/>
+			</div>
 		</div>
 	</div>
 
 	<!-- Dash row — not applicable for point symbols -->
 	{#if hasNonPoint}
 		<div class="style-row">
-			<span class="label mono-small">Dash</span>
+			<span class="label mono-small">Dashed</span>
 			<div class="controls">
 				<button
 					class="toggle-track"
@@ -209,23 +209,26 @@
 				>
 					<span class="toggle-thumb"></span>
 				</button>
-				<input
-					class="width-input number-input"
-					type="number" min="1" step="1"
-					bind:value={strokeDash}
-					onblur={() => { updateLayerStyle(layer.id, { strokeDash }); pushSnapshot(); }}
-					style="visibility: {strokeDashed ? 'visible' : 'hidden'}"
-					tabindex={strokeDashed ? 0 : -1}
-				/>
-				<span class="dash-sep mono-small" style="visibility: {strokeDashed ? 'visible' : 'hidden'}">gap</span>
-				<input
-					class="width-input number-input"
-					type="number" min="1" step="1"
-					bind:value={strokeGap}
-					onblur={() => { updateLayerStyle(layer.id, { strokeGap }); pushSnapshot(); }}
-					style="visibility: {strokeDashed ? 'visible' : 'hidden'}"
-					tabindex={strokeDashed ? 0 : -1}
-				/>
+				<div class="notched-field" style="visibility: {strokeDashed ? 'visible' : 'hidden'}">
+					<span class="notch-label">Dash</span>
+					<input
+						class="width-input number-input"
+						type="number" min="1" step="1"
+						bind:value={strokeDash}
+						onblur={() => { updateLayerStyle(layer.id, { strokeDash }); pushSnapshot(); }}
+						tabindex={strokeDashed ? 0 : -1}
+					/>
+				</div>
+				<div class="notched-field" style="visibility: {strokeDashed ? 'visible' : 'hidden'}">
+					<span class="notch-label">Gap</span>
+					<input
+						class="width-input number-input"
+						type="number" min="1" step="1"
+						bind:value={strokeGap}
+						onblur={() => { updateLayerStyle(layer.id, { strokeGap }); pushSnapshot(); }}
+						tabindex={strokeDashed ? 0 : -1}
+					/>
+				</div>
 			</div>
 		</div>
 	{/if}
@@ -369,7 +372,7 @@
 	}
 
 	.swatch.ring {
-		outline: 2px solid var(--color-accent);
+		outline: 1px solid var(--color-accent);
 		outline-offset: 1px;
 	}
 
@@ -379,13 +382,30 @@
 		margin: var(--space-xs) 0;
 	}
 
-	.dash-sep {
-		color: var(--color-text-tertiary);
-		flex-shrink: 0;
-	}
-
 	.width-input {
 		width: 56px;
+	}
+
+	/* Notched field label — sits on the input's top border, like an outlined
+	   Material text field. The background masks the border segment behind it. */
+	.notched-field {
+		position: relative;
+	}
+
+	.notch-label {
+		position: absolute;
+		top: 0;
+		left: 6px;
+		transform: translateY(-50%);
+		padding: 0 3px;
+		background: var(--color-surface-primary);
+		color: var(--color-text-tertiary);
+		font-family: var(--font-sans);
+		font-size: 10px;
+		font-weight: 400;
+		line-height: 1;
+		white-space: nowrap;
+		pointer-events: none;
 	}
 
 	/* Floating color picker — just a positioned wrapper; card styling is in ColorPickerPopup */

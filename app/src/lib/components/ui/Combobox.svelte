@@ -14,6 +14,7 @@
 		placeholder = 'Search...',
 		direction = 'down',
 		disabled = false,
+		small = false,
 		onchange,
 	}: {
 		options: Option[];
@@ -21,6 +22,9 @@
 		placeholder?: string;
 		direction?: 'up' | 'down';
 		disabled?: boolean;
+		// 24px trigger + body-small text, for rows that need to line up with
+		// number inputs/swatches instead of the default 32px height.
+		small?: boolean;
 		onchange?: (id: string) => void;
 	} = $props();
 
@@ -141,10 +145,11 @@
 	}
 </script>
 
-<div class="combobox" bind:this={containerEl}>
+<div class="combobox" class:small bind:this={containerEl}>
 	<div class="trigger" class:disabled bind:this={triggerEl} onclick={handleInputClick}>
 		<input
-			class="body-regular"
+			class:body-regular={!small}
+			class:body-small={small}
 			class:italic={!open && selectedItalic}
 			bind:this={inputEl}
 			type="text"
@@ -181,7 +186,8 @@
 							role="option"
 							aria-selected={option.id === value}
 							data-index={flatIndex}
-							class="body-regular"
+							class:body-regular={!small}
+							class:body-small={small}
 							class:italic={option.italic}
 							class:highlighted={flatIndex === highlightedIndex}
 							class:selected={option.id === value}
@@ -216,9 +222,12 @@
 		cursor: pointer;
 	}
 
+	.combobox.small .trigger {
+		height: 24px;
+	}
+
 	.trigger:focus-within {
-		outline: 2px solid var(--color-accent);
-		outline-offset: -1px;
+		border-color: var(--color-accent);
 	}
 
 	.trigger.disabled {

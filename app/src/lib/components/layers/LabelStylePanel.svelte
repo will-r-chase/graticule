@@ -197,6 +197,7 @@
 		<span class="label mono-small">Font</span>
 		<div class="controls">
 			<Combobox
+				small
 				options={fontOptions}
 				value={fontFamily}
 				placeholder="Search fonts"
@@ -237,6 +238,7 @@
 		<span class="label mono-small">Style</span>
 		<div class="controls">
 			<Combobox
+				small
 				options={styleOptions}
 				value={styleValue}
 				onchange={selectStyle}
@@ -296,34 +298,37 @@
 				aria-label="Edit halo color"
 				tabindex={haloEnabled ? 0 : -1}
 			></button>
-			<input
-				class="width-input number-input"
-				type="number" min="0.5" step="0.5"
-				bind:value={haloWidth}
-				onblur={() => pushSnapshot()}
-				style="visibility: {haloEnabled ? 'visible' : 'hidden'}"
-				tabindex={haloEnabled ? 0 : -1}
-				title="Halo width"
-			/>
-			<input
-				class="width-input number-input"
-				type="number" min="0" step="0.5"
-				bind:value={haloBlur}
-				onblur={() => pushSnapshot()}
-				style="visibility: {haloEnabled ? 'visible' : 'hidden'}"
-				tabindex={haloEnabled ? 0 : -1}
-				title="Halo blur"
-			/>
+			<div class="notched-field" style="visibility: {haloEnabled ? 'visible' : 'hidden'}">
+				<span class="notch-label">Width</span>
+				<input
+					class="width-input number-input"
+					type="number" min="0.5" step="0.5"
+					bind:value={haloWidth}
+					onblur={() => pushSnapshot()}
+					tabindex={haloEnabled ? 0 : -1}
+					title="Halo width"
+				/>
+			</div>
+			<div class="notched-field" style="visibility: {haloEnabled ? 'visible' : 'hidden'}">
+				<span class="notch-label">Blur</span>
+				<input
+					class="width-input number-input"
+					type="number" min="0" step="0.5"
+					bind:value={haloBlur}
+					onblur={() => pushSnapshot()}
+					tabindex={haloEnabled ? 0 : -1}
+					title="Halo blur"
+				/>
+			</div>
 		</div>
 	</div>
-
-	<div class="divider"></div>
 
 	<!-- Text transform -->
 	<div class="style-row">
 		<span class="label mono-small">Case</span>
 		<div class="controls">
 			<Combobox
+				small
 				options={transformOptions}
 				value={textTransform}
 				onchange={(id) => { textTransform = id as LabelTextTransform; updateLayerLabelStyle(layer.id, { textTransform }); pushSnapshot(); }}
@@ -331,20 +336,34 @@
 		</div>
 	</div>
 
-	<!-- Letter spacing -->
+	<!-- Letter spacing + line height -->
 	<div class="style-row">
 		<span class="label mono-small">Spacing</span>
 		<div class="controls">
-			<input
-				class="width-input number-input"
-				type="number" step="0.5"
-				bind:value={letterSpacing}
-				onblur={() => pushSnapshot()}
-			/>
+			<div class="notched-field">
+				<span class="notch-label">Letters</span>
+				<input
+					class="width-input number-input"
+					type="number" step="0.5"
+					bind:value={letterSpacing}
+					onblur={() => pushSnapshot()}
+					title="Letter spacing"
+				/>
+			</div>
+			<div class="notched-field">
+				<span class="notch-label">Lines</span>
+				<input
+					class="width-input number-input"
+					type="number" min="0.5" step="0.1"
+					bind:value={lineHeight}
+					onblur={() => pushSnapshot()}
+					title="Line height"
+				/>
+			</div>
 		</div>
 	</div>
 
-	<!-- Anchor position -->
+	<!-- Anchor + alignment -->
 	<div class="style-row anchor-row">
 		<span class="label mono-small">Anchor</span>
 		<div class="controls">
@@ -363,36 +382,25 @@
 					</button>
 				{/each}
 			</div>
-		</div>
-	</div>
-
-	<!-- Multi-line: line height + alignment -->
-	<div class="style-row">
-		<span class="label mono-small">Lines</span>
-		<div class="controls">
-			<input
-				class="width-input number-input"
-				type="number" min="0.5" step="0.1"
-				bind:value={lineHeight}
-				onblur={() => pushSnapshot()}
-				title="Line height"
-			/>
-			<div class="align-group">
-				<button
-					class="glyph-btn" class:on={textAlign === 'left'}
-					aria-label="Align left" title="Align left"
-					onclick={() => { textAlign = 'left'; updateLayerLabelStyle(layer.id, { textAlign }); pushSnapshot(); }}
-				><TextAlignLeft size={14} /></button>
-				<button
-					class="glyph-btn" class:on={textAlign === 'center'}
-					aria-label="Align center" title="Align center"
-					onclick={() => { textAlign = 'center'; updateLayerLabelStyle(layer.id, { textAlign }); pushSnapshot(); }}
-				><TextAlignCenter size={14} /></button>
-				<button
-					class="glyph-btn" class:on={textAlign === 'right'}
-					aria-label="Align right" title="Align right"
-					onclick={() => { textAlign = 'right'; updateLayerLabelStyle(layer.id, { textAlign }); pushSnapshot(); }}
-				><TextAlignRight size={14} /></button>
+			<div class="caption-field">
+				<span class="caption-label">Alignment</span>
+				<div class="align-group">
+					<button
+						class="glyph-btn" class:on={textAlign === 'left'}
+						aria-label="Align left" title="Align left"
+						onclick={() => { textAlign = 'left'; updateLayerLabelStyle(layer.id, { textAlign }); pushSnapshot(); }}
+					><TextAlignLeft size={14} /></button>
+					<button
+						class="glyph-btn" class:on={textAlign === 'center'}
+						aria-label="Align center" title="Align center"
+						onclick={() => { textAlign = 'center'; updateLayerLabelStyle(layer.id, { textAlign }); pushSnapshot(); }}
+					><TextAlignCenter size={14} /></button>
+					<button
+						class="glyph-btn" class:on={textAlign === 'right'}
+						aria-label="Align right" title="Align right"
+						onclick={() => { textAlign = 'right'; updateLayerLabelStyle(layer.id, { textAlign }); pushSnapshot(); }}
+					><TextAlignRight size={14} /></button>
+				</div>
 			</div>
 		</div>
 	</div>
@@ -435,7 +443,7 @@
 	}
 
 	.label {
-		width: 44px;
+		width: 60px;
 		flex-shrink: 0;
 		color: var(--color-text-primary);
 	}
@@ -446,6 +454,10 @@
 		gap: var(--space-m);
 		flex: 1;
 		min-width: 0;
+	}
+
+	.controls :global(.combobox) {
+		width: 160px;
 	}
 
 	.toggle-track {
@@ -510,18 +522,34 @@
 	}
 
 	.swatch.ring {
-		outline: 2px solid var(--color-accent);
+		outline: 1px solid var(--color-accent);
 		outline-offset: 1px;
-	}
-
-	.divider {
-		height: 1px;
-		background: var(--color-border);
-		margin: var(--space-xs) 0;
 	}
 
 	.width-input {
 		width: 56px;
+	}
+
+	/* Notched field label — sits on the input's top border, like an outlined
+	   Material text field. The background masks the border segment behind it. */
+	.notched-field {
+		position: relative;
+	}
+
+	.notch-label {
+		position: absolute;
+		top: 0;
+		left: 6px;
+		transform: translateY(-50%);
+		padding: 0 3px;
+		background: var(--color-surface-primary);
+		color: var(--color-text-tertiary);
+		font-family: var(--font-sans);
+		font-size: 10px;
+		font-weight: 400;
+		line-height: 1;
+		white-space: nowrap;
+		pointer-events: none;
 	}
 
 	.style-row.local-fonts-row {
@@ -570,6 +598,26 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-xs);
+		background: var(--grey-50);
+		border-radius: var(--space-s);
+	}
+
+	/* A small caption sitting above a control, in a taller row — pins itself to
+	   the top so its caption lines up with the row label instead of centering
+	   against the row's tallest sibling. */
+	.caption-field {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		align-self: flex-start;
+	}
+
+	.caption-label {
+		color: var(--color-text-tertiary);
+		font-family: var(--font-sans);
+		font-size: 10px;
+		font-weight: 400;
+		line-height: 1;
 	}
 
 	.anchor-grid {

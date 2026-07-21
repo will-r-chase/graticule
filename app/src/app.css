@@ -355,13 +355,18 @@ h4,
 /* Number input — compact numeric control used in style panels */
 .number-input {
 	height: 24px;
-	padding: 0 var(--space-s);
+	padding: 1px var(--space-m) 0;
 	border: 1px solid var(--color-border);
 	border-radius: var(--radius);
 	background: var(--color-surface-primary);
 	color: var(--color-text-primary);
-	text-align: right;
+	text-align: left;
 	font-family: var(--font-mono);
 	font-size: 12px;
 	line-height: 18px;
+}
+
+.number-input:focus-visible {
+	outline: none;
+	border-color: var(--color-accent);
 }
