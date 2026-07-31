@@ -2,6 +2,11 @@
 Thumbs.db
 node_modules
 
+# Large manually-downloaded pipeline source data
+pipeline/raw_data/
+pipeline/.venv/
+__pycache__/
+
 # Internal working docs — kept local only
 PRD.md
 TODO.md

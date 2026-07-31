@@ -1,7 +1,7 @@
 import time
 from pathlib import Path
 
-from ..process import normalize, keep_fields, write_topojson, bbox_of, read_geodataframe
+from ..process import normalize, write_topojson, bbox_of, read_geodataframe
 from .base import DataSource, DatasetMeta
 
 YEAR = "2023"
@@ -14,7 +14,6 @@ DATASETS = [
         "description": "US state boundaries from the Census Bureau TIGER/Line files.",
         "url": f"{BASE}/STATE/tl_{YEAR}_us_state.zip",
         "admin_level": 1,
-        "fields": ["NAME", "STUSPS", "STATEFP", "GEOID", "ALAND"],
         "tags": ["states", "usa", "admin-1", "boundaries"],
         "out": "tiger/states.topojson",
         "object_name": "states",
@@ -25,7 +24,6 @@ DATASETS = [
         "description": "US county boundaries from the Census Bureau TIGER/Line files.",
         "url": f"{BASE}/COUNTY/tl_{YEAR}_us_county.zip",
         "admin_level": 2,
-        "fields": ["NAME", "NAMELSAD", "STATEFP", "COUNTYFP", "GEOID", "ALAND"],
         "tags": ["counties", "usa", "admin-2", "detailed", "boundaries"],
         "out": "tiger/counties.topojson",
         "object_name": "counties",
@@ -46,7 +44,6 @@ class Tiger(DataSource):
                 gdf = read_geodataframe(url=d["url"])
                 print(f"      Read {len(gdf):,} features", flush=True)
                 gdf = normalize(gdf)
-                gdf = keep_fields(gdf, d["fields"])
                 count = write_topojson(gdf, out_path, object_name=d["object_name"])
                 elapsed = time.time() - t0
                 print(f"      ✓ Complete in {elapsed:.1f}s", flush=True)

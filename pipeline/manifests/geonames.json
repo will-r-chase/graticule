@@ -1,0 +1,402 @@
+[
+  {
+    "id": "geonames/populated-places",
+    "name": "Populated Places (GeoNames)",
+    "description": "Cities, towns, and villages worldwide, tiered by population.",
+    "source": "geonames",
+    "sourceName": "GeoNames",
+    "adminLevel": 0,
+    "region": "world",
+    "license": "CC-BY 4.0",
+    "tags": [
+      "cities",
+      "towns",
+      "villages",
+      "places",
+      "points",
+      "world",
+      "geonames"
+    ],
+    "filePath": "geonames/populated_places",
+    "featureCount": 5220794,
+    "bbox": [
+      -179.99946,
+      -80.41714,
+      180.0,
+      83.17359
+    ],
+    "geometryType": "Point",
+    "layers": [
+      {
+        "name": "Capitals",
+        "objectName": "capitals",
+        "filePath": "geonames/populated_places/capitals.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Cities (100k\u20131M)",
+        "objectName": "cities",
+        "filePath": "geonames/populated_places/cities.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Major Cities (1M+)",
+        "objectName": "major_cities",
+        "filePath": "geonames/populated_places/major_cities.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Small Towns (1k\u201310k)",
+        "objectName": "small_towns",
+        "filePath": "geonames/populated_places/small_towns.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "State/Province Capitals",
+        "objectName": "state_capitals",
+        "filePath": "geonames/populated_places/state_capitals.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Towns (10k\u2013100k)",
+        "objectName": "towns",
+        "filePath": "geonames/populated_places/towns.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Villages \u2014 Africa",
+        "objectName": "villages_AF",
+        "filePath": "geonames/populated_places/villages_AF.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Villages \u2014 Antarctica",
+        "objectName": "villages_AN",
+        "filePath": "geonames/populated_places/villages_AN.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Villages \u2014 Asia",
+        "objectName": "villages_AS",
+        "filePath": "geonames/populated_places/villages_AS.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Villages \u2014 China",
+        "objectName": "villages_CN",
+        "filePath": "geonames/populated_places/villages_CN.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Villages \u2014 Europe",
+        "objectName": "villages_EU",
+        "filePath": "geonames/populated_places/villages_EU.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Villages \u2014 India",
+        "objectName": "villages_IN",
+        "filePath": "geonames/populated_places/villages_IN.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Villages \u2014 North America",
+        "objectName": "villages_NA",
+        "filePath": "geonames/populated_places/villages_NA.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Villages \u2014 Oceania",
+        "objectName": "villages_OC",
+        "filePath": "geonames/populated_places/villages_OC.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Villages \u2014 South America",
+        "objectName": "villages_SA",
+        "filePath": "geonames/populated_places/villages_SA.csv",
+        "geometryType": "Point"
+      }
+    ]
+  },
+  {
+    "id": "geonames/hydro",
+    "name": "Water Features (GeoNames)",
+    "description": "Named rivers, lakes, and other water features worldwide.",
+    "source": "geonames",
+    "sourceName": "GeoNames",
+    "adminLevel": 0,
+    "region": "world",
+    "license": "CC-BY 4.0",
+    "tags": [
+      "water",
+      "rivers",
+      "lakes",
+      "hydrology",
+      "points",
+      "world",
+      "geonames"
+    ],
+    "filePath": "geonames/hydro",
+    "featureCount": 2610720,
+    "bbox": [
+      -179.9977,
+      -88.24563,
+      180.0,
+      85.0
+    ],
+    "geometryType": "Point",
+    "layers": [
+      {
+        "name": "Bays",
+        "objectName": "bays",
+        "filePath": "geonames/hydro/bays.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Canals",
+        "objectName": "canals",
+        "filePath": "geonames/hydro/canals.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Coves & Inlets",
+        "objectName": "coves_inlets",
+        "filePath": "geonames/hydro/coves_inlets.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Lakes",
+        "objectName": "lakes",
+        "filePath": "geonames/hydro/lakes.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Marsh & Swamp",
+        "objectName": "marsh_swamp",
+        "filePath": "geonames/hydro/marsh_swamp.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Other Water Features",
+        "objectName": "other_water",
+        "filePath": "geonames/hydro/other_water.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Rivers & Streams",
+        "objectName": "rivers_streams",
+        "filePath": "geonames/hydro/rivers_streams.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Wells, Ponds, Reservoirs & Springs",
+        "objectName": "wells_ponds_reservoirs_springs",
+        "filePath": "geonames/hydro/wells_ponds_reservoirs_springs.csv",
+        "geometryType": "Point"
+      }
+    ]
+  },
+  {
+    "id": "geonames/terrain",
+    "name": "Terrain Features (GeoNames)",
+    "description": "Named mountains, hills, islands, and other terrain features worldwide.",
+    "source": "geonames",
+    "sourceName": "GeoNames",
+    "adminLevel": 0,
+    "region": "world",
+    "license": "CC-BY 4.0",
+    "tags": [
+      "terrain",
+      "mountains",
+      "hills",
+      "islands",
+      "points",
+      "world",
+      "geonames"
+    ],
+    "filePath": "geonames/terrain",
+    "featureCount": 1837740,
+    "bbox": [
+      -180.0,
+      -90.0,
+      180.0,
+      90.0
+    ],
+    "geometryType": "Point",
+    "layers": [
+      {
+        "name": "Hills",
+        "objectName": "hills",
+        "filePath": "geonames/terrain/hills.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Islands",
+        "objectName": "islands",
+        "filePath": "geonames/terrain/islands.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Mountains",
+        "objectName": "mountains",
+        "filePath": "geonames/terrain/mountains.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Other Terrain",
+        "objectName": "other_terrain",
+        "filePath": "geonames/terrain/other_terrain.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Passes",
+        "objectName": "passes",
+        "filePath": "geonames/terrain/passes.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Peaks",
+        "objectName": "peaks",
+        "filePath": "geonames/terrain/peaks.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Points",
+        "objectName": "points",
+        "filePath": "geonames/terrain/points.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Ridges",
+        "objectName": "ridges",
+        "filePath": "geonames/terrain/ridges.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Valleys",
+        "objectName": "valleys",
+        "filePath": "geonames/terrain/valleys.csv",
+        "geometryType": "Point"
+      }
+    ]
+  },
+  {
+    "id": "geonames/parks-areas",
+    "name": "Parks & Areas (GeoNames)",
+    "description": "Named parks, reserves, fields, and industrial districts worldwide.",
+    "source": "geonames",
+    "sourceName": "GeoNames",
+    "adminLevel": 0,
+    "region": "world",
+    "license": "CC-BY 4.0",
+    "tags": [
+      "parks",
+      "reserves",
+      "areas",
+      "points",
+      "world",
+      "geonames"
+    ],
+    "filePath": "geonames/parks_areas",
+    "featureCount": 197642,
+    "bbox": [
+      -179.24744,
+      -67.61854,
+      179.35486,
+      82.21884
+    ],
+    "geometryType": "Point",
+    "layers": [
+      {
+        "name": "Fields",
+        "objectName": "fields",
+        "filePath": "geonames/parks_areas/fields.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Industrial Districts",
+        "objectName": "industrial_districts",
+        "filePath": "geonames/parks_areas/industrial_districts.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Parks",
+        "objectName": "parks",
+        "filePath": "geonames/parks_areas/parks.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Reserves",
+        "objectName": "reserves",
+        "filePath": "geonames/parks_areas/reserves.csv",
+        "geometryType": "Point"
+      }
+    ]
+  },
+  {
+    "id": "geonames/admin",
+    "name": "Administrative Names (GeoNames)",
+    "description": "Country, state/province, and county-level administrative names worldwide.",
+    "source": "geonames",
+    "sourceName": "GeoNames",
+    "adminLevel": 0,
+    "region": "world",
+    "license": "CC-BY 4.0",
+    "tags": [
+      "admin",
+      "boundaries",
+      "names",
+      "points",
+      "world",
+      "geonames"
+    ],
+    "filePath": "geonames/admin",
+    "featureCount": 543484,
+    "bbox": [
+      -179.94212,
+      -82.78066,
+      180.0,
+      78.15706
+    ],
+    "geometryType": "Point",
+    "layers": [
+      {
+        "name": "ADM3 Names",
+        "objectName": "adm3",
+        "filePath": "geonames/admin/adm3.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "ADM4 Names",
+        "objectName": "adm4",
+        "filePath": "geonames/admin/adm4.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "ADM5 & Other Division Names",
+        "objectName": "adm5_other",
+        "filePath": "geonames/admin/adm5_other.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "Country Names",
+        "objectName": "country",
+        "filePath": "geonames/admin/country.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "County Names",
+        "objectName": "county",
+        "filePath": "geonames/admin/county.csv",
+        "geometryType": "Point"
+      },
+      {
+        "name": "State/Province Names",
+        "objectName": "state_province",
+        "filePath": "geonames/admin/state_province.csv",
+        "geometryType": "Point"
+      }
+    ]
+  }
+]

@@ -11,7 +11,7 @@ from pathlib import Path
 import geopandas as gpd
 import requests
 
-from ..process import normalize, keep_fields, write_topojson, bbox_of
+from ..process import normalize, write_topojson, bbox_of
 from .base import DataSource, DatasetMeta
 
 YEAR = "2021"
@@ -38,8 +38,6 @@ LEVELS = [
         tags=["nuts", "europe", "eu", "regions", "admin-3", "detailed", "boundaries"],
     ),
 ]
-
-FIELDS = ["NUTS_ID", "LEVL_CODE", "CNTR_CODE", "NAME_LATN", "NUTS_NAME"]
 
 
 class Eurostat(DataSource):
@@ -69,7 +67,6 @@ class Eurostat(DataSource):
 
                 print(f"      Read {len(gdf):,} features", flush=True)
                 gdf = normalize(gdf)
-                gdf = keep_fields(gdf, FIELDS)
                 count = write_topojson(gdf, out_path, object_name=f"nuts{level}")
                 elapsed = time.time() - t0
                 print(f"      ✓ Complete in {elapsed:.1f}s", flush=True)

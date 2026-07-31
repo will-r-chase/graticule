@@ -80,7 +80,7 @@ def keep_fields(gdf: gpd.GeoDataFrame, fields: list[str]) -> gpd.GeoDataFrame:
 # TopoJSON conversion via mapshaper CLI
 # ---------------------------------------------------------------------------
 
-def write_topojson(gdf: gpd.GeoDataFrame, path: Path, object_name: str = "data") -> int:
+def write_topojson(gdf: gpd.GeoDataFrame, path: Path, object_name: str = "data", timeout: int = 120) -> int:
     """
     Convert GeoDataFrame to TopoJSON using mapshaper CLI.
     Mapshaper is orders of magnitude faster than the Python topojson library
@@ -108,7 +108,7 @@ def write_topojson(gdf: gpd.GeoDataFrame, path: Path, object_name: str = "data")
             ],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=timeout,
         )
 
     elapsed = time.time() - t0

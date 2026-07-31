@@ -1,0 +1,144 @@
+[
+  {
+    "id": "wdpa/points",
+    "name": "Protected Areas (Points)",
+    "description": "Protected areas reported without boundary geometry, as center points, split by IUCN management category.",
+    "source": "wdpa",
+    "sourceName": "WDPA",
+    "adminLevel": 0,
+    "region": "world",
+    "license": "non-commercial",
+    "tags": [
+      "protected-areas",
+      "conservation",
+      "world",
+      "points"
+    ],
+    "filePath": "wdpa/points.topojson",
+    "featureCount": 7747,
+    "bbox": [
+      -179.9667,
+      -82.60000000000002,
+      179.96669999999995,
+      73.64999999999998
+    ],
+    "layers": [
+      {
+        "name": "II \u2014 National Park",
+        "objectName": "II",
+        "filePath": "wdpa/points.topojson"
+      },
+      {
+        "name": "Unclassified",
+        "objectName": "Unclassified",
+        "filePath": "wdpa/points.topojson"
+      },
+      {
+        "name": "Ia \u2014 Strict Nature Reserve",
+        "objectName": "Ia",
+        "filePath": "wdpa/points.topojson"
+      },
+      {
+        "name": "IV \u2014 Habitat/Species Management Area",
+        "objectName": "IV",
+        "filePath": "wdpa/points.topojson"
+      },
+      {
+        "name": "VI \u2014 Managed Resource Protected Area",
+        "objectName": "VI",
+        "filePath": "wdpa/points.topojson"
+      },
+      {
+        "name": "V \u2014 Protected Landscape/Seascape",
+        "objectName": "V",
+        "filePath": "wdpa/points.topojson"
+      },
+      {
+        "name": "III \u2014 Natural Monument",
+        "objectName": "III",
+        "filePath": "wdpa/points.topojson"
+      },
+      {
+        "name": "Ib \u2014 Wilderness Area",
+        "objectName": "Ib",
+        "filePath": "wdpa/points.topojson"
+      }
+    ]
+  },
+  {
+    "id": "wdpa/polygons",
+    "name": "Protected Areas (Polygons)",
+    "description": "Terrestrial and marine protected area boundaries, split by IUCN management category.",
+    "source": "wdpa",
+    "sourceName": "WDPA",
+    "adminLevel": 0,
+    "region": "world",
+    "license": "non-commercial",
+    "tags": [
+      "protected-areas",
+      "conservation",
+      "world",
+      "polygons"
+    ],
+    "filePath": "wdpa/polygons",
+    "featureCount": 306993,
+    "bbox": [
+      -180,
+      -85.4077069,
+      180,
+      86.45279569700006
+    ],
+    "layers": [
+      {
+        "name": "IV \u2014 Habitat/Species Management Area",
+        "objectName": "habitat_species_management_area",
+        "filePath": "wdpa/polygons/habitat_species_management_area.topojson"
+      },
+      {
+        "name": "VI \u2014 Managed Resource Protected Area",
+        "objectName": "managed_resource_protected_area",
+        "filePath": "wdpa/polygons/managed_resource_protected_area.topojson"
+      },
+      {
+        "name": "II \u2014 National Park",
+        "objectName": "national_park",
+        "filePath": "wdpa/polygons/national_park.topojson"
+      },
+      {
+        "name": "III \u2014 Natural Monument",
+        "objectName": "natural_monument",
+        "filePath": "wdpa/polygons/natural_monument.topojson"
+      },
+      {
+        "name": "V \u2014 Protected Landscape/Seascape",
+        "objectName": "protected_landscape_seascape",
+        "filePath": "wdpa/polygons/protected_landscape_seascape.topojson"
+      },
+      {
+        "name": "Ia \u2014 Strict Nature Reserve",
+        "objectName": "strict_nature_reserve",
+        "filePath": "wdpa/polygons/strict_nature_reserve.topojson"
+      },
+      {
+        "name": "Unclassified \u2014 Coastal",
+        "objectName": "unclassified_coastal",
+        "filePath": "wdpa/polygons/unclassified_coastal.topojson"
+      },
+      {
+        "name": "Unclassified \u2014 Marine",
+        "objectName": "unclassified_marine",
+        "filePath": "wdpa/polygons/unclassified_marine.topojson"
+      },
+      {
+        "name": "Unclassified \u2014 Terrestrial",
+        "objectName": "unclassified_terrestrial",
+        "filePath": "wdpa/polygons/unclassified_terrestrial.topojson"
+      },
+      {
+        "name": "Ib \u2014 Wilderness Area",
+        "objectName": "wilderness_area",
+        "filePath": "wdpa/polygons/wilderness_area.topojson"
+      }
+    ]
+  }
+]

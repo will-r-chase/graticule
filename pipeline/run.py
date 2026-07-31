@@ -18,13 +18,16 @@ import tempfile
 import time
 from pathlib import Path
 
-from . import catalog, upload
+from . import catalog, compress, upload
 from .sources.eurostat import Eurostat
 from .sources.natural_earth import NaturalEarth
 from .sources.tiger import Tiger
 
 from .sources.project_linework import ProjectLinework
 # from .sources.custom import Custom
+# WDPA is a one-off pull, not re-fetched on every pipeline run — see
+# pipeline/run_wdpa_once.py and pipeline/sources/wdpa.py
+# from .sources.wdpa import WDPA
 
 
 def check_env():
@@ -72,6 +75,11 @@ def main():
         print(f"  Catalog", flush=True)
         print(f"{'='*50}", flush=True)
         catalog.build(all_datasets, output_dir)
+
+        print(f"\n{'='*50}", flush=True)
+        print(f"  Compress (brotli → .br sidecars)", flush=True)
+        print(f"{'='*50}", flush=True)
+        compress.compress_dir(output_dir)
 
         print(f"\n{'='*50}", flush=True)
         print(f"  Upload → R2 ({bucket})", flush=True)

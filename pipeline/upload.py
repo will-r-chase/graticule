@@ -9,6 +9,7 @@ CONTENT_TYPES = {
     ".json": "application/json",
     ".topojson": "application/json",
     ".geojson": "application/json",
+    ".csv": "text/csv",
 }
 
 
@@ -28,20 +29,27 @@ def upload_directory(local_dir: Path, bucket: str):
     client = get_client()
     uploaded = 0
     for file_path in sorted(local_dir.rglob("*")):
-        if not file_path.is_file():
+        # Skip dotfiles (.DS_Store etc.) and `.br` sidecars — the latter are
+        # uploaded via their base file below, not on their own.
+        if not file_path.is_file() or file_path.name.startswith(".") or file_path.name.endswith(".br"):
             continue
         key = str(file_path.relative_to(local_dir))
-        content_type = CONTENT_TYPES.get(file_path.suffix, "application/octet-stream")
-        size_kb = file_path.stat().st_size // 1024
-        print(f"  Uploading {key} ({size_kb}KB)...")
-        client.upload_file(
-            str(file_path),
-            bucket,
-            key,
-            ExtraArgs={
-                "ContentType": content_type,
-                "CacheControl": "public, max-age=86400",
-            },
-        )
+        extra = {
+            "ContentType": CONTENT_TYPES.get(file_path.suffix, "application/octet-stream"),
+            "CacheControl": "public, max-age=86400",
+        }
+
+        # If a brotli sidecar exists, upload *its* bytes under the base key with
+        # a Content-Encoding header — the browser decodes transparently, so the
+        # app fetches the same URL and never sees compressed data.
+        source = file_path
+        br_path = file_path.parent / (file_path.name + ".br")
+        if br_path.exists():
+            source = br_path
+            extra["ContentEncoding"] = "br"
+
+        size_kb = source.stat().st_size // 1024
+        print(f"  Uploading {key} ({size_kb}KB){' [br]' if source is br_path else ''}...")
+        client.upload_file(str(source), bucket, key, ExtraArgs=extra)
         uploaded += 1
     print(f"Uploaded {uploaded} files to R2 bucket '{bucket}'")

@@ -1,0 +1,164 @@
+[
+  {
+    "id": "hydrolakes/africa",
+    "name": "Lakes \u2014 Africa",
+    "description": "Lake and reservoir polygons for Africa from HydroLAKES (HydroSHEDS), simplified to ~500m. Each lake carries surface area (km\u00b2), type (lake/reservoir/regulated), average depth, and name (major lakes only).",
+    "source": "hydrolakes",
+    "sourceName": "HydroLAKES",
+    "adminLevel": 0,
+    "region": "africa",
+    "license": "free (attribution)",
+    "tags": [
+      "lakes",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "polygons",
+      "africa"
+    ],
+    "filePath": "hydrolakes/africa.topojson",
+    "featureCount": 15964,
+    "bbox": [
+      -22.951639383434838,
+      -34.7462912326387,
+      57.74168202718113,
+      37.23248453776051
+    ],
+    "geometryType": "Polygon"
+  },
+  {
+    "id": "hydrolakes/asia",
+    "name": "Lakes \u2014 Asia",
+    "description": "Lake and reservoir polygons for Asia from HydroLAKES (HydroSHEDS), simplified to ~500m. Each lake carries surface area (km\u00b2), type (lake/reservoir/regulated), average depth, and name (major lakes only).",
+    "source": "hydrolakes",
+    "sourceName": "HydroLAKES",
+    "adminLevel": 0,
+    "region": "asia",
+    "license": "free (attribution)",
+    "tags": [
+      "lakes",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "polygons",
+      "asia"
+    ],
+    "filePath": "hydrolakes/asia.topojson",
+    "featureCount": 68169,
+    "bbox": [
+      25.71155598958319,
+      -11.839143267875897,
+      145.64224650065404,
+      55.410097656249945
+    ],
+    "geometryType": "Polygon"
+  },
+  {
+    "id": "hydrolakes/europe",
+    "name": "Lakes \u2014 Europe",
+    "description": "Lake and reservoir polygons for Europe from HydroLAKES (HydroSHEDS), simplified to ~500m. Each lake carries surface area (km\u00b2), type (lake/reservoir/regulated), average depth, and name (major lakes only).",
+    "source": "hydrolakes",
+    "sourceName": "HydroLAKES",
+    "adminLevel": 0,
+    "region": "europe",
+    "license": "free (attribution)",
+    "tags": [
+      "lakes",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "polygons",
+      "europe"
+    ],
+    "filePath": "hydrolakes/europe.topojson",
+    "featureCount": 281956,
+    "bbox": [
+      -179.9999999999999,
+      4.0280637613935255,
+      179.99999999999903,
+      81.7273097144232
+    ],
+    "geometryType": "Polygon"
+  },
+  {
+    "id": "hydrolakes/north-america",
+    "name": "Lakes \u2014 North America",
+    "description": "Lake and reservoir polygons for North America from HydroLAKES (HydroSHEDS), simplified to ~500m. Each lake carries surface area (km\u00b2), type (lake/reservoir/regulated), average depth, and name (major lakes only).",
+    "source": "hydrolakes",
+    "sourceName": "HydroLAKES",
+    "adminLevel": 0,
+    "region": "north-america",
+    "license": "free (attribution)",
+    "tags": [
+      "lakes",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "polygons",
+      "north-america"
+    ],
+    "filePath": "hydrolakes/north-america.topojson",
+    "featureCount": 994072,
+    "bbox": [
+      -178.0725560722645,
+      8.006759304470677,
+      179.6564739346781,
+      83.5727767944336
+    ],
+    "geometryType": "Polygon"
+  },
+  {
+    "id": "hydrolakes/south-america",
+    "name": "Lakes \u2014 South America",
+    "description": "Lake and reservoir polygons for South America from HydroLAKES (HydroSHEDS), simplified to ~500m. Each lake carries surface area (km\u00b2), type (lake/reservoir/regulated), average depth, and name (major lakes only).",
+    "source": "hydrolakes",
+    "sourceName": "HydroLAKES",
+    "adminLevel": 0,
+    "region": "south-america",
+    "license": "free (attribution)",
+    "tags": [
+      "lakes",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "polygons",
+      "south-america"
+    ],
+    "filePath": "hydrolakes/south-america.topojson",
+    "featureCount": 54048,
+    "bbox": [
+      -91.39442907989013,
+      -55.86497456868497,
+      -34.843092244466504,
+      12.437220358120271
+    ],
+    "geometryType": "Polygon"
+  },
+  {
+    "id": "hydrolakes/oceania",
+    "name": "Lakes \u2014 Oceania",
+    "description": "Lake and reservoir polygons for Oceania from HydroLAKES (HydroSHEDS), simplified to ~500m. Each lake carries surface area (km\u00b2), type (lake/reservoir/regulated), average depth, and name (major lakes only).",
+    "source": "hydrolakes",
+    "sourceName": "HydroLAKES",
+    "adminLevel": 0,
+    "region": "oceania",
+    "license": "free (attribution)",
+    "tags": [
+      "lakes",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "polygons",
+      "oceania"
+    ],
+    "filePath": "hydrolakes/oceania.topojson",
+    "featureCount": 13479,
+    "bbox": [
+      -179.1464458424164,
+      -54.68992389167289,
+      179.5264832899308,
+      15.154007023804581
+    ],
+    "geometryType": "Polygon"
+  }
+]

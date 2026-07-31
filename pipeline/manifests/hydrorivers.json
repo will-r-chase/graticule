@@ -1,0 +1,245 @@
+[
+  {
+    "id": "hydrorivers/af",
+    "name": "Rivers \u2014 Africa",
+    "description": "Full-detail river network for Africa from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "source": "hydrorivers",
+    "sourceName": "HydroRIVERS",
+    "adminLevel": 0,
+    "region": "africa",
+    "license": "free (attribution)",
+    "tags": [
+      "rivers",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "lines",
+      "africa"
+    ],
+    "filePath": "hydrorivers/af.topojson",
+    "featureCount": 1527551,
+    "bbox": [
+      -17.99374999999995,
+      -34.79374999999997,
+      54.41666666666555,
+      37.331249999998924
+    ],
+    "geometryType": "LineString"
+  },
+  {
+    "id": "hydrorivers/ar",
+    "name": "Rivers \u2014 Arctic (North America)",
+    "description": "Full-detail river network for Arctic (North America) from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "source": "hydrorivers",
+    "sourceName": "HydroRIVERS",
+    "adminLevel": 0,
+    "region": "arctic",
+    "license": "free (attribution)",
+    "tags": [
+      "rivers",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "lines",
+      "arctic"
+    ],
+    "filePath": "hydrorivers/ar.topojson",
+    "featureCount": 324078,
+    "bbox": [
+      -179.99791666666667,
+      51.22708333333332,
+      -61.118750000001896,
+      83.2062499999995
+    ],
+    "geometryType": "LineString"
+  },
+  {
+    "id": "hydrorivers/as",
+    "name": "Rivers \u2014 Asia (Central & South-East)",
+    "description": "Full-detail river network for Asia (Central & South-East) from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "source": "hydrorivers",
+    "sourceName": "HydroRIVERS",
+    "adminLevel": 0,
+    "region": "asia",
+    "license": "free (attribution)",
+    "tags": [
+      "rivers",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "lines",
+      "asia"
+    ],
+    "filePath": "hydrorivers/as.topojson",
+    "featureCount": 1428959,
+    "bbox": [
+      57.63958333333335,
+      1.2729166666666387,
+      150.4687499999985,
+      55.89999999999909
+    ],
+    "geometryType": "LineString"
+  },
+  {
+    "id": "hydrorivers/au",
+    "name": "Rivers \u2014 Australasia",
+    "description": "Full-detail river network for Australasia from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "source": "hydrorivers",
+    "sourceName": "HydroRIVERS",
+    "adminLevel": 0,
+    "region": "australasia",
+    "license": "free (attribution)",
+    "tags": [
+      "rivers",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "lines",
+      "australasia"
+    ],
+    "filePath": "hydrorivers/au.topojson",
+    "featureCount": 836472,
+    "bbox": [
+      95.10416666666677,
+      -54.73958333333332,
+      179.99791666666547,
+      20.79583333333219
+    ],
+    "geometryType": "LineString"
+  },
+  {
+    "id": "hydrorivers/eu",
+    "name": "Rivers \u2014 Europe & Middle East",
+    "description": "Full-detail river network for Europe & Middle East from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "source": "hydrorivers",
+    "sourceName": "HydroRIVERS",
+    "adminLevel": 0,
+    "region": "europe",
+    "license": "free (attribution)",
+    "tags": [
+      "rivers",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "lines",
+      "europe"
+    ],
+    "filePath": "hydrorivers/eu.topojson",
+    "featureCount": 938544,
+    "bbox": [
+      -24.472916666666663,
+      12.602083333333333,
+      69.5166666666652,
+      81.78958333333222
+    ],
+    "geometryType": "LineString"
+  },
+  {
+    "id": "hydrorivers/gr",
+    "name": "Rivers \u2014 Greenland",
+    "description": "Full-detail river network for Greenland from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "source": "hydrorivers",
+    "sourceName": "HydroRIVERS",
+    "adminLevel": 0,
+    "region": "greenland",
+    "license": "free (attribution)",
+    "tags": [
+      "rivers",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "lines",
+      "greenland"
+    ],
+    "filePath": "hydrorivers/gr.topojson",
+    "featureCount": 137088,
+    "bbox": [
+      -72.66458333333333,
+      59.80208333333335,
+      -12.30208333333428,
+      83.589583333333
+    ],
+    "geometryType": "LineString"
+  },
+  {
+    "id": "hydrorivers/na",
+    "name": "Rivers \u2014 North America & Caribbean",
+    "description": "Full-detail river network for North America & Caribbean from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "source": "hydrorivers",
+    "sourceName": "HydroRIVERS",
+    "adminLevel": 0,
+    "region": "north-america",
+    "license": "free (attribution)",
+    "tags": [
+      "rivers",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "lines",
+      "north-america"
+    ],
+    "filePath": "hydrorivers/na.topojson",
+    "featureCount": 986463,
+    "bbox": [
+      -137.93541666666664,
+      5.51041666666665,
+      -52.66458333333466,
+      62.67291666666578
+    ],
+    "geometryType": "LineString"
+  },
+  {
+    "id": "hydrorivers/sa",
+    "name": "Rivers \u2014 South America",
+    "description": "Full-detail river network for South America from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "source": "hydrorivers",
+    "sourceName": "HydroRIVERS",
+    "adminLevel": 0,
+    "region": "south-america",
+    "license": "free (attribution)",
+    "tags": [
+      "rivers",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "lines",
+      "south-america"
+    ],
+    "filePath": "hydrorivers/sa.topojson",
+    "featureCount": 1620963,
+    "bbox": [
+      -91.65625,
+      -55.877083333333225,
+      -34.793750000000955,
+      14.877083333332173
+    ],
+    "geometryType": "LineString"
+  },
+  {
+    "id": "hydrorivers/si",
+    "name": "Rivers \u2014 Siberia",
+    "description": "Full-detail river network for Siberia from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "source": "hydrorivers",
+    "sourceName": "HydroRIVERS",
+    "adminLevel": 0,
+    "region": "siberia",
+    "license": "free (attribution)",
+    "tags": [
+      "rivers",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "lines",
+      "siberia"
+    ],
+    "filePath": "hydrorivers/si.topojson",
+    "featureCount": 677765,
+    "bbox": [
+      59.01666666666665,
+      45.60208333333335,
+      179.99791666666474,
+      81.18958333333276
+    ],
+    "geometryType": "LineString"
+  }
+]
