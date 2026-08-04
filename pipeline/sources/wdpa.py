@@ -38,13 +38,13 @@ IUCN_CAT_EXPR = (
 )
 
 IUCN_CAT_NAMES = {
-    "Ia": "Ia — Strict Nature Reserve",
-    "Ib": "Ib — Wilderness Area",
-    "II": "II — National Park",
-    "III": "III — Natural Monument",
-    "IV": "IV — Habitat/Species Management Area",
-    "V": "V — Protected Landscape/Seascape",
-    "VI": "VI — Managed Resource Protected Area",
+    "Ia": "Strict Nature Reserve",
+    "Ib": "Wilderness Area",
+    "II": "National Park",
+    "III": "Natural Monument",
+    "IV": "Habitat/Species Management Area",
+    "V": "Protected Landscape/Seascape",
+    "VI": "Managed Resource Protected Area",
     "Unclassified": "Unclassified",
 }
 
@@ -226,32 +226,8 @@ class WDPA(DataSource):
         point_shps = sorted(extracted.glob("**/*-points.shp"))
         print(f"      Found {len(poly_shps)} polygon parts, {len(point_shps)} point parts", flush=True)
 
-        # Points: small enough (~8k features) to merge + split by category in one pass.
-        if point_shps:
-            print("\n  Converting points via mapshaper...", flush=True)
-            t1 = time.time()
-            out_path = self.output_dir / "wdpa/points.topojson"
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            args = ["mapshaper"]
-            names = []
-            for i, p in enumerate(point_shps):
-                n = f"p{i}"
-                names.append(n)
-                args += ["-i", str(p), f"name={n}"]
-            args += ["-merge-layers", f"target={','.join(names)}", "force", "name=wdpa_points"]
-            args += ["-each", IUCN_CAT_EXPR, "-split", "IUCN_CAT"]
-            args += ["-o", "format=topojson", "quantization=1000000", "bbox", str(out_path)]
-            result = subprocess.run(args, capture_output=True, text=True, timeout=300)
-            if result.returncode != 0:
-                print(f"      ✗ ERROR: {result.stderr.strip()}", flush=True)
-            else:
-                results.append(_dataset_from_topojson(
-                    out_path, self.output_dir, "wdpa/points", "Protected Areas (Points)",
-                    "Protected areas reported without boundary geometry, as center points, "
-                    "split by IUCN management category.",
-                    ["protected-areas", "conservation", "world", "points"],
-                ))
-                print(f"      Done: {out_path.stat().st_size / 1024 / 1024:.1f}MB in {time.time() - t1:.1f}s", flush=True)
+        # Points (protected areas reported without boundary geometry) are
+        # intentionally not produced — dropped from the catalog by decision.
 
         # Polygons: split each part by category first (cheap, no topology), then
         # merge only within each category — small enough to fit comfortably.
@@ -306,7 +282,7 @@ class WDPA(DataSource):
                         realm_parts = [d / f"{realm}.shp" for d in realm_split_dirs if (d / f"{realm}.shp").exists()]
                         object_name = f"Unclassified_{realm}"
                         out_path = out_dir / f"{object_name}.topojson"
-                        _record(_merge_group(realm_parts, object_name, f"Unclassified — {realm}",
+                        _record(_merge_group(realm_parts, object_name, f"Unclassified {realm}",
                                               out_path, self.output_dir))
                     continue
 
@@ -316,7 +292,7 @@ class WDPA(DataSource):
             if layers:
                 results.append(DatasetMeta(
                     id="wdpa/polygons",
-                    name="Protected Areas (Polygons)",
+                    name="Protected Areas",
                     description="Terrestrial and marine protected area boundaries, "
                                 "split by IUCN management category.",
                     source="wdpa",

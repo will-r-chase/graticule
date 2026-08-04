@@ -3,24 +3,22 @@ HydroLAKES — global lake & reservoir polygons from HydroSHEDS — https://www.
 License: free for non-commercial and commercial use; attribution/citation requested
 (Messager et al. (2016), Nature Communications 7:13603).
 
-Distributed as ONE global shapefile (1,427,688 polygons, floored at 0.1 km²) with
-no regional tiles — so we split by the `Continent` attribute (6 values). Unlike
-rivers, lake shorelines are digitized at ~30m and are wildly over-detailed for a
-base map (the Caspian/Great Lakes alone are tens of MB), so we DO simplify: a 500m
-interval (still ~3x finer than Natural Earth 1:10m) cuts the largest tile — North
-America, 994k lakes, ~60% of the dataset — from a ~1GB string-cap risk to ~24MB
-brotli. That makes a clean per-continent split viable with no size-tiering. See
-memory [[project_hydrolakes]] for the sizing analysis.
+Distributed as ONE global shapefile (1,427,688 polygons, floored at 0.1 km²).
+Lake shorelines are digitized at ~30m and are wildly over-detailed for a base map,
+so we simplify to a 500m interval (still ~3x finer than Natural Earth 1:10m).
 
-`keep-shapes` stops the smallest lakes collapsing under simplification. `-clean
-allow-overlaps` (to repair simplification self-intersections) is intentionally
-NOT applied: lakes don't overlap each other, quantization + keep-shapes handle the
-within-ring case, and clean is very slow on ~1M polygons. Add it later per-continent
-only if self-intersection artifacts appear in the app.
+Broken into SIZE TIERS by Lake_area, not one file per continent:
+  - Major (>=100 km²)   -> one global file      (~0.6MB br; 1,708 lakes)
+  - Mid   (10-100 km²)  -> one global file      (~0.9MB br; 14,981 lakes)
+  - Minor (<10 km²)     -> one file per continent (the ~1.4M-lake bulk)
+The big tiers are tiny globally, so only the minor bulk needs per-continent
+splitting. See memory [[project_hydrolakes]] for the sizing analysis.
 
-Processed as a one-off (see run_hydrolakes_once.py), not part of the regular
-pipeline run — the single global zip is downloaded manually into
-pipeline/raw_data/hydrolakes/.
+`keep-shapes` stops the smallest lakes collapsing under simplification. `-clean`
+is intentionally not applied (lakes don't overlap; slow on ~1M polys).
+
+Processed as a one-off (see run_hydrolakes_once.py). The single global zip is
+downloaded manually into pipeline/raw_data/hydrolakes/.
 """
 
 import json
@@ -36,13 +34,11 @@ HYDROLAKES_DIR = Path(__file__).parent.parent / "raw_data/hydrolakes"
 
 MAPSHAPER_ENV = {**os.environ, "NODE_OPTIONS": "--max-old-space-size=8192"}
 
-# 500m interval — finer than Natural Earth 1:10m (~1.8km vertex spacing), far
-# below the 30m source. keep-shapes prevents 0.1km² lakes collapsing. See docstring.
 SIMPLIFY_INTERVAL = "500m"
 
-# 5 of the 21 attributes. Hylak_id = identity; Lake_area = size (km², the styling
+# 5 of the 21 attributes. Hylak_id = identity; Lake_area = size (km², styling
 # lever); Lake_type = 1 lake / 2 reservoir / 3 regulated; Depth_avg = avg depth;
-# Lake_name = label (only populated for lakes ≥500km² and named reservoirs, ~0.2%).
+# Lake_name = label (only populated for lakes ≥500km² and named reservoirs).
 KEEP_FIELDS = "Hylak_id,Lake_name,Lake_area,Lake_type,Depth_avg"
 
 # `Continent` field value -> (display name, catalog `region` value / filename slug)
@@ -56,13 +52,13 @@ CONTINENTS = {
 }
 
 
-def _convert_continent(shp_path: Path, continent: str, out_path: Path, timeout: int = 1800) -> tuple[int, list[float]]:
-    """Filter one continent's lakes, simplify, and write a TopoJSON layer.
+def _convert(shp_path: Path, filter_expr: str, out_path: Path, timeout: int = 1800) -> tuple[int, list[float]]:
+    """Filter the global lake shapefile by `filter_expr`, simplify, write TopoJSON.
     Returns (feature_count, bbox)."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     args = [
         "mapshaper", str(shp_path),
-        "-filter", f'Continent=="{continent}"',
+        "-filter", filter_expr,
         "-filter-fields", KEEP_FIELDS,
         "-simplify", f"interval={SIMPLIFY_INTERVAL}", "keep-shapes",
         "-rename-layers", "lakes",
@@ -79,12 +75,22 @@ def _convert_continent(shp_path: Path, continent: str, out_path: Path, timeout: 
     return count, topo.get("bbox", [-180, -90, 180, 90])
 
 
+def _dataset(id_: str, name: str, description: str, region: str, file_path: str,
+             count: int, bbox: list[float]) -> DatasetMeta:
+    return DatasetMeta(
+        id=id_, name=name, description=description,
+        source="hydrolakes", source_name="HydroLAKES",
+        admin_level=0, region=region, license="free (attribution)",
+        tags=["lakes", "water", "hydrology", "hydrosheds", "polygons", region],
+        file_path=file_path, feature_count=count, bbox=bbox, geometry_type="Polygon",
+    )
+
+
 class HydroLakes(DataSource):
     def fetch(self) -> list[DatasetMeta]:
         if not HYDROLAKES_DIR.exists():
             print(f"[hydrolakes] WARNING: {HYDROLAKES_DIR} not found, skipping", flush=True)
             return []
-
         zips = list(HYDROLAKES_DIR.glob("HydroLAKES_polys_v10_shp.zip"))
         if not zips:
             print(f"[hydrolakes] WARNING: no zip found in {HYDROLAKES_DIR}, skipping", flush=True)
@@ -103,46 +109,42 @@ class HydroLakes(DataSource):
 
         results = []
         t0 = time.time()
-        for continent, (display, region) in CONTINENTS.items():
-            out_path = self.output_dir / f"hydrolakes/{region}.topojson"
+
+        def build(label, out_path, filter_expr, meta_fn):
             if out_path.exists():
                 with open(out_path) as f:
                     topo = json.load(f)
                 count = len(topo["objects"]["lakes"]["geometries"])
                 bbox = topo.get("bbox", [-180, -90, 180, 90])
-                print(f"\n  {display} already converted, reusing ({count:,} lakes)", flush=True)
+                print(f"\n  {label} already built, reusing ({count:,} lakes)", flush=True)
             else:
-                print(f"\n  Converting {display}...", flush=True)
+                print(f"\n  Building {label}...", flush=True)
                 t1 = time.time()
-                try:
-                    count, bbox = _convert_continent(shp, continent, out_path)
-                except Exception as e:
-                    print(f"      ✗ FAILED: {e}", flush=True)
-                    continue
-                size_mb = out_path.stat().st_size / 1048576
-                print(f"      Done: {count:,} lakes, {size_mb:.1f}MB in {time.time() - t1:.1f}s", flush=True)
+                count, bbox = _convert(shp, filter_expr, out_path)
+                print(f"      Done: {count:,} lakes, {out_path.stat().st_size / 1048576:.1f}MB "
+                      f"in {time.time() - t1:.1f}s", flush=True)
+            results.append(meta_fn(count, bbox))
 
-            results.append(DatasetMeta(
-                id=f"hydrolakes/{region}",
-                name=f"Lakes — {display}",
-                description=(
-                    f"Lake and reservoir polygons for {display} from HydroLAKES "
-                    f"(HydroSHEDS), simplified to ~500m. Each lake carries surface area "
-                    f"(km²), type (lake/reservoir/regulated), average depth, and name "
-                    f"(major lakes only)."
-                ),
-                source="hydrolakes",
-                source_name="HydroLAKES",
-                admin_level=0,
-                region=region,
-                license="free (attribution)",
-                tags=["lakes", "water", "hydrology", "hydrosheds", "polygons", region],
-                file_path=f"hydrolakes/{region}.topojson",
-                feature_count=count,
-                bbox=bbox,
-                geometry_type="Polygon",
-            ))
+        # Major (>=100 km²) and Mid (10-100 km²) — single global files.
+        build("Major lakes", self.output_dir / "hydrolakes/major.topojson", "Lake_area>=100",
+              lambda c, b: _dataset(
+                  "hydrolakes/major", "Major lakes",
+                  "Large lakes and reservoirs worldwide (≥100 km²) from HydroLAKES, "
+                  "simplified to ~500m.", "world", "hydrolakes/major.topojson", c, b))
+        build("Mid lakes", self.output_dir / "hydrolakes/mid.topojson", "Lake_area>=10 && Lake_area<100",
+              lambda c, b: _dataset(
+                  "hydrolakes/mid", "Mid lakes",
+                  "Medium lakes and reservoirs worldwide (10–100 km²) from HydroLAKES, "
+                  "simplified to ~500m.", "world", "hydrolakes/mid.topojson", c, b))
 
-        print(f"\n  ✓ HydroLAKES complete in {time.time() - t0:.1f}s "
-              f"({len(results)} continent(s))", flush=True)
+        # Minor (<10 km²) — one file per continent (the ~1.4M-lake bulk).
+        for continent, (display, region) in CONTINENTS.items():
+            build(f"Minor lakes — {display}", self.output_dir / f"hydrolakes/minor/{region}.topojson",
+                  f'Lake_area<10 && Continent=="{continent}"',
+                  lambda c, b, display=display, region=region: _dataset(
+                      f"hydrolakes/minor-{region}", f"Minor lakes — {display}",
+                      f"Small lakes and reservoirs in {display} (<10 km²) from HydroLAKES, "
+                      f"simplified to ~500m.", region, f"hydrolakes/minor/{region}.topojson", c, b))
+
+        print(f"\n  ✓ HydroLAKES complete in {time.time() - t0:.1f}s ({len(results)} datasets)", flush=True)
         return results

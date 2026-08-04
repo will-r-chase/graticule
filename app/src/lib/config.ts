@@ -132,6 +132,10 @@ export const SOURCE_CONFIG: Record<string, { label: string; bg: string; text: st
 	'tiger': { label: 'US Census', bg: 'var(--grey-200)', text: 'var(--grey-700)' },
 	'eurostat': { label: 'Eurostat', bg: 'var(--grey-200)', text: 'var(--grey-700)' },
 	'project-linework': { label: 'Project Linework', bg: 'var(--grey-200)', text: 'var(--grey-700)' },
+	'hydrorivers': { label: 'HydroRIVERS', bg: 'var(--grey-200)', text: 'var(--grey-700)' },
+	'hydrolakes': { label: 'HydroLAKES', bg: 'var(--grey-200)', text: 'var(--grey-700)' },
+	'wdpa': { label: 'WDPA', bg: 'var(--grey-200)', text: 'var(--grey-700)' },
+	'geonames': { label: 'GeoNames', bg: 'var(--grey-200)', text: 'var(--grey-700)' },
 	'custom': { label: 'Custom', bg: 'var(--grey-200)', text: 'var(--grey-700)' },
 };
 
@@ -149,6 +153,10 @@ export const SOURCE_ORDER: string[] = [
 	'tiger',
 	'eurostat',
 	'project-linework',
+	'hydrorivers',
+	'hydrolakes',
+	'wdpa',
+	'geonames',
 	'custom',
 ];
 

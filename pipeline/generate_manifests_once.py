@@ -23,115 +23,83 @@ import pandas as pd
 
 from . import catalog
 from .rename_wdpa_layers_once import SLUGS
-from .sources.base import DatasetMeta, LayerMeta
+from .sources.base import DatasetMeta
 from .sources.geonames import CATEGORY_DISPLAY_NAMES, GROUPS
-from .sources.wdpa import IUCN_CAT_NAMES, _dataset_from_topojson
+from .sources.wdpa import IUCN_CAT_NAMES
 
 WDPA_OUT = Path(__file__).parent / "raw_data/wdpa/output"
 GEONAMES_OUT = Path(__file__).parent / "raw_data/geonames/output"
 
 
-def _union_bbox(acc, bbox):
-    if bbox is None:
-        return acc
-    if acc is None:
-        return list(bbox)
-    return [min(acc[0], bbox[0]), min(acc[1], bbox[1]),
-            max(acc[2], bbox[2]), max(acc[3], bbox[3])]
-
-
 def wdpa_datasets(output_dir: Path) -> list[DatasetMeta]:
+    # Points (protected areas reported without boundary geometry) are dropped
+    # from the catalog by decision — polygons only.
     datasets = []
 
-    points_path = output_dir / "wdpa/points.topojson"
-    if points_path.exists():
-        datasets.append(_dataset_from_topojson(
-            points_path, output_dir, "wdpa/points", "Protected Areas (Points)",
-            "Protected areas reported without boundary geometry, as center points, "
-            "split by IUCN management category.",
-            ["protected-areas", "conservation", "world", "points"],
-        ))
-
     # slug (on-disk object name) -> human display name. Standard categories map
-    # back through IUCN_CAT_NAMES; the Unclassified_<realm> splits become
-    # "Unclassified — <realm>", matching WDPA.fetch()'s naming.
+    # back through IUCN_CAT_NAMES (semantic name, no IUCN code); the
+    # Unclassified_<realm> splits become "Unclassified <realm>".
     slug_display = {}
     for iucn, slug in SLUGS.items():
         if iucn in IUCN_CAT_NAMES:
             slug_display[slug] = IUCN_CAT_NAMES[iucn]
         else:
-            slug_display[slug] = f"Unclassified — {iucn.split('_', 1)[1]}"
+            slug_display[slug] = f"Unclassified {iucn.split('_', 1)[1]}"
 
+    # One standalone dataset per IUCN category (each is its own single-file
+    # polygon layer), rather than a single "Protected Areas" dataset with many
+    # layers.
     poly_dir = output_dir / "wdpa/polygons"
-    layers, total_count, total_bbox = [], 0, None
     for p in sorted(poly_dir.glob("*.topojson")):
         topo = json.load(open(p))
-        for object_name, obj in topo["objects"].items():
-            layers.append(LayerMeta(
-                name=slug_display.get(object_name, object_name),
-                object_name=object_name,
-                file_path=str(p.relative_to(output_dir)),
-            ))
-            total_count += len(obj["geometries"])
-        total_bbox = _union_bbox(total_bbox, topo.get("bbox"))
-
-    if layers:
+        object_name = next(iter(topo["objects"]))  # one object per file
+        name = slug_display.get(object_name, object_name)
         datasets.append(DatasetMeta(
-            id="wdpa/polygons",
-            name="Protected Areas (Polygons)",
-            description="Terrestrial and marine protected area boundaries, "
-                        "split by IUCN management category.",
+            id=f"wdpa/{object_name}",
+            name=name,
+            description=f"{name} — protected area boundaries from the WDPA.",
             source="wdpa",
             source_name="WDPA",
             admin_level=0,
             region="world",
             license="non-commercial",
             tags=["protected-areas", "conservation", "world", "polygons"],
-            file_path="wdpa/polygons",
-            feature_count=total_count,
-            bbox=total_bbox or [-180, -90, 180, 90],
-            layers=layers,
+            file_path=str(p.relative_to(output_dir)),
+            feature_count=len(topo["objects"][object_name]["geometries"]),
+            bbox=topo.get("bbox", [-180, -90, 180, 90]),
+            geometry_type="Polygon",
         ))
     return datasets
 
 
 def geonames_datasets(output_dir: Path) -> list[DatasetMeta]:
     datasets = []
+    # One standalone dataset per category CSV (not grouped multi-layer datasets),
+    # so each loads independently. Mirrors GeoNames.fetch().
     for group, meta in GROUPS.items():
         group_dir = output_dir / "geonames" / group
         if not group_dir.exists():
             continue
-        layers, total_count, total_bbox = [], 0, None
         for csv in sorted(group_dir.glob("*.csv")):
             category = csv.stem
             df = pd.read_csv(csv, usecols=["latitude", "longitude"])
             lon = pd.to_numeric(df["longitude"], errors="coerce")
             lat = pd.to_numeric(df["latitude"], errors="coerce")
             bbox = [float(lon.min()), float(lat.min()), float(lon.max()), float(lat.max())]
-            layers.append(LayerMeta(
-                name=CATEGORY_DISPLAY_NAMES[group].get(category, category),
-                object_name=category,
-                file_path=str(csv.relative_to(output_dir)),
-                geometry_type="Point",
-            ))
-            total_count += len(df)
-            total_bbox = _union_bbox(total_bbox, bbox)
-
-        if layers:
+            display_name = CATEGORY_DISPLAY_NAMES[group].get(category, category)
             datasets.append(DatasetMeta(
-                id=f"geonames/{group.replace('_', '-')}",
-                name=meta["name"],
-                description=meta["description"],
+                id=f"geonames/{group}-{category}".replace("_", "-"),
+                name=display_name,
+                description=f"{display_name} worldwide — GeoNames point data.",
                 source="geonames",
                 source_name="GeoNames",
                 admin_level=0,
                 region="world",
                 license="CC-BY 4.0",
                 tags=meta["tags"],
-                file_path=f"geonames/{group}",
-                feature_count=total_count,
-                bbox=total_bbox or [-180, -90, 180, 90],
-                layers=layers,
+                file_path=str(csv.relative_to(output_dir)),
+                feature_count=len(df),
+                bbox=bbox,
                 geometry_type="Point",
             ))
     return datasets

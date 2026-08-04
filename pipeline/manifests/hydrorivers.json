@@ -1,8 +1,62 @@
 [
   {
-    "id": "hydrorivers/af",
-    "name": "Rivers \u2014 Africa",
-    "description": "Full-detail river network for Africa from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "id": "hydrorivers/major",
+    "name": "Major rivers",
+    "description": "The world's major rivers (long-term discharge \u2265100 m\u00b3/s) from HydroRIVERS, full detail.",
+    "source": "hydrorivers",
+    "sourceName": "HydroRIVERS",
+    "adminLevel": 0,
+    "region": "world",
+    "license": "free (attribution)",
+    "tags": [
+      "rivers",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "lines",
+      "world"
+    ],
+    "filePath": "hydrorivers/major.topojson",
+    "featureCount": 273191,
+    "bbox": [
+      -178.78125000000006,
+      -52.70625000000005,
+      179.99791666666474,
+      80.65624999999969
+    ],
+    "geometryType": "LineString"
+  },
+  {
+    "id": "hydrorivers/mid",
+    "name": "Mid rivers",
+    "description": "Mid-sized rivers worldwide (discharge ~10\u2013100 m\u00b3/s) from HydroRIVERS, full detail.",
+    "source": "hydrorivers",
+    "sourceName": "HydroRIVERS",
+    "adminLevel": 0,
+    "region": "world",
+    "license": "free (attribution)",
+    "tags": [
+      "rivers",
+      "water",
+      "hydrology",
+      "hydrosheds",
+      "lines",
+      "world"
+    ],
+    "filePath": "hydrorivers/mid.topojson",
+    "featureCount": 584019,
+    "bbox": [
+      -179.66041666666666,
+      -54.56875000000003,
+      179.99791666666474,
+      83.19791666666615
+    ],
+    "geometryType": "LineString"
+  },
+  {
+    "id": "hydrorivers/minor-af",
+    "name": "Minor rivers \u2014 Africa",
+    "description": "Small rivers and streams in Africa (discharge <10 m\u00b3/s) from HydroRIVERS, full detail.",
     "source": "hydrorivers",
     "sourceName": "HydroRIVERS",
     "adminLevel": 0,
@@ -16,8 +70,8 @@
       "lines",
       "africa"
     ],
-    "filePath": "hydrorivers/af.topojson",
-    "featureCount": 1527551,
+    "filePath": "hydrorivers/minor/af.topojson",
+    "featureCount": 1410737,
     "bbox": [
       -17.99374999999995,
       -34.79374999999997,
@@ -27,9 +81,9 @@
     "geometryType": "LineString"
   },
   {
-    "id": "hydrorivers/ar",
-    "name": "Rivers \u2014 Arctic (North America)",
-    "description": "Full-detail river network for Arctic (North America) from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "id": "hydrorivers/minor-ar",
+    "name": "Minor rivers \u2014 Arctic (North America)",
+    "description": "Small rivers and streams in Arctic (North America) (discharge <10 m\u00b3/s) from HydroRIVERS, full detail.",
     "source": "hydrorivers",
     "sourceName": "HydroRIVERS",
     "adminLevel": 0,
@@ -43,8 +97,8 @@
       "lines",
       "arctic"
     ],
-    "filePath": "hydrorivers/ar.topojson",
-    "featureCount": 324078,
+    "filePath": "hydrorivers/minor/ar.topojson",
+    "featureCount": 293366,
     "bbox": [
       -179.99791666666667,
       51.22708333333332,
@@ -54,9 +108,9 @@
     "geometryType": "LineString"
   },
   {
-    "id": "hydrorivers/as",
-    "name": "Rivers \u2014 Asia (Central & South-East)",
-    "description": "Full-detail river network for Asia (Central & South-East) from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "id": "hydrorivers/minor-as",
+    "name": "Minor rivers \u2014 Asia (Central & South-East)",
+    "description": "Small rivers and streams in Asia (Central & South-East) (discharge <10 m\u00b3/s) from HydroRIVERS, full detail.",
     "source": "hydrorivers",
     "sourceName": "HydroRIVERS",
     "adminLevel": 0,
@@ -70,8 +124,8 @@
       "lines",
       "asia"
     ],
-    "filePath": "hydrorivers/as.topojson",
-    "featureCount": 1428959,
+    "filePath": "hydrorivers/minor/as.topojson",
+    "featureCount": 1273010,
     "bbox": [
       57.63958333333335,
       1.2729166666666387,
@@ -81,9 +135,9 @@
     "geometryType": "LineString"
   },
   {
-    "id": "hydrorivers/au",
-    "name": "Rivers \u2014 Australasia",
-    "description": "Full-detail river network for Australasia from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "id": "hydrorivers/minor-au",
+    "name": "Minor rivers \u2014 Australasia",
+    "description": "Small rivers and streams in Australasia (discharge <10 m\u00b3/s) from HydroRIVERS, full detail.",
     "source": "hydrorivers",
     "sourceName": "HydroRIVERS",
     "adminLevel": 0,
@@ -97,8 +151,8 @@
       "lines",
       "australasia"
     ],
-    "filePath": "hydrorivers/au.topojson",
-    "featureCount": 836472,
+    "filePath": "hydrorivers/minor/au.topojson",
+    "featureCount": 762825,
     "bbox": [
       95.10416666666677,
       -54.73958333333332,
@@ -108,9 +162,9 @@
     "geometryType": "LineString"
   },
   {
-    "id": "hydrorivers/eu",
-    "name": "Rivers \u2014 Europe & Middle East",
-    "description": "Full-detail river network for Europe & Middle East from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "id": "hydrorivers/minor-eu",
+    "name": "Minor rivers \u2014 Europe & Middle East",
+    "description": "Small rivers and streams in Europe & Middle East (discharge <10 m\u00b3/s) from HydroRIVERS, full detail.",
     "source": "hydrorivers",
     "sourceName": "HydroRIVERS",
     "adminLevel": 0,
@@ -124,8 +178,8 @@
       "lines",
       "europe"
     ],
-    "filePath": "hydrorivers/eu.topojson",
-    "featureCount": 938544,
+    "filePath": "hydrorivers/minor/eu.topojson",
+    "featureCount": 862304,
     "bbox": [
       -24.472916666666663,
       12.602083333333333,
@@ -135,9 +189,9 @@
     "geometryType": "LineString"
   },
   {
-    "id": "hydrorivers/gr",
-    "name": "Rivers \u2014 Greenland",
-    "description": "Full-detail river network for Greenland from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "id": "hydrorivers/minor-gr",
+    "name": "Minor rivers \u2014 Greenland",
+    "description": "Small rivers and streams in Greenland (discharge <10 m\u00b3/s) from HydroRIVERS, full detail.",
     "source": "hydrorivers",
     "sourceName": "HydroRIVERS",
     "adminLevel": 0,
@@ -151,8 +205,8 @@
       "lines",
       "greenland"
     ],
-    "filePath": "hydrorivers/gr.topojson",
-    "featureCount": 137088,
+    "filePath": "hydrorivers/minor/gr.topojson",
+    "featureCount": 133359,
     "bbox": [
       -72.66458333333333,
       59.80208333333335,
@@ -162,9 +216,9 @@
     "geometryType": "LineString"
   },
   {
-    "id": "hydrorivers/na",
-    "name": "Rivers \u2014 North America & Caribbean",
-    "description": "Full-detail river network for North America & Caribbean from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "id": "hydrorivers/minor-na",
+    "name": "Minor rivers \u2014 North America & Caribbean",
+    "description": "Small rivers and streams in North America & Caribbean (discharge <10 m\u00b3/s) from HydroRIVERS, full detail.",
     "source": "hydrorivers",
     "sourceName": "HydroRIVERS",
     "adminLevel": 0,
@@ -178,8 +232,8 @@
       "lines",
       "north-america"
     ],
-    "filePath": "hydrorivers/na.topojson",
-    "featureCount": 986463,
+    "filePath": "hydrorivers/minor/na.topojson",
+    "featureCount": 883175,
     "bbox": [
       -137.93541666666664,
       5.51041666666665,
@@ -189,9 +243,9 @@
     "geometryType": "LineString"
   },
   {
-    "id": "hydrorivers/sa",
-    "name": "Rivers \u2014 South America",
-    "description": "Full-detail river network for South America from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "id": "hydrorivers/minor-sa",
+    "name": "Minor rivers \u2014 South America",
+    "description": "Small rivers and streams in South America (discharge <10 m\u00b3/s) from HydroRIVERS, full detail.",
     "source": "hydrorivers",
     "sourceName": "HydroRIVERS",
     "adminLevel": 0,
@@ -205,8 +259,8 @@
       "lines",
       "south-america"
     ],
-    "filePath": "hydrorivers/sa.topojson",
-    "featureCount": 1620963,
+    "filePath": "hydrorivers/minor/sa.topojson",
+    "featureCount": 1394240,
     "bbox": [
       -91.65625,
       -55.877083333333225,
@@ -216,9 +270,9 @@
     "geometryType": "LineString"
   },
   {
-    "id": "hydrorivers/si",
-    "name": "Rivers \u2014 Siberia",
-    "description": "Full-detail river network for Siberia from HydroRIVERS (HydroSHEDS). Each reach carries flow-based order (ORD_FLOW), main-stem order (ORD_CLAS), average discharge, upstream drainage area, and length.",
+    "id": "hydrorivers/minor-si",
+    "name": "Minor rivers \u2014 Siberia",
+    "description": "Small rivers and streams in Siberia (discharge <10 m\u00b3/s) from HydroRIVERS, full detail.",
     "source": "hydrorivers",
     "sourceName": "HydroRIVERS",
     "adminLevel": 0,
@@ -232,8 +286,8 @@
       "lines",
       "siberia"
     ],
-    "filePath": "hydrorivers/si.topojson",
-    "featureCount": 677765,
+    "filePath": "hydrorivers/minor/si.topojson",
+    "featureCount": 607657,
     "bbox": [
       59.01666666666665,
       45.60208333333335,

@@ -318,47 +318,30 @@ class GeoNames(DataSource):
         category_stats = write_category_files(data_path, cc_continent, self.output_dir / "geonames")
         print(f"      Done in {time.time() - t0:.1f}s, {len(category_stats)} category files", flush=True)
 
+        # One standalone dataset per category (each its own CSV file), NOT grouped
+        # into a few multi-layer datasets — so loading e.g. "Lakes" doesn't pull in
+        # every water feature. Group tags are carried through for catalog filtering.
         results = []
-        for group, meta in GROUPS.items():
-            layers = []
-            total_count = 0
-            total_bbox = None
-            for (g, category), stats in sorted(category_stats.items()):
-                if g != group:
-                    continue
-                display_name = CATEGORY_DISPLAY_NAMES[group].get(category, category)
-                layers.append(LayerMeta(
-                    name=display_name, object_name=category,
-                    file_path=str(stats["path"].relative_to(self.output_dir)),
-                    geometry_type="Point",
-                ))
-                total_count += stats["count"]
-                bbox = stats["bbox"]
-                total_bbox = bbox if total_bbox is None else [
-                    min(total_bbox[0], bbox[0]), min(total_bbox[1], bbox[1]),
-                    max(total_bbox[2], bbox[2]), max(total_bbox[3], bbox[3]),
-                ]
-                print(f"      {display_name}: {stats['count']:,} features, "
-                      f"{stats['path'].stat().st_size / 1024 / 1024:.1f}MB", flush=True)
-
-            if layers:
-                results.append(DatasetMeta(
-                    id=f"geonames/{group.replace('_', '-')}",
-                    name=meta["name"],
-                    description=meta["description"],
-                    source="geonames",
-                    source_name="GeoNames",
-                    admin_level=0,
-                    region="world",
-                    license="CC-BY 4.0",
-                    tags=meta["tags"],
-                    file_path=f"geonames/{group}",
-                    feature_count=total_count,
-                    bbox=total_bbox or [-180, -90, 180, 90],
-                    layers=layers,
-                    geometry_type="Point",
-                ))
+        for (group, category), stats in sorted(category_stats.items()):
+            display_name = CATEGORY_DISPLAY_NAMES[group].get(category, category)
+            print(f"      {display_name}: {stats['count']:,} features, "
+                  f"{stats['path'].stat().st_size / 1024 / 1024:.1f}MB", flush=True)
+            results.append(DatasetMeta(
+                id=f"geonames/{group}-{category}".replace("_", "-"),
+                name=display_name,
+                description=f"{display_name} worldwide — GeoNames point data.",
+                source="geonames",
+                source_name="GeoNames",
+                admin_level=0,
+                region="world",
+                license="CC-BY 4.0",
+                tags=GROUPS[group]["tags"],
+                file_path=str(stats["path"].relative_to(self.output_dir)),
+                feature_count=stats["count"],
+                bbox=stats["bbox"] or [-180, -90, 180, 90],
+                geometry_type="Point",
+            ))
 
         elapsed = time.time() - t0
-        print(f"\n  ✓ GeoNames complete in {elapsed:.1f}s", flush=True)
+        print(f"\n  ✓ GeoNames complete in {elapsed:.1f}s ({len(results)} datasets)", flush=True)
         return results
