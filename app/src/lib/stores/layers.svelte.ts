@@ -4,6 +4,7 @@ import type { Layer, LayerStyle, LayerProcessing, LabelStyle, Dataset } from '$l
 import { catalog } from './catalog.svelte';
 import { countTopoPoints } from '$lib/utils/chaikin';
 import { computeLabelGeometries, guessLabelAttribute } from '$lib/utils/labels';
+import { csvToPointTopology } from '$lib/utils/csv';
 import { topologyToAbsolute } from '$lib/utils/topology';
 import { workerChaikin } from '$lib/workers/geoWorker';
 import { workerSimplify } from '$lib/workers/simplifyWorker';
@@ -305,6 +306,11 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 		const id = generateId();
 		const name = copies === 0 ? dataset.name : `${dataset.name} (${copies + 1})`;
 
+		// A CSV catalog entry (currently GeoNames) becomes a label layer: the CSV is
+		// converted to an inline-coordinate point topology and the `name` column is
+		// drawn as text. TopoJSON entries keep the existing geometry behaviour.
+		const isCsv = dataset.filePath.endsWith('.csv');
+
 		layers.unshift({
 			id,
 			geometryId: generateId(),
@@ -317,8 +323,8 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 			hasTopology: false,
 			style: defaultStyle(),
 			processing: defaultProcessing(),
-			kind: 'geometry',
-			labelAttribute: null,
+			kind: isCsv ? 'label' : 'geometry',
+			labelAttribute: isCsv ? 'name' : null,
 			labelStyle: defaultLabelStyle(),
 			derivedFrom: null,
 			geometryTypes: [],
@@ -328,13 +334,15 @@ export function addLayer(dataset: Dataset, onStart?: () => void, onComplete?: ()
 		fetch(`${catalog.baseURL}/${dataset.filePath}`)
 			.then((r) => {
 				if (!r.ok) throw new Error(`HTTP ${r.status}`);
-				return r.json() as Promise<Topology>;
+				return isCsv ? r.text() : (r.json() as Promise<Topology>);
 			})
-			.then((topology) => {
+			.then((data) => {
 				const layer = layers.find((l) => l.id === id);
 				if (!layer) return;
+				const topology = isCsv ? csvToPointTopology(data as string) : (data as Topology);
 				rawTopologyData.set(layer.geometryId, topology);
-				return runLayerPipeline(id);
+				// applyDefaults=false for labels, mirroring createLabelLayer.
+				return runLayerPipeline(id, !isCsv);
 			})
 			.then(() => {
 				onComplete?.();
