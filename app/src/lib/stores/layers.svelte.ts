@@ -66,6 +66,7 @@ function defaultStyle() {
 	return {
 		fill: 'none',
 		fillOpacity: 1,
+		fillPattern: null,
 		stroke: '#161819',
 		strokeOpacity: 1,
 		strokeWidth: 0.5,

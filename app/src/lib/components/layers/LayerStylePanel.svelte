@@ -3,6 +3,8 @@
 	import { X } from 'phosphor-svelte';
 	import ColorPickerPopup from '$lib/components/ui/ColorPickerPopup.svelte';
 	import ShapeSelect from '$lib/components/ui/ShapeSelect.svelte';
+	import Combobox from '$lib/components/ui/Combobox.svelte';
+	import { patternOptions, patternId, specFromPatternId, type FillPattern } from '$lib/utils/patterns';
 	import { updateLayerStyle } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import type { Layer } from '$lib/types';
@@ -17,6 +19,15 @@
 	let fillHex    = $state(layer.style.fill === 'none' ? '#ffffff' : layer.style.fill);
 	let fillAlpha  = $state(layer.style.fillOpacity);
 
+	// Pattern fill (polygons). The dropdown id encodes type + variant; size/weight are the tile
+	// size and the line thickness (dot radius for dots).
+	// patternSel keeps the last pick while the toggle is off, so re-enabling restores it.
+	let patternEnabled = $state(layer.style.fillPattern !== null);
+	let patternSel    = $state(layer.style.fillPattern ? patternId(layer.style.fillPattern) : 'lines:diagonal');
+	const pickableOptions = patternOptions.filter((o) => o.id !== 'none');
+	let patternSize   = $state(layer.style.fillPattern?.size ?? 8);
+	let patternWeight = $state(layer.style.fillPattern?.weight ?? 1);
+
 	let strokeEnabled = $state(layer.style.stroke !== 'none');
 	let strokeHex   = $state(layer.style.stroke === 'none' ? '#161819' : layer.style.stroke);
 	let strokeAlpha = $state(layer.style.strokeOpacity);
@@ -29,6 +40,7 @@
 	let pointShape   = $state(layer.style.pointShape);
 
 	const hasPoints   = $derived(layer.geometryTypes.some(t => t === 'Point' || t === 'MultiPoint'));
+	const hasPolygon  = $derived(layer.geometryTypes.some(t => t === 'Polygon' || t === 'MultiPolygon'));
 	const hasNonPoint = $derived(layer.geometryTypes.some(t => t !== 'Point' && t !== 'MultiPoint'));
 
 	// Which picker is open (only one at a time).
@@ -76,6 +88,19 @@
 			fill: fillEnabled ? fillHex : 'none',
 			fillOpacity: fillAlpha,
 		});
+	});
+
+	// A new object each time — style snapshots copy shallowly, so never mutate in place.
+	$effect(() => {
+		let fillPattern: FillPattern | null = patternEnabled ? specFromPatternId(patternSel, null) : null;
+		if (fillPattern) {
+			fillPattern = {
+				...fillPattern,
+				size: Math.max(2, patternSize || 2),
+				weight: Math.max(0.1, patternWeight || 0.1),
+			};
+		}
+		updateLayerStyle(layer.id, { fillPattern });
 	});
 
 	$effect(() => {
@@ -150,6 +175,66 @@
 			<X size={12} />
 		</button>
 	</div>
+
+	<!-- Pattern rows — polygons only, and only while the fill is on -->
+	{#if hasPolygon && fillEnabled}
+		<div class="style-row">
+			<span class="label mono-small">Pattern</span>
+			<div class="controls">
+				<button
+					class="toggle-track"
+					class:on={patternEnabled}
+					role="switch"
+					aria-checked={patternEnabled}
+					onclick={() => { patternEnabled = !patternEnabled; pushSnapshot(); }}
+				>
+					<span class="toggle-thumb"></span>
+				</button>
+				{#if patternEnabled}
+					<Combobox
+						small
+						options={pickableOptions}
+						value={patternSel}
+						onchange={(id) => {
+							// Same type keeps size/weight; a new type takes that type's defaults.
+							if (id.split(':')[0] !== patternSel.split(':')[0]) {
+								const fresh = specFromPatternId(id, null)!;
+								patternSize = fresh.size;
+								patternWeight = fresh.weight;
+							}
+							patternSel = id;
+							pushSnapshot();
+						}}
+					/>
+				{/if}
+			</div>
+		</div>
+		{#if patternEnabled}
+			<div class="style-row">
+				<span class="label mono-small"></span>
+				<div class="controls">
+					<div class="notched-field">
+						<span class="notch-label">Size</span>
+						<input
+							class="width-input number-input"
+							type="number" min="2" step="1"
+							bind:value={patternSize}
+							onblur={() => pushSnapshot()}
+						/>
+					</div>
+					<div class="notched-field">
+						<span class="notch-label">{patternSel.startsWith('circles') ? 'Radius' : 'Weight'}</span>
+						<input
+							class="width-input number-input"
+							type="number" min="0.1" step="0.5"
+							bind:value={patternWeight}
+							onblur={() => pushSnapshot()}
+						/>
+					</div>
+				</div>
+			</div>
+		{/if}
+	{/if}
 
 	<!-- Stroke row -->
 	<div class="style-row">
@@ -296,7 +381,7 @@
 	}
 
 	.label {
-		width: 44px;
+		width: 52px;
 		flex-shrink: 0;
 		color: var(--color-text-primary);
 	}

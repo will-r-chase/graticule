@@ -1,3 +1,5 @@
+import type { FillPattern } from '$lib/utils/patterns';
+
 export interface DatasetLayer {
 	name: string;
 	objectName: string;
@@ -83,6 +85,9 @@ export interface LabelStyle {
 export interface LayerStyle {
 	fill: string;
 	fillOpacity: number;
+	// Pattern fill for polygons, drawn in `fill` color. null = solid fill. Always replace this
+	// object (never mutate it) — history/save snapshots copy style shallowly.
+	fillPattern: FillPattern | null;
 	stroke: string;
 	strokeOpacity: number;
 	strokeWidth: number;

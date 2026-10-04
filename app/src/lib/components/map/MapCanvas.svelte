@@ -6,7 +6,7 @@
 	import { feature } from 'topojson-client';
 	import { workerBuildPaths, workerStoreTopology, workerRemoveTopology } from '$lib/workers/geoWorker';
 	import type { PathCommand } from '$lib/workers/types';
-	import type { Layer, LayerProcessing } from '$lib/types';
+	import type { Layer, LayerProcessing, LayerStyle } from '$lib/types';
 	import { applyTextTransform, LABEL_ANCHOR_DIR, labelFontString, wrapLabelLines } from '$lib/utils/labels';
 	import { layoutGlyphsAlongPath, splitGraphemes, sampleCubic, fitCubicToPolyline, nearestPathFraction, type GlyphPlacement, type CubicBezier } from '$lib/utils/curvedText';
 	import { fonts, ensureFontLoaded } from '$lib/stores/fonts.svelte';
@@ -18,6 +18,7 @@
 	import { hoveredFeature } from '$lib/stores/hoveredFeature.svelte';
 	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, cancelEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, getPointCoord, translatePoints, recordPointMoves, setVertexSelection, type DragMember, type PointMember } from '$lib/stores/editSession.svelte';
 	import { featureArcIndices, topologyToAbsolute } from '$lib/utils/topology';
+	import { getFillPattern } from '$lib/utils/patterns';
 	import { drawSession, getCommitted, getActivePath, placeVertex, finishActive, finishActiveFromDoubleClick, enterDraw, escapeDraw, commitDraw, resetDrawTarget, cancelPicking, setDrawDensifier, activeSelfIntersects } from '$lib/stores/drawSession.svelte';
 	import { buildBezierArcs, arcRingToPath } from '$lib/utils/bezier';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -2124,6 +2125,19 @@
 	// Bumped whenever the cache gains new entries. The paint effect reads
 	// this so it knows to repaint after a path is computed.
 	let cacheVersion = $state(0);
+	// Bumped when an async-decoded pattern fill becomes available, to trigger a repaint.
+	let patternVersion = $state(0);
+
+	// Fill for a polygon: the solid color, or a CanvasPattern in that color when the style has
+	// a fillPattern. Pattern tiles are fixed screen size: the ctx carries dpr × mapScale, so
+	// the pattern transform cancels it. Returns 'transparent' until the first decode finishes.
+	function polygonFill(ctx: CanvasRenderingContext2D, style: LayerStyle, dpr: number): string | CanvasPattern {
+		if (!style.fillPattern) return style.fill;
+		const pattern = getFillPattern(style.fillPattern, style.fill, ctx, dpr, () => { patternVersion++; });
+		if (!pattern) return 'transparent';
+		pattern.setTransform(new DOMMatrix().scale(1 / (dpr * mapScale)));
+		return pattern;
+	}
 
 	// The projection object the cache was built for.
 	// When it changes we invalidate all entries and recompute from scratch.
@@ -3528,6 +3542,7 @@
 	// stamping pre-built Path2D objects onto the canvas with current styles.
 	$effect(() => {
 		void cacheVersion; // re-run whenever a new path is cached
+		void patternVersion; // re-run when a pattern fill finishes decoding
 		void fonts.version; // re-run when a webfont finishes loading (labels re-render)
 		void textSession.version; // re-run when text-session ghosts change
 		if (!canvasEl || !width || !height) return;
@@ -3670,7 +3685,7 @@
 					if (bpath) {
 					if (layer.style.fill !== 'none') {
 						ctx.globalAlpha = layer.style.fillOpacity;
-						ctx.fillStyle = layer.style.fill;
+						ctx.fillStyle = polygonFill(ctx, layer.style, dpr);
 						ctx.fill(bpath, 'evenodd');
 					}
 					ctx.globalAlpha = layer.style.strokeOpacity;
@@ -3726,7 +3741,7 @@
 						}
 						if (fillEnabled) {
 							ctx.globalAlpha = layer.style.fillOpacity;
-							ctx.fillStyle = layer.style.fill;
+							ctx.fillStyle = polygonFill(ctx, layer.style, dpr);
 							ctx.fill(path2d, 'evenodd');
 						}
 						ctx.globalAlpha = layer.style.strokeOpacity;
@@ -3779,7 +3794,7 @@
 
 					if (layer.style.fill !== 'none') {
 						ctx.globalAlpha = layer.style.fillOpacity * dim;
-						ctx.fillStyle = clipFill ?? layer.style.fill;
+						ctx.fillStyle = clipFill ?? polygonFill(ctx, layer.style, dpr);
 						ctx.fill(path2d, 'evenodd');
 					}
 					ctx.globalAlpha = layer.style.strokeOpacity * dim;

@@ -20,6 +20,7 @@
 		"@sveltejs/kit": "^2.57.0",
 		"@sveltejs/vite-plugin-svelte": "^7.0.0",
 		"@types/d3-geo": "^3.1.0",
+		"@types/d3-selection": "^3.0.12",
 		"@types/node": "^20",
 		"@types/polylabel": "^2.0.0",
 		"@types/topojson-client": "^3.1.5",
@@ -45,6 +46,7 @@
 		"d3-dsv": "^3.0.1",
 		"d3-geo": "^3.1.1",
 		"d3-geo-projection": "^4.0.0",
+		"d3-selection": "^3.0.0",
 		"d3-shape": "^3.2.0",
 		"fflate": "^0.8.3",
 		"mapshaper": "^0.7.20",
@@ -52,6 +54,7 @@
 		"polylabel": "^2.1.0",
 		"shpjs": "^6.2.0",
 		"svelte-dnd-action": "^0.9.69",
+		"textures": "^1.2.3",
 		"topojson-client": "^3.1.0"
 	}
 }

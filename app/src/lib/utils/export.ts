@@ -9,6 +9,7 @@ import { projection as projectionStore } from '$lib/stores/projection.svelte';
 import { canvasStyles } from '$lib/stores/canvasStyles.svelte';
 import { mapState } from '$lib/stores/mapState.svelte';
 import { applyTextTransform, LABEL_ANCHOR_DIR, labelFontString, wrapLabelLines } from '$lib/utils/labels';
+import { buildPatternDef } from '$lib/utils/patterns';
 import { layoutGlyphsAlongPath, splitGraphemes, clampedPathCenter } from '$lib/utils/curvedText';
 
 const allProjections = { ...d3, ...d3gp } as Record<string, unknown>;
@@ -451,6 +452,17 @@ function buildSVGString(options: SVGOptions): string | null {
 
 		parts.push(`  <g id="${sanitizeId(layer.name)}">`);
 
+		// Pattern fill: one <pattern> def per layer, referenced by its polygon/line paths. In clip
+		// mode the whole map sits inside scale(mapScale), so counter-scale the pattern to keep
+		// tiles the same size as on screen (the canvas draws them at a fixed screen size).
+		let pathFill = fill;
+		if (layer.style.fillPattern && fill !== 'none' && hasNonPoint) {
+			const patternId = `pattern-${sanitizeId(layer.id)}`;
+			const tf = options.clip ? `scale(${1 / mapScale})` : undefined;
+			parts.push(`    <defs>${buildPatternDef(layer.style.fillPattern, fill, patternId, tf)}</defs>`);
+			pathFill = `url(#${patternId})`;
+		}
+
 		// ── Polygon / line geometry — one path per feature ────────────────────
 		if (hasNonPoint) {
 			const nonPointFeatures = data.features.filter((f) => {
@@ -463,7 +475,7 @@ function buildSVGString(options: SVGOptions): string | null {
 				if (!d) continue;
 				const featureId = getFeatureName(f.properties as Record<string, unknown> | null, i);
 				parts.push(
-					`    <path id="${featureId}" d="${d}" fill="${fill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-opacity="${strokeOpacity}" stroke-width="${effectiveStrokeWidth}"${dashAttr} />`
+					`    <path id="${featureId}" d="${d}" fill="${pathFill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-opacity="${strokeOpacity}" stroke-width="${effectiveStrokeWidth}"${dashAttr} />`
 				);
 			}
 		}

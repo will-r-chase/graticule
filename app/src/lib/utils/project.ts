@@ -26,7 +26,8 @@ interface SavedLayer {
 	geometryEdited: boolean;
 	name: string;
 	visible: boolean;
-	style: LayerStyle;
+	// fillPattern is absent in projects saved before pattern fills existed.
+	style: Omit<LayerStyle, 'fillPattern'> & Partial<Pick<LayerStyle, 'fillPattern'>>;
 	processing: LayerProcessing;
 	// Label fields — absent in files saved before labels existed; load defaults them.
 	kind?: LayerKind;
@@ -205,7 +206,7 @@ export function loadProject(json: string): void {
 				loading: true,
 				error: null,
 				hasTopology: false,
-				style: { ...saved.style },
+				style: { fillPattern: null, ...saved.style },
 				processing: saved.processing ? { ...saved.processing } : defaultProcessing(),
 				kind: saved.kind ?? 'geometry',
 				labelAttribute: saved.labelAttribute ?? null,
@@ -232,7 +233,7 @@ export function loadProject(json: string): void {
 				loading: true,
 				error: null,
 				hasTopology: false,
-				style: { ...saved.style },
+				style: { fillPattern: null, ...saved.style },
 				processing: saved.processing ? { ...saved.processing } : defaultProcessing(),
 				kind: saved.kind ?? 'geometry',
 				labelAttribute: saved.labelAttribute ?? null,
