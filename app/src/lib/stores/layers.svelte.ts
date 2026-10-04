@@ -9,6 +9,7 @@ import { topologyToAbsolute } from '$lib/utils/topology';
 import { workerChaikin } from '$lib/workers/geoWorker';
 import { workerSimplify } from '$lib/workers/simplifyWorker';
 import { showToast } from './toast.svelte';
+import { selectLayer } from './layerSelection.svelte';
 import { uploadedDatasets } from './uploadedDatasets.svelte';
 
 const DISPLAY_VERTEX_THRESHOLD = 500_000;
@@ -1033,7 +1034,10 @@ function insertLayerAt(
 		bezierCacheKey: 0,
 	});
 	rawTopologyData.set(geometryId, plainTopology);
-	runLayerPipeline(id, style === null).then(() => onComplete?.());
+	runLayerPipeline(id, style === null).then(() => {
+		selectLayer(id);
+		onComplete?.();
+	});
 }
 
 // Processing for a layer produced by editing. Simplification and Chaikin are baked into

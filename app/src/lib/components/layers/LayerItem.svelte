@@ -59,6 +59,15 @@
 		}
 	}
 
+	// Open/close the options panel from a button on the row. Stops the click reaching the row
+	// handler (which would re-select the layer we just deselected on close); opening selects
+	// the layer itself, since the accordion only stays open while its layer is selected.
+	function toggleStyle(e: MouseEvent) {
+		e.stopPropagation();
+		if (!styleOpen) selectLayer(layer.id);
+		styleCtx.toggle(layer.id);
+	}
+
 	// A freshly-created empty layer opens straight to the Data tab (consumed once on mount).
 	let activeTab = $state<'style' | 'simplification' | 'data'>(
 		styleCtx.consumePendingDataTab(layer.id) ? 'data' : 'style'
@@ -191,7 +200,7 @@
 			{#if layer.kind === 'label'}
 				<button
 					class="style-swatch label-swatch"
-					onclick={() => { activeTab = 'style'; styleCtx.toggle(layer.id); }}
+					onclick={(e) => { activeTab = 'style'; toggleStyle(e); }}
 					onpointerdown={(e) => e.stopPropagation()}
 					aria-label="Edit label style"
 					style="color: {layer.labelStyle.color}"
@@ -201,7 +210,7 @@
 			{:else if geomKind === 'line'}
 				<button
 					class="style-swatch line-swatch"
-					onclick={() => { activeTab = 'style'; styleCtx.toggle(layer.id); }}
+					onclick={(e) => { activeTab = 'style'; toggleStyle(e); }}
 					onpointerdown={(e) => e.stopPropagation()}
 					aria-label="Edit layer style"
 				>
@@ -212,7 +221,7 @@
 			{:else if geomKind === 'point'}
 				<button
 					class="style-swatch point-swatch"
-					onclick={() => { activeTab = 'style'; styleCtx.toggle(layer.id); }}
+					onclick={(e) => { activeTab = 'style'; toggleStyle(e); }}
 					onpointerdown={(e) => e.stopPropagation()}
 					aria-label="Edit layer style"
 				>
@@ -227,7 +236,7 @@
 						--fill: {layer.style.fill === 'none' ? 'transparent' : layer.style.fill};
 						--stroke: {layer.style.stroke};
 					"
-					onclick={() => { activeTab = 'style'; styleCtx.toggle(layer.id); }}
+					onclick={(e) => { activeTab = 'style'; toggleStyle(e); }}
 					onpointerdown={(e) => e.stopPropagation()}
 					aria-label="Edit layer style"
 				></button>
@@ -264,7 +273,7 @@
 				class:active={styleOpen}
 				aria-label="Edit layer settings"
 				title="Edit layer settings"
-				onclick={() => { activeTab = layer.kind === 'label' ? 'style' : 'simplification'; styleCtx.toggle(layer.id); }}
+				onclick={(e) => { activeTab = layer.kind === 'label' ? 'style' : 'simplification'; toggleStyle(e); }}
 			>
 				<SlidersHorizontal size={16} />
 			</button>

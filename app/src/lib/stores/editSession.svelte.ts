@@ -1,6 +1,7 @@
 import type { Topology } from 'topojson-specification';
 import { layers, workingTopologyData, bakeLayerForEdit, commitEditedLayer } from './layers.svelte';
 import { selectFeature, clearSelection } from './selection.svelte';
+import { selectLayer, exitLayer } from './layerSelection.svelte';
 import { pushSnapshot } from './history.svelte';
 import { showToast } from './toast.svelte';
 import { topologyToAbsolute, buildNodeMap, buildArcToFeatures, coordKey, type NodeRef } from '$lib/utils/topology';
@@ -401,6 +402,8 @@ function enter(layerId: string, featureIndex: number): void {
 	editSession.activeLayerId = layerId;
 	editSession.featureIndex = featureIndex;
 	editSession.edited = false;
+	// Editing supersedes isolation (entered layer); leave it so the dimming/hit rules don't stack.
+	exitLayer();
 }
 
 // Entry point from the targeting sub-state (double-click or the Edit button).
@@ -438,6 +441,7 @@ export function confirmBake(): void {
 	bakeLayerForEdit(pending.layerId, (newId) => {
 		selectFeature(newId, featureIndex, false);
 		enter(newId, featureIndex);
+		selectLayer(newId);
 		pushSnapshot();
 	});
 }

@@ -3,7 +3,7 @@
 	import { dragHandleZone, DRAGGED_ELEMENT_ID } from 'svelte-dnd-action';
 	import type { Layer } from '$lib/types';
 	import { layers, reorderLayers, layerDrag, addEmptyLayer } from '$lib/stores/layers.svelte';
-	import { layerSelection, clearLayerSelection, selectLayer, startLayerEdit } from '$lib/stores/layerSelection.svelte';
+	import { layerSelection, clearLayerSelection, selectLayer, toggleLayerSelection, startLayerEdit } from '$lib/stores/layerSelection.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
 	import LayerItem from './LayerItem.svelte';
 	import FeaturesPanel from './FeaturesPanel.svelte';
@@ -63,7 +63,12 @@
 
 	setContext('stylePanel', {
 		get openId() { return stylePanel.openId; },
-		toggle(id: string) { stylePanel.toggle(id); },
+		toggle(id: string) {
+			const closing = stylePanel.openId === id;
+			stylePanel.toggle(id);
+			// Closing the options panel also deselects the layer, so it doesn't linger in pan mode.
+			if (closing && layerSelection.ids.includes(id)) toggleLayerSelection(id);
+		},
 		consumePendingDataTab(id: string) { return stylePanel.consumePendingDataTab(id); },
 		get pickerOpen() { return pickerOpen; },
 		setPickerOpen(open: boolean) { pickerOpen = open; },
