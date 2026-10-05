@@ -43,10 +43,6 @@
 		outerGlow: glowLocal(layer.style.outerGlow),
 		innerGlow: glowLocal(layer.style.innerGlow),
 	});
-	const glowRows: { key: GlowKey; label: string; name: string }[] = [
-		{ key: 'outerGlow', label: 'Outer glow', name: 'Outer glow' },
-		{ key: 'innerGlow', label: 'Inner glow', name: 'Inner glow' },
-	];
 
 	let strokeEnabled = $state(layer.style.stroke !== 'none');
 	let strokeHex   = $state(layer.style.stroke === 'none' ? '#161819' : layer.style.stroke);
@@ -62,6 +58,15 @@
 	const hasPoints   = $derived(layer.geometryTypes.some(t => t === 'Point' || t === 'MultiPoint'));
 	const hasPolygon  = $derived(layer.geometryTypes.some(t => t === 'Polygon' || t === 'MultiPolygon'));
 	const hasNonPoint = $derived(layer.geometryTypes.some(t => t !== 'Point' && t !== 'MultiPoint'));
+
+	// Outer glow applies to every geometry type (a "Halo" when there are no polygons); inner
+	// glow only makes sense inside polygons.
+	const glowRows = $derived<{ key: GlowKey; label: string; name: string }[]>([
+		hasPolygon
+			? { key: 'outerGlow', label: 'Outer glow', name: 'Outer glow' }
+			: { key: 'outerGlow', label: 'Halo', name: 'Halo' },
+		...(hasPolygon ? [{ key: 'innerGlow' as const, label: 'Inner glow', name: 'Inner glow' }] : []),
+	]);
 
 	// Which picker is open (only one at a time).
 	let activePicker = $state<'fill' | 'stroke' | GlowKey | null>(null);
@@ -348,56 +353,6 @@
 		</div>
 	{/if}
 
-	<!-- Glow rows — polygons only -->
-	{#if hasPolygon}
-		{#each glowRows as { key, label, name } (key)}
-			{@const g = glowState[key]}
-			<div class="style-row">
-				<span class="label two-line mono-small" title={name}>{label}</span>
-				<div class="controls">
-					<button
-						class="toggle-track"
-						class:on={g.on}
-						role="switch"
-						aria-checked={g.on}
-						aria-label={name}
-						onclick={() => {
-							g.on = !g.on;
-							if (!g.on && activePicker === key) { activePicker = null; styleCtx.setPickerOpen(false); }
-							pushSnapshot();
-						}}
-					>
-						<span class="toggle-thumb"></span>
-					</button>
-					{#if g.on}
-						<button
-							class="swatch"
-							class:ring={activePicker === key}
-							style="--c: {toRgba(g.hex, g.alpha)}"
-							onpointerdown={(e) => { e.stopPropagation(); togglePicker(key); }}
-							aria-label="Edit {name.toLowerCase()} color"
-						></button>
-					{/if}
-				</div>
-			</div>
-			{#if g.on}
-				<div class="style-row">
-					<span class="label mono-small"></span>
-					<div class="controls">
-						<div class="notched-field">
-							<span class="notch-label">Size</span>
-							<input class="width-input number-input" type="number" min="0" step="1" bind:value={g.blur} onblur={() => pushSnapshot()} />
-						</div>
-						<div class="notched-field">
-							<span class="notch-label">Spread</span>
-							<input class="width-input number-input" type="number" min="0" step="1" bind:value={g.spread} onblur={() => pushSnapshot()} />
-						</div>
-					</div>
-				</div>
-			{/if}
-		{/each}
-	{/if}
-
 	<!-- Point controls -->
 	{#if hasPoints}
 		{#if hasNonPoint}
@@ -428,6 +383,54 @@
 		</div>
 	{/if}
 
+	<!-- Glow rows. Outer glow applies to every layer (a 'Halo' on lines/points); inner glow is polygon-only. -->
+	{#each glowRows as { key, label, name } (key)}
+		{@const g = glowState[key]}
+		<div class="style-row">
+			<span class="label two-line mono-small" title={name}>{label}</span>
+			<div class="controls">
+				<button
+					class="toggle-track"
+					class:on={g.on}
+					role="switch"
+					aria-checked={g.on}
+					aria-label={name}
+					onclick={() => {
+						g.on = !g.on;
+						if (!g.on && activePicker === key) { activePicker = null; styleCtx.setPickerOpen(false); }
+						pushSnapshot();
+					}}
+				>
+					<span class="toggle-thumb"></span>
+				</button>
+				{#if g.on}
+					<button
+						class="swatch"
+						class:ring={activePicker === key}
+						style="--c: {toRgba(g.hex, g.alpha)}"
+						onpointerdown={(e) => { e.stopPropagation(); togglePicker(key); }}
+						aria-label="Edit {name.toLowerCase()} color"
+					></button>
+				{/if}
+			</div>
+		</div>
+		{#if g.on}
+			<div class="style-row">
+				<span class="label mono-small"></span>
+				<div class="controls">
+					<div class="notched-field">
+						<span class="notch-label">Size</span>
+						<input class="width-input number-input" type="number" min="0" step="1" bind:value={g.blur} onblur={() => pushSnapshot()} />
+					</div>
+					<div class="notched-field">
+						<span class="notch-label">Spread</span>
+						<input class="width-input number-input" type="number" min="0" step="1" bind:value={g.spread} onblur={() => pushSnapshot()} />
+					</div>
+				</div>
+			</div>
+		{/if}
+	{/each}
+
 	<!-- Blend mode — how the whole layer composites onto the layers beneath -->
 	<div class="style-row">
 		<span class="label mono-small">Blend</span>
@@ -454,7 +457,7 @@
 		{:else if activePicker === 'stroke'}
 			<ColorPickerPopup bind:hex={strokeHex} bind:alpha={strokeAlpha} title="Stroke color" onclose={closePicker} />
 		{:else}
-			<ColorPickerPopup bind:hex={glowState[activePicker].hex} bind:alpha={glowState[activePicker].alpha} title={activePicker === 'outerGlow' ? 'Outer glow color' : 'Inner glow color'} onclose={closePicker} />
+			<ColorPickerPopup bind:hex={glowState[activePicker].hex} bind:alpha={glowState[activePicker].alpha} title={activePicker === 'outerGlow' ? (hasPolygon ? 'Outer glow color' : 'Halo color') : 'Inner glow color'} onclose={closePicker} />
 		{/if}
 	</div>
 {/if}

@@ -3174,6 +3174,104 @@
 		}
 	}
 
+	// Halo for line layers: the layer's `outerGlow` applied to the strokes themselves. The
+	// silhouette is every visible line stroked `strokeWidth + 2 × spread` wide (following the
+	// dash pattern), blurred, drawn beneath the lines with no knockout. Lines are separate
+	// shapes, so one merged pass is already per-line — no per-feature buffers needed.
+	function drawStrokeHalo(
+		ctx: CanvasRenderingContext2D,
+		glow: Glow,
+		style: LayerStyle,
+		chunks: { path2d: Path2D; bbox: number[] }[],
+		dim: number,
+		dpr: number,
+	): void {
+		const reach = (glow.blur * 3 + glow.spread + style.strokeWidth) / mapScale;
+		const vxMin = -tx / mapScale - reach;
+		const vxMax = (width - tx) / mapScale + reach;
+		const vyMin = -ty / mapScale - reach;
+		const vyMax = (height - ty) / mapScale + reach;
+		const visible = chunks.filter(({ bbox }) =>
+			!(bbox[2] < vxMin || bbox[0] > vxMax || bbox[3] < vyMin || bbox[1] > vyMax));
+		if (visible.length === 0) return;
+
+		const bufs = getGlowBuffers(ctx, true);
+		if (!bufs) return;
+		const [a, b] = bufs;
+		const W = a.canvas.width;
+		const H = a.canvas.height;
+
+		a.setTransform(ctx.getTransform());
+		a.strokeStyle = glow.color;
+		a.lineJoin = 'round';
+		a.lineWidth = (style.strokeWidth + glow.spread * 2) / mapScale;
+		if (style.strokeDashed) a.setLineDash([style.strokeDash / mapScale, style.strokeGap / mapScale]);
+		for (const { path2d } of visible) a.stroke(path2d);
+
+		// Blur A → B under a dpr-only transform, where blur units are CSS px.
+		b.save();
+		b.setTransform(dpr, 0, 0, dpr, 0, 0);
+		if (glow.blur > 0) b.filter = `blur(${glow.blur}px)`;
+		b.drawImage(a.canvas, 0, 0, W / dpr, H / dpr);
+		b.restore();
+
+		ctx.save();
+		ctx.setTransform(1, 0, 0, 1, 0, 0);
+		ctx.globalAlpha = glow.opacity * dim;
+		ctx.drawImage(b.canvas, 0, 0);
+		ctx.restore();
+	}
+
+	// Halo for point layers: the layer's `outerGlow` applied to the symbols. Every visible
+	// point's symbol (plus its stroke and `spread`) goes into one buffer, blurred once and drawn
+	// beneath the symbols with no knockout. Symbols are screen-size, so each is drawn at
+	// 1 / mapScale like the symbol loop does. `points` are projected map coordinates.
+	function drawPointHalo(
+		ctx: CanvasRenderingContext2D,
+		glow: Glow,
+		style: LayerStyle,
+		symbol: Path2D,
+		points: [number, number][],
+		dim: number,
+		dpr: number,
+	): void {
+		if (points.length === 0) return;
+		const bufs = getGlowBuffers(ctx, true);
+		if (!bufs) return;
+		const [a, b] = bufs;
+		const W = a.canvas.width;
+		const H = a.canvas.height;
+
+		a.setTransform(ctx.getTransform());
+		a.fillStyle = glow.color;
+		a.strokeStyle = glow.color;
+		a.lineJoin = 'round';
+		// Screen px (the per-point transform below cancels mapScale): the symbol's own stroke
+		// plus the spread on both sides.
+		a.lineWidth = (style.stroke !== 'none' ? style.strokeWidth : 0) + glow.spread * 2;
+		for (const [px, py] of points) {
+			a.save();
+			a.translate(px, py);
+			a.scale(1 / mapScale, 1 / mapScale);
+			a.fill(symbol);
+			if (a.lineWidth > 0) a.stroke(symbol);
+			a.restore();
+		}
+
+		// Blur A → B under a dpr-only transform, where blur units are CSS px.
+		b.save();
+		b.setTransform(dpr, 0, 0, dpr, 0, 0);
+		if (glow.blur > 0) b.filter = `blur(${glow.blur}px)`;
+		b.drawImage(a.canvas, 0, 0, W / dpr, H / dpr);
+		b.restore();
+
+		ctx.save();
+		ctx.setTransform(1, 0, 0, 1, 0, 0);
+		ctx.globalAlpha = glow.opacity * dim;
+		ctx.drawImage(b.canvas, 0, 0);
+		ctx.restore();
+	}
+
 	// Fallback for very large layers: one glow along the outline of the merged silhouette
 	// (shared borders between features get no glow), two full-canvas passes total.
 	function drawGlowMerged(
@@ -4028,7 +4126,10 @@
 				// Glows are polygon-only. Outer sits beneath the fills; inner is drawn after the
 				// chunk loop, so it also overlays the inner half of the stroke.
 				const hasPolygon = layer.geometryTypes.some((t) => t === 'Polygon' || t === 'MultiPolygon');
-				if (hasPolygon && layer.style.outerGlow) drawGlow(ctx, 'outer', layer.style.outerGlow, chunks, dim, dpr);
+				if (layer.style.outerGlow) {
+					if (hasPolygon) drawGlow(ctx, 'outer', layer.style.outerGlow, chunks, dim, dpr);
+					else drawStrokeHalo(ctx, layer.style.outerGlow, layer.style, chunks, dim, dpr);
+				}
 
 				for (let ci = 0; ci < chunks.length; ci++) {
 					const { path2d, bbox } = chunks[ci];
@@ -4061,6 +4162,14 @@
 						: undefined;
 
 					if (data?.features) {
+						// Project every point once; the halo and the symbol loop share the result.
+						// For rotate-mode projections (globe etc.), projection(coord) bypasses
+						// d3's stream preclip and returns valid coordinates even for back-
+						// hemisphere points, so check visibility explicitly before projecting.
+						const projCenter: [number, number] | null = interactionMode === 'rotate'
+							? [-projectionStore.rotate[0], -projectionStore.rotate[1]]
+							: null;
+						const pts: [number, number][] = [];
 						for (const f of data.features) {
 							const geom = f?.geometry;
 							if (!geom) continue;
@@ -4072,38 +4181,34 @@
 										? (geom.coordinates as [number, number][])
 										: [];
 
-							// For rotate-mode projections (globe etc.), projection(coord) bypasses
-							// d3's stream preclip and returns valid coordinates even for back-
-							// hemisphere points. Check visibility explicitly before projecting.
-							const projCenter: [number, number] | null = interactionMode === 'rotate'
-								? [-projectionStore.rotate[0], -projectionStore.rotate[1]]
-								: null;
-
 							for (const coord of coordsList) {
 								if (projCenter && d3.geoDistance(coord, projCenter) >= Math.PI / 2) continue;
 								const pt = projection(coord);
-								if (!pt) continue;
-								const [px, py] = pt;
-
-								ctx.save();
-								ctx.translate(px, py);
-								ctx.scale(1 / mapScale, 1 / mapScale);
-
-								if (layer.style.fill !== 'none') {
-									ctx.globalAlpha = layer.style.fillOpacity * dim;
-									ctx.fillStyle = layer.style.fill;
-									ctx.fill(symPath2D);
-								}
-
-								if (layer.style.stroke !== 'none') {
-									ctx.globalAlpha = layer.style.strokeOpacity * dim;
-									ctx.strokeStyle = layer.style.stroke;
-									ctx.lineWidth = layer.style.strokeWidth;
-									ctx.stroke(symPath2D);
-								}
-
-								ctx.restore();
+								if (pt) pts.push([pt[0], pt[1]]);
 							}
+						}
+
+						if (layer.style.outerGlow) drawPointHalo(ctx, layer.style.outerGlow, layer.style, symPath2D, pts, dim, dpr);
+
+						for (const [px, py] of pts) {
+							ctx.save();
+							ctx.translate(px, py);
+							ctx.scale(1 / mapScale, 1 / mapScale);
+
+							if (layer.style.fill !== 'none') {
+								ctx.globalAlpha = layer.style.fillOpacity * dim;
+								ctx.fillStyle = layer.style.fill;
+								ctx.fill(symPath2D);
+							}
+
+							if (layer.style.stroke !== 'none') {
+								ctx.globalAlpha = layer.style.strokeOpacity * dim;
+								ctx.strokeStyle = layer.style.stroke;
+								ctx.lineWidth = layer.style.strokeWidth;
+								ctx.stroke(symPath2D);
+							}
+
+							ctx.restore();
 						}
 					}
 				}

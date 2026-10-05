@@ -43,7 +43,7 @@ function blendAttr(layer: Layer): string {
 // reach, since a glow can't extend past its filter region.
 function glowFilterSVG(
 	id: string,
-	kind: 'outer' | 'inner',
+	kind: 'outer' | 'inner' | 'halo',
 	glow: Glow,
 	counter: number,
 	region: { x: number; y: number; w: number; h: number },
@@ -52,14 +52,17 @@ function glowFilterSVG(
 	const spread = glow.spread * counter;
 	const flood = `<feFlood flood-color="${glow.color}" flood-opacity="${glow.opacity}" result="c" />`;
 	const prims: string[] = [];
-	if (kind === 'outer') {
-		// Dilate → blur → colour by the blurred alpha → knock the interior out.
+	if (kind === 'outer' || kind === 'halo') {
+		// Dilate → blur → colour by the blurred alpha → (outer only) knock the interior out.
+		// A halo (lines/points) skips the knockout and sits fully beneath its shapes.
 		prims.push(
 			spread > 0 ? `<feMorphology in="SourceAlpha" operator="dilate" radius="${fmt(spread)}" result="d" />` : '',
 			`<feGaussianBlur in="${spread > 0 ? 'd' : 'SourceAlpha'}" stdDeviation="${std}" result="b" />`,
 			flood,
-			'<feComposite in="c" in2="b" operator="in" result="g" />',
-			'<feComposite in="g" in2="SourceAlpha" operator="out" />',
+			kind === 'halo'
+				? '<feComposite in="c" in2="b" operator="in" />'
+				: '<feComposite in="c" in2="b" operator="in" result="g" />',
+			...(kind === 'outer' ? ['<feComposite in="g" in2="SourceAlpha" operator="out" />'] : []),
 		);
 	} else {
 		// Invert the silhouette → dilate (chokes the glow into the shape) → blur → colour →
@@ -477,6 +480,14 @@ function buildSVGString(options: SVGOptions): string | null {
 	// everything, so geometry paths are scaled automatically. For point symbols we
 	// need to counteract that scale so they stay constant size in screen pixels.
 	const pointCounterScale = options.clip ? 1 / mapScale : 1;
+	// The viewport plus `pad` screen px of margin, in the layer groups' user units (map
+	// coordinates in clip mode, screen px otherwise) — the filter region for halos.
+	const viewportRegion = (pad: number) => ({
+		x: (-pad - (options.clip ? tx : 0)) * pointCounterScale,
+		y: (-pad - (options.clip ? ty : 0)) * pointCounterScale,
+		w: (width + pad * 2) * pointCounterScale,
+		h: (height + pad * 2) * pointCounterScale,
+	});
 
 	for (const layer of [...layers].reverse()) {
 		if (!layer.visible || !layer.hasTopology) continue;
@@ -550,6 +561,22 @@ function buildSVGString(options: SVGOptions): string | null {
 				buildFor('inner', innerGlow);
 				if (defs.length) parts.push(`    <defs>${defs.join('')}</defs>`);
 			}
+
+			// Line halo: the layer's outerGlow applied to the strokes (layers with no polygons). One
+			// filtered group of black stroked silhouettes, dashes included; the filter's dilate
+			// supplies the spread. Covers the viewport, since lines need no per-feature region.
+			if (outerGlow && !layer.geometryTypes.some((t) => t === 'Polygon' || t === 'MultiPolygon')) {
+				const lineDs = nonPointFeatures.map((f) => pathGenerator(f)).filter((d): d is string => !!d);
+				if (lineDs.length) {
+					const id = `halo-${sanitizeId(layer.id)}`;
+					glowParts.outer.push(
+						`    <defs>${glowFilterSVG(id, 'halo', outerGlow, pointCounterScale, viewportRegion(outerGlow.blur * 3 + outerGlow.spread + strokeWidth))}</defs>`,
+						`    <g filter="url(#${id})" fill="none" stroke="#000" stroke-width="${effectiveStrokeWidth}"${dashAttr}>`,
+						...lineDs.map((d) => `      <path d="${d}" />`),
+						'    </g>',
+					);
+				}
+			}
 			parts.push(...glowParts.outer);
 
 			for (let i = 0; i < nonPointFeatures.length; i++) {
@@ -574,6 +601,40 @@ function buildSVGString(options: SVGOptions): string | null {
 					const t = f?.geometry?.type;
 					return t === 'Point' || t === 'MultiPoint';
 				});
+
+				// Point halo: the layer's outerGlow applied to the symbols — one filtered group of
+				// black symbol silhouettes (plus the symbol stroke), the filter's dilate adding spread.
+				const haloGlow = layer.style.outerGlow;
+				if (haloGlow) {
+					const symbolPaths: string[] = [];
+					for (const f of pointFeatures) {
+						const geom = f?.geometry as { type?: string; coordinates?: unknown } | null | undefined;
+						if (!geom) continue;
+						const coordsList: [number, number][] =
+							geom.type === 'Point'
+								? [geom.coordinates as [number, number]]
+								: geom.type === 'MultiPoint'
+									? (geom.coordinates as [number, number][])
+									: [];
+						for (const coord of coordsList) {
+							const pt = proj(coord);
+							if (!pt) continue;
+							const t = `translate(${pt[0]},${pt[1]})${pointCounterScale !== 1 ? ` scale(${pointCounterScale})` : ''}`;
+							symbolPaths.push(`      <path d="${symD}" transform="${t}" />`);
+						}
+					}
+					if (symbolPaths.length) {
+						const id = `halo-points-${sanitizeId(layer.id)}`;
+						const symStroke = stroke !== 'none' ? ` stroke="#000" stroke-width="${strokeWidth}"` : '';
+						parts.push(
+							`    <defs>${glowFilterSVG(id, 'halo', haloGlow, pointCounterScale, viewportRegion(haloGlow.blur * 3 + haloGlow.spread))}</defs>`,
+							`    <g filter="url(#${id})" fill="#000"${symStroke}>`,
+							...symbolPaths,
+							'    </g>',
+						);
+					}
+				}
+
 				for (let i = 0; i < pointFeatures.length; i++) {
 					const f = pointFeatures[i];
 					const geom = f?.geometry as { type?: string; coordinates?: unknown } | null | undefined;
