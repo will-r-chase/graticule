@@ -19,6 +19,7 @@
 	import { startEditing, editSession, confirmBake, cancelBake, exitEditing, cancelEditing, getDraft, getDirtyFeatures, vertexDragTargets, translateGroup, rebuildNodeMap, recordMoves, beginInsert, commitInsert, selectVertex, toggleVertex, isVertexSelected, getSelectedVertices, clearVertexSelection, deleteSelectedVertices, getPointCoord, translatePoints, recordPointMoves, setVertexSelection, type DragMember, type PointMember } from '$lib/stores/editSession.svelte';
 	import { featureArcIndices, topologyToAbsolute } from '$lib/utils/topology';
 	import { getFillPattern } from '$lib/utils/patterns';
+	import { toCompositeOperation, type BlendMode } from '$lib/utils/blendModes';
 	import { drawSession, getCommitted, getActivePath, placeVertex, finishActive, finishActiveFromDoubleClick, enterDraw, escapeDraw, commitDraw, resetDrawTarget, cancelPicking, setDrawDensifier, activeSelfIntersects } from '$lib/stores/drawSession.svelte';
 	import { buildBezierArcs, arcRingToPath } from '$lib/utils/bezier';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -3023,6 +3024,26 @@
 
 	// Returns the halo buffer's ctx, cleared, sized to the main bitmap, carrying
 	// the main ctx's current transform so paint math lands identically.
+	// Offscreen buffer a blended layer paints into (see flushBlend in the draw effect). Same
+	// bitmap size and transform as the main ctx, cleared and with default paint state.
+	let blendBufferEl: HTMLCanvasElement | null = null;
+	function getBlendBuffer(ctx: CanvasRenderingContext2D): CanvasRenderingContext2D | null {
+		if (!blendBufferEl) blendBufferEl = document.createElement('canvas');
+		if (blendBufferEl.width !== ctx.canvas.width || blendBufferEl.height !== ctx.canvas.height) {
+			blendBufferEl.width = ctx.canvas.width;
+			blendBufferEl.height = ctx.canvas.height;
+		}
+		const bctx = blendBufferEl.getContext('2d');
+		if (!bctx) return null;
+		bctx.setTransform(1, 0, 0, 1, 0, 0);
+		bctx.clearRect(0, 0, blendBufferEl.width, blendBufferEl.height);
+		bctx.setTransform(ctx.getTransform());
+		bctx.globalAlpha = 1;
+		bctx.globalCompositeOperation = 'source-over';
+		bctx.setLineDash([]);
+		return bctx;
+	}
+
 	function getHaloBuffer(ctx: CanvasRenderingContext2D): CanvasRenderingContext2D | null {
 		if (!haloBufferEl) haloBufferEl = document.createElement('canvas');
 		if (haloBufferEl.width !== ctx.canvas.width || haloBufferEl.height !== ctx.canvas.height) {
@@ -3558,8 +3579,12 @@
 			canvasEl.style.height = `${height}px`;
 		}
 
-		const ctx = canvasEl.getContext('2d');
-		if (!ctx) return;
+		const mainCtx = canvasEl.getContext('2d');
+		if (!mainCtx) return;
+		// `ctx` is what everything below draws into. It's the main canvas except while a layer
+		// with a non-normal blend mode paints: then it's an offscreen buffer that flushBlend()
+		// composites back onto mainCtx with that mode (so the layer blends as a group).
+		let ctx: CanvasRenderingContext2D = mainCtx;
 
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, width, height);
@@ -3597,6 +3622,22 @@
 
 		ctx.translate(tx, ty);
 		ctx.scale(mapScale, mapScale);
+
+		let blendedMode: BlendMode | null = null;
+		// Composites the pending blended layer (if any) onto the main canvas, then points ctx
+		// back at it. Called at the top of each layer iteration (the body has many `continue`s)
+		// and after the loop.
+		function flushBlend() {
+			if (!blendedMode || !blendBufferEl) return;
+			mainCtx!.save();
+			mainCtx!.setTransform(1, 0, 0, 1, 0, 0);
+			mainCtx!.globalAlpha = 1;
+			mainCtx!.globalCompositeOperation = toCompositeOperation(blendedMode);
+			mainCtx!.drawImage(blendBufferEl, 0, 0);
+			mainCtx!.restore();
+			ctx = mainCtx!;
+			blendedMode = null;
+		}
 
 		// Atmospheric halo — drawn in projection space before the globe disk so the
 		// ocean fill covers the interior and leaves only the glowing ring at the rim.
@@ -3668,7 +3709,16 @@
 		}
 
 		for (const layer of [...layers].reverse()) {
+			flushBlend();
 			if (!layer.visible) continue;
+
+			if (layer.style.blendMode !== 'normal') {
+				const buffer = getBlendBuffer(mainCtx);
+				if (buffer) {
+					ctx = buffer;
+					blendedMode = layer.style.blendMode;
+				}
+			}
 
 			// Edit layer: draw clean features from the (still-valid) path cache and only
 			// the edited "dirty" features live from the draft — so a drag on a complex
@@ -3956,6 +4006,7 @@
 			}
 		}
 
+		flushBlend();
 		ctx.globalAlpha = 1;
 		ctx.setLineDash([]);
 

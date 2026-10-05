@@ -4,6 +4,7 @@
 	import ColorPickerPopup from '$lib/components/ui/ColorPickerPopup.svelte';
 	import ShapeSelect from '$lib/components/ui/ShapeSelect.svelte';
 	import Combobox from '$lib/components/ui/Combobox.svelte';
+	import { blendModeOptions, type BlendMode } from '$lib/utils/blendModes';
 	import { patternOptions, patternId, specFromPatternId, type FillPattern } from '$lib/utils/patterns';
 	import { updateLayerStyle } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -12,6 +13,8 @@
 	let { layer, onclose }: { layer: Layer; onclose: () => void } = $props();
 
 	const styleCtx = getContext<{ setPickerOpen(open: boolean): void }>('stylePanel');
+
+	let blendMode = $state<BlendMode>(layer.style.blendMode);
 
 	// Local state initialised from the layer's current style.
 	// Plain $state — not derived from layer.style — so there's no reactive loop.
@@ -347,6 +350,19 @@
 			</div>
 		</div>
 	{/if}
+
+	<!-- Blend mode — how the whole layer composites onto the layers beneath -->
+	<div class="style-row">
+		<span class="label mono-small">Blend</span>
+		<div class="controls">
+			<Combobox
+				small
+				options={blendModeOptions}
+				value={blendMode}
+				onchange={(id) => { blendMode = id as BlendMode; updateLayerStyle(layer.id, { blendMode }); pushSnapshot(); }}
+			/>
+		</div>
+	</div>
 </div>
 
 <!-- Floating color picker — rendered outside the panel div so position: fixed escapes cleanly -->

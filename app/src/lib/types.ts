@@ -1,4 +1,5 @@
 import type { FillPattern } from '$lib/utils/patterns';
+import type { BlendMode } from '$lib/utils/blendModes';
 
 export interface DatasetLayer {
 	name: string;
@@ -88,6 +89,8 @@ export interface LayerStyle {
 	// Pattern fill for polygons, drawn in `fill` color. null = solid fill. Always replace this
 	// object (never mutate it) — history/save snapshots copy style shallowly.
 	fillPattern: FillPattern | null;
+	// How the layer composites onto the layers beneath it, as a group.
+	blendMode: BlendMode;
 	stroke: string;
 	strokeOpacity: number;
 	strokeWidth: number;

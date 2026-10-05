@@ -3,15 +3,18 @@
 	import { X, TextAlignLeft, TextAlignCenter, TextAlignRight } from 'phosphor-svelte';
 	import ColorPickerPopup from '$lib/components/ui/ColorPickerPopup.svelte';
 	import Combobox from '$lib/components/ui/Combobox.svelte';
-	import { updateLayerLabelStyle } from '$lib/stores/layers.svelte';
+	import { updateLayerLabelStyle, updateLayerStyle } from '$lib/stores/layers.svelte';
 	import { fonts, ensureFontLoaded, loadGoogleFontList, requestLocalFonts, variantsForFamily, CURATED_SYSTEM_FONTS } from '$lib/stores/fonts.svelte';
 	import type { FontVariant } from '$lib/stores/fonts.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
+	import { blendModeOptions, type BlendMode } from '$lib/utils/blendModes';
 	import type { Layer, LabelAnchor, LabelTextTransform } from '$lib/types';
 
 	let { layer, onclose }: { layer: Layer; onclose: () => void } = $props();
 
 	const styleCtx = getContext<{ setPickerOpen(open: boolean): void }>('stylePanel');
+
+	let blendMode = $state<BlendMode>(layer.style.blendMode);
 
 	// Fetch the Google catalog when the panel first opens (memoized in the store).
 	loadGoogleFontList();
@@ -402,6 +405,19 @@
 					><TextAlignRight size={14} /></button>
 				</div>
 			</div>
+		</div>
+	</div>
+
+	<!-- Blend mode — how the whole layer composites onto the layers beneath -->
+	<div class="style-row">
+		<span class="label mono-small">Blend</span>
+		<div class="controls">
+			<Combobox
+				small
+				options={blendModeOptions}
+				value={blendMode}
+				onchange={(id) => { blendMode = id as BlendMode; updateLayerStyle(layer.id, { blendMode }); pushSnapshot(); }}
+			/>
 		</div>
 	</div>
 </div>

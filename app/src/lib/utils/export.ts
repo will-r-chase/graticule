@@ -29,6 +29,13 @@ function sanitizeId(str: string): string {
 	return str.trim().replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^([^a-zA-Z_])/, '_$1');
 }
 
+// Layer blend mode as an inline CSS mix-blend-mode on the layer's <g> ('' for normal). The
+// root <svg> is isolated so layers blend against the map only, never the page behind it.
+function blendAttr(layer: Layer): string {
+	const mode = layer.style.blendMode;
+	return mode && mode !== 'normal' ? ` style="mix-blend-mode:${mode}"` : '';
+}
+
 function escapeXml(str: string): string {
 	return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -410,7 +417,7 @@ function buildSVGString(options: SVGOptions): string | null {
 
 	const parts: string[] = [
 		// xmlns:xlink for the textPath href fallback older vector editors expect.
-		`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" overflow="hidden">`,
+		`<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" overflow="hidden" style="isolation:isolate">`,
 	];
 
 	// Background rect — included only when the user has it enabled in the Canvas panel.
@@ -437,7 +444,7 @@ function buildSVGString(options: SVGOptions): string | null {
 
 		// Label layers export as text, never as geometry (D11).
 		if (layer.kind === 'label') {
-			parts.push(`  <g id="${sanitizeId(layer.name)}">`);
+			parts.push(`  <g id="${sanitizeId(layer.name)}"${blendAttr(layer)}>`);
 			parts.push(...buildLabelLayerSVG(layer, data, proj, options));
 			parts.push(`  </g>`);
 			continue;
@@ -450,7 +457,7 @@ function buildSVGString(options: SVGOptions): string | null {
 		const hasNonPoint = layer.geometryTypes.some((t) => t !== 'Point' && t !== 'MultiPoint');
 		const hasPoints   = layer.geometryTypes.some((t) => t === 'Point' || t === 'MultiPoint');
 
-		parts.push(`  <g id="${sanitizeId(layer.name)}">`);
+		parts.push(`  <g id="${sanitizeId(layer.name)}"${blendAttr(layer)}>`);
 
 		// Pattern fill: one <pattern> def per layer, referenced by its polygon/line paths. In clip
 		// mode the whole map sits inside scale(mapScale), so counter-scale the pattern to keep

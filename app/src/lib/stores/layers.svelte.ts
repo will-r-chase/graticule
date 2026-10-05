@@ -67,6 +67,7 @@ function defaultStyle() {
 		fill: 'none',
 		fillOpacity: 1,
 		fillPattern: null,
+		blendMode: 'normal' as const,
 		stroke: '#161819',
 		strokeOpacity: 1,
 		strokeWidth: 0.5,
