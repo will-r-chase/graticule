@@ -19,6 +19,16 @@ const SIZE_WARNING_BYTES = 50 * 1024 * 1024; // 50 MB
 // sees, it should be saved and restored.
 // ---------------------------------------------------------------------------
 
+// Style fields added after the first release; saves from before lack them, so loading
+// fills these defaults in underneath the saved style.
+type OptionalStyleKeys = 'fillPattern' | 'blendMode' | 'outerGlow' | 'innerGlow';
+const styleDefaultsForOldSaves: Pick<LayerStyle, OptionalStyleKeys> = {
+	fillPattern: null,
+	blendMode: 'normal',
+	outerGlow: null,
+	innerGlow: null,
+};
+
 interface SavedLayer {
 	id: string;
 	datasetId: string;
@@ -26,8 +36,8 @@ interface SavedLayer {
 	geometryEdited: boolean;
 	name: string;
 	visible: boolean;
-	// fillPattern / blendMode are absent in projects saved before those existed.
-	style: Omit<LayerStyle, 'fillPattern' | 'blendMode'> & Partial<Pick<LayerStyle, 'fillPattern' | 'blendMode'>>;
+	// These are absent in projects saved before they existed.
+	style: Omit<LayerStyle, OptionalStyleKeys> & Partial<Pick<LayerStyle, OptionalStyleKeys>>;
 	processing: LayerProcessing;
 	// Label fields — absent in files saved before labels existed; load defaults them.
 	kind?: LayerKind;
@@ -206,7 +216,7 @@ export function loadProject(json: string): void {
 				loading: true,
 				error: null,
 				hasTopology: false,
-				style: { fillPattern: null, blendMode: 'normal', ...saved.style },
+				style: { ...styleDefaultsForOldSaves, ...saved.style },
 				processing: saved.processing ? { ...saved.processing } : defaultProcessing(),
 				kind: saved.kind ?? 'geometry',
 				labelAttribute: saved.labelAttribute ?? null,
@@ -233,7 +243,7 @@ export function loadProject(json: string): void {
 				loading: true,
 				error: null,
 				hasTopology: false,
-				style: { fillPattern: null, blendMode: 'normal', ...saved.style },
+				style: { ...styleDefaultsForOldSaves, ...saved.style },
 				processing: saved.processing ? { ...saved.processing } : defaultProcessing(),
 				kind: saved.kind ?? 'geometry',
 				labelAttribute: saved.labelAttribute ?? null,

@@ -1,5 +1,6 @@
 import type { FillPattern } from '$lib/utils/patterns';
 import type { BlendMode } from '$lib/utils/blendModes';
+import type { Glow } from '$lib/utils/glow';
 
 export interface DatasetLayer {
 	name: string;
@@ -91,6 +92,9 @@ export interface LayerStyle {
 	fillPattern: FillPattern | null;
 	// How the layer composites onto the layers beneath it, as a group.
 	blendMode: BlendMode;
+	// Polygon glows; null = off. Like fillPattern, always replace, never mutate in place.
+	outerGlow: Glow | null;
+	innerGlow: Glow | null;
 	stroke: string;
 	strokeOpacity: number;
 	strokeWidth: number;

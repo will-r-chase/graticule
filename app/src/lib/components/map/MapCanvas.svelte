@@ -20,6 +20,7 @@
 	import { featureArcIndices, topologyToAbsolute } from '$lib/utils/topology';
 	import { getFillPattern } from '$lib/utils/patterns';
 	import { toCompositeOperation, type BlendMode } from '$lib/utils/blendModes';
+	import type { Glow } from '$lib/utils/glow';
 	import { drawSession, getCommitted, getActivePath, placeVertex, finishActive, finishActiveFromDoubleClick, enterDraw, escapeDraw, commitDraw, resetDrawTarget, cancelPicking, setDrawDensifier, activeSelfIntersects } from '$lib/stores/drawSession.svelte';
 	import { buildBezierArcs, arcRingToPath } from '$lib/utils/bezier';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -3044,6 +3045,193 @@
 		return bctx;
 	}
 
+	// Two scratch buffers for glows: A holds a silhouette, B receives its blurred copy. Both are
+	// device-pixel sized like the main canvas and start each pass with identity transform and
+	// default paint state. They are NOT cleared here: drawGlow clears just the sub-rectangle it
+	// uses, so a pass over many small features never touches the whole bitmap.
+	let glowBufA: HTMLCanvasElement | null = null;
+	let glowBufB: HTMLCanvasElement | null = null;
+	function getGlowBuffers(ctx: CanvasRenderingContext2D, clearAll: boolean): [CanvasRenderingContext2D, CanvasRenderingContext2D] | null {
+		glowBufA ??= document.createElement('canvas');
+		glowBufB ??= document.createElement('canvas');
+		const out: CanvasRenderingContext2D[] = [];
+		for (const el of [glowBufA, glowBufB]) {
+			if (el.width !== ctx.canvas.width || el.height !== ctx.canvas.height) {
+				el.width = ctx.canvas.width;
+				el.height = ctx.canvas.height;
+			}
+			const c = el.getContext('2d');
+			if (!c) return null;
+			c.setTransform(1, 0, 0, 1, 0, 0);
+			if (clearAll) c.clearRect(0, 0, el.width, el.height);
+			c.globalAlpha = 1;
+			c.globalCompositeOperation = 'source-over';
+			c.filter = 'none';
+			c.setLineDash([]);
+			out.push(c);
+		}
+		return [out[0], out[1]];
+	}
+
+	// Above this many visible features, glows fall back to one merged pass (outline of the
+	// whole layer) so panning a huge layer doesn't stall.
+	const GLOW_FEATURE_CAP = 500;
+
+	// Paints a polygon glow for a layer onto ctx (the map transform must be active). Each
+	// feature glows along its own edges:
+	//   Outer: the feature's silhouette (dilated by `spread`), blurred, with its interior
+	//          knocked out. Drawn beneath the layer's fills.
+	//   Inner: the inverse silhouette (choked in by `spread`), blurred, clipped to the feature.
+	// Blur and spread are screen px. Each feature works in a small sub-rectangle of the
+	// scratch buffers around its own bbox.
+	function drawGlow(
+		ctx: CanvasRenderingContext2D,
+		kind: 'outer' | 'inner',
+		glow: Glow,
+		chunks: { path2d: Path2D; bbox: number[] }[],
+		dim: number,
+		dpr: number,
+	): void {
+		const reach = (glow.blur * 3 + glow.spread) / mapScale;
+		const vxMin = -tx / mapScale - reach;
+		const vxMax = (width - tx) / mapScale + reach;
+		const vyMin = -ty / mapScale - reach;
+		const vyMax = (height - ty) / mapScale + reach;
+		// Features in reach of the viewport that are at least ~1px on screen.
+		const visible = chunks.filter(({ bbox }) =>
+			!(bbox[2] < vxMin || bbox[0] > vxMax || bbox[3] < vyMin || bbox[1] > vyMax) &&
+			Math.max(bbox[2] - bbox[0], bbox[3] - bbox[1]) * mapScale >= 1);
+		if (visible.length === 0) return;
+		if (visible.length > GLOW_FEATURE_CAP) {
+			drawGlowMerged(ctx, kind, glow, visible, dim, dpr);
+			return;
+		}
+
+		const bufs = getGlowBuffers(ctx, false);
+		if (!bufs) return;
+		const [a, b] = bufs;
+		const W = a.canvas.width;
+		const H = a.canvas.height;
+		const m = ctx.getTransform();
+		const padDev = (glow.blur * 3 + glow.spread) * dpr;
+		const IDENT = new DOMMatrix();
+
+		for (const { path2d, bbox } of visible) {
+			// This feature's working rectangle in device px, clamped to the bitmap.
+			const x0 = Math.max(0, Math.floor(m.a * bbox[0] + m.e - padDev));
+			const y0 = Math.max(0, Math.floor(m.d * bbox[1] + m.f - padDev));
+			const x1 = Math.min(W, Math.ceil(m.a * bbox[2] + m.e + padDev));
+			const y1 = Math.min(H, Math.ceil(m.d * bbox[3] + m.f + padDev));
+			const sw = x1 - x0;
+			const sh = y1 - y0;
+			if (sw <= 0 || sh <= 0) continue;
+
+			a.setTransform(IDENT);
+			b.setTransform(IDENT);
+			a.clearRect(x0, y0, sw, sh);
+			b.clearRect(x0, y0, sw, sh);
+
+			a.fillStyle = glow.color;
+			a.strokeStyle = glow.color;
+			a.lineJoin = 'round';
+			a.lineWidth = (glow.spread * 2) / mapScale;
+			if (kind === 'outer') {
+				a.setTransform(m);
+				a.fill(path2d, 'evenodd');
+				if (glow.spread > 0) a.stroke(path2d);
+			} else {
+				// Colour the rectangle, erase the feature, then stroke its outline back in so
+				// the glow reaches `spread` px further inside.
+				a.fillRect(x0, y0, sw, sh);
+				a.setTransform(m);
+				a.globalCompositeOperation = 'destination-out';
+				a.fill(path2d, 'evenodd');
+				a.globalCompositeOperation = 'source-over';
+				if (glow.spread > 0) a.stroke(path2d);
+			}
+
+			// Blur A → B under a dpr-only transform, where blur units are CSS px.
+			b.save();
+			b.setTransform(dpr, 0, 0, dpr, 0, 0);
+			if (glow.blur > 0) b.filter = `blur(${glow.blur}px)`;
+			b.drawImage(a.canvas, x0, y0, sw, sh, x0 / dpr, y0 / dpr, sw / dpr, sh / dpr);
+			b.restore();
+
+			if (kind === 'outer') {
+				b.setTransform(m);
+				b.globalCompositeOperation = 'destination-out';
+				b.fill(path2d, 'evenodd');
+				b.globalCompositeOperation = 'source-over';
+				b.setTransform(IDENT);
+			}
+
+			ctx.save();
+			if (kind === 'inner') ctx.clip(path2d, 'evenodd');
+			ctx.setTransform(1, 0, 0, 1, 0, 0);
+			ctx.globalAlpha = glow.opacity * dim;
+			ctx.drawImage(b.canvas, x0, y0, sw, sh, x0, y0, sw, sh);
+			ctx.restore();
+		}
+	}
+
+	// Fallback for very large layers: one glow along the outline of the merged silhouette
+	// (shared borders between features get no glow), two full-canvas passes total.
+	function drawGlowMerged(
+		ctx: CanvasRenderingContext2D,
+		kind: 'outer' | 'inner',
+		glow: Glow,
+		chunks: { path2d: Path2D }[],
+		dim: number,
+		dpr: number,
+	): void {
+		const union = new Path2D();
+		for (const { path2d } of chunks) union.addPath(path2d);
+
+		const bufs = getGlowBuffers(ctx, true);
+		if (!bufs) return;
+		const [a, b] = bufs;
+		const W = a.canvas.width;
+		const H = a.canvas.height;
+		a.setTransform(ctx.getTransform());
+		a.fillStyle = glow.color;
+		a.strokeStyle = glow.color;
+		a.lineJoin = 'round';
+		a.lineWidth = (glow.spread * 2) / mapScale;
+		if (kind === 'outer') {
+			a.fill(union, 'evenodd');
+			if (glow.spread > 0) a.stroke(union);
+		} else {
+			a.save();
+			a.setTransform(1, 0, 0, 1, 0, 0);
+			a.fillRect(0, 0, W, H);
+			a.restore();
+			a.globalCompositeOperation = 'destination-out';
+			a.fill(union, 'evenodd');
+			a.globalCompositeOperation = 'source-over';
+			if (glow.spread > 0) a.stroke(union);
+		}
+
+		b.save();
+		b.setTransform(dpr, 0, 0, dpr, 0, 0);
+		if (glow.blur > 0) b.filter = `blur(${glow.blur}px)`;
+		b.drawImage(a.canvas, 0, 0, W / dpr, H / dpr);
+		b.restore();
+
+		if (kind === 'outer') {
+			b.setTransform(ctx.getTransform());
+			b.globalCompositeOperation = 'destination-out';
+			b.fill(union, 'evenodd');
+			b.globalCompositeOperation = 'source-over';
+		}
+
+		ctx.save();
+		if (kind === 'inner') ctx.clip(union, 'evenodd');
+		ctx.setTransform(1, 0, 0, 1, 0, 0);
+		ctx.globalAlpha = glow.opacity * dim;
+		ctx.drawImage(b.canvas, 0, 0);
+		ctx.restore();
+	}
+
 	function getHaloBuffer(ctx: CanvasRenderingContext2D): CanvasRenderingContext2D | null {
 		if (!haloBufferEl) haloBufferEl = document.createElement('canvas');
 		if (haloBufferEl.width !== ctx.canvas.width || haloBufferEl.height !== ctx.canvas.height) {
@@ -3837,6 +4025,11 @@
 					ctx.setLineDash([layer.style.strokeDash / mapScale, layer.style.strokeGap / mapScale]);
 				}
 
+				// Glows are polygon-only. Outer sits beneath the fills; inner is drawn after the
+				// chunk loop, so it also overlays the inner half of the stroke.
+				const hasPolygon = layer.geometryTypes.some((t) => t === 'Polygon' || t === 'MultiPolygon');
+				if (hasPolygon && layer.style.outerGlow) drawGlow(ctx, 'outer', layer.style.outerGlow, chunks, dim, dpr);
+
 				for (let ci = 0; ci < chunks.length; ci++) {
 					const { path2d, bbox } = chunks[ci];
 					const [xMin, yMin, xMax, yMax] = bbox;
@@ -3851,6 +4044,7 @@
 					ctx.stroke(path2d);
 				}
 				ctx.setLineDash([]);
+				if (hasPolygon && layer.style.innerGlow) drawGlow(ctx, 'inner', layer.style.innerGlow, chunks, dim, dpr);
 			}
 
 			if (hasPoints && projection) {

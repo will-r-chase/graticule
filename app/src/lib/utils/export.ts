@@ -10,6 +10,7 @@ import { canvasStyles } from '$lib/stores/canvasStyles.svelte';
 import { mapState } from '$lib/stores/mapState.svelte';
 import { applyTextTransform, LABEL_ANCHOR_DIR, labelFontString, wrapLabelLines } from '$lib/utils/labels';
 import { buildPatternDef } from '$lib/utils/patterns';
+import type { Glow } from '$lib/utils/glow';
 import { layoutGlyphsAlongPath, splitGraphemes, clampedPathCenter } from '$lib/utils/curvedText';
 
 const allProjections = { ...d3, ...d3gp } as Record<string, unknown>;
@@ -34,6 +35,49 @@ function sanitizeId(str: string): string {
 function blendAttr(layer: Layer): string {
 	const mode = layer.style.blendMode;
 	return mode && mode !== 'normal' ? ` style="mix-blend-mode:${mode}"` : '';
+}
+
+// SVG filter for a polygon glow, applied to one plain black silhouette path. Blur and spread
+// are screen px, so `counter` (1/mapScale in clip mode, else 1) converts them to user units.
+// `region` is the filter region in those units — it must cover the feature plus the glow's
+// reach, since a glow can't extend past its filter region.
+function glowFilterSVG(
+	id: string,
+	kind: 'outer' | 'inner',
+	glow: Glow,
+	counter: number,
+	region: { x: number; y: number; w: number; h: number },
+): string {
+	const std = fmt(glow.blur * counter);
+	const spread = glow.spread * counter;
+	const flood = `<feFlood flood-color="${glow.color}" flood-opacity="${glow.opacity}" result="c" />`;
+	const prims: string[] = [];
+	if (kind === 'outer') {
+		// Dilate → blur → colour by the blurred alpha → knock the interior out.
+		prims.push(
+			spread > 0 ? `<feMorphology in="SourceAlpha" operator="dilate" radius="${fmt(spread)}" result="d" />` : '',
+			`<feGaussianBlur in="${spread > 0 ? 'd' : 'SourceAlpha'}" stdDeviation="${std}" result="b" />`,
+			flood,
+			'<feComposite in="c" in2="b" operator="in" result="g" />',
+			'<feComposite in="g" in2="SourceAlpha" operator="out" />',
+		);
+	} else {
+		// Invert the silhouette → dilate (chokes the glow into the shape) → blur → colour →
+		// keep only what's inside the shape.
+		prims.push(
+			'<feComponentTransfer in="SourceAlpha" result="inv"><feFuncA type="table" tableValues="1 0" /></feComponentTransfer>',
+			spread > 0 ? `<feMorphology in="inv" operator="dilate" radius="${fmt(spread)}" result="inv" />` : '',
+			`<feGaussianBlur in="inv" stdDeviation="${std}" result="b" />`,
+			flood,
+			'<feComposite in="c" in2="b" operator="in" result="g" />',
+			'<feComposite in="g" in2="SourceAlpha" operator="in" />',
+		);
+	}
+	return (
+		`<filter id="${id}" filterUnits="userSpaceOnUse" x="${fmt(region.x)}" y="${fmt(region.y)}" width="${fmt(region.w)}" height="${fmt(region.h)}" color-interpolation-filters="sRGB">` +
+		prims.filter(Boolean).join('') +
+		'</filter>'
+	);
 }
 
 function escapeXml(str: string): string {
@@ -476,6 +520,38 @@ function buildSVGString(options: SVGOptions): string | null {
 				const t = f?.geometry?.type;
 				return t !== 'Point' && t !== 'MultiPoint';
 			});
+
+			// Polygon glows, per feature: every polygon gets its own filtered silhouette path (built
+			// from the geometry, so it doesn't depend on the layer's fill) with a filter region
+			// hugging that feature. Outer glows sit beneath the layer's paths, inner on top.
+			const { outerGlow, innerGlow } = layer.style;
+			const glowParts: { outer: string[]; inner: string[] } = { outer: [], inner: [] };
+			if (outerGlow || innerGlow) {
+				const polygons = nonPointFeatures.filter(
+					(f) => f?.geometry?.type === 'Polygon' || f?.geometry?.type === 'MultiPolygon',
+				);
+				const defs: string[] = [];
+				const buildFor = (kind: 'outer' | 'inner', glow: Glow | null) => {
+					if (!glow) return;
+					const pad = (glow.blur * 3 + glow.spread) * pointCounterScale;
+					polygons.forEach((f, i) => {
+						const d = pathGenerator(f);
+						if (!d) return;
+						const [[bx0, by0], [bx1, by1]] = pathGenerator.bounds(f);
+						// Skip features under ~1 screen px, as the canvas does.
+						if (Math.max(bx1 - bx0, by1 - by0) < pointCounterScale) return;
+						const id = `glow-${kind}-${sanitizeId(layer.id)}-${i}`;
+						const region = { x: bx0 - pad, y: by0 - pad, w: bx1 - bx0 + pad * 2, h: by1 - by0 + pad * 2 };
+						defs.push(glowFilterSVG(id, kind, glow, pointCounterScale, region));
+						glowParts[kind].push(`    <path d="${d}" fill="#000" filter="url(#${id})" />`);
+					});
+				};
+				buildFor('outer', outerGlow);
+				buildFor('inner', innerGlow);
+				if (defs.length) parts.push(`    <defs>${defs.join('')}</defs>`);
+			}
+			parts.push(...glowParts.outer);
+
 			for (let i = 0; i < nonPointFeatures.length; i++) {
 				const f = nonPointFeatures[i];
 				const d = pathGenerator(f);
@@ -485,6 +561,7 @@ function buildSVGString(options: SVGOptions): string | null {
 					`    <path id="${featureId}" d="${d}" fill="${pathFill}" fill-opacity="${fillOpacity}" stroke="${stroke}" stroke-opacity="${strokeOpacity}" stroke-width="${effectiveStrokeWidth}"${dashAttr} />`
 				);
 			}
+			parts.push(...glowParts.inner);
 		}
 
 		// ── Point geometry — d3-shape symbols, one path per feature ──────────

@@ -5,6 +5,7 @@
 	import ShapeSelect from '$lib/components/ui/ShapeSelect.svelte';
 	import Combobox from '$lib/components/ui/Combobox.svelte';
 	import { blendModeOptions, type BlendMode } from '$lib/utils/blendModes';
+	import { defaultGlow, type Glow } from '$lib/utils/glow';
 	import { patternOptions, patternId, specFromPatternId, type FillPattern } from '$lib/utils/patterns';
 	import { updateLayerStyle } from '$lib/stores/layers.svelte';
 	import { pushSnapshot } from '$lib/stores/history.svelte';
@@ -31,6 +32,22 @@
 	let patternSize   = $state(layer.style.fillPattern?.size ?? 8);
 	let patternWeight = $state(layer.style.fillPattern?.weight ?? 1);
 
+	// Glows (polygons). The color picker takes hex and alpha separately, so each glow's color
+	// and opacity live as two fields here and are recombined into a Glow (or null) on push.
+	type GlowKey = 'outerGlow' | 'innerGlow';
+	const glowLocal = (g: Glow | null) => {
+		const v = g ?? defaultGlow;
+		return { on: g !== null, hex: v.color, alpha: v.opacity, blur: v.blur, spread: v.spread };
+	};
+	const glowState = $state({
+		outerGlow: glowLocal(layer.style.outerGlow),
+		innerGlow: glowLocal(layer.style.innerGlow),
+	});
+	const glowRows: { key: GlowKey; label: string; name: string }[] = [
+		{ key: 'outerGlow', label: 'Outer glow', name: 'Outer glow' },
+		{ key: 'innerGlow', label: 'Inner glow', name: 'Inner glow' },
+	];
+
 	let strokeEnabled = $state(layer.style.stroke !== 'none');
 	let strokeHex   = $state(layer.style.stroke === 'none' ? '#161819' : layer.style.stroke);
 	let strokeAlpha = $state(layer.style.strokeOpacity);
@@ -47,7 +64,7 @@
 	const hasNonPoint = $derived(layer.geometryTypes.some(t => t !== 'Point' && t !== 'MultiPoint'));
 
 	// Which picker is open (only one at a time).
-	let activePicker = $state<'fill' | 'stroke' | null>(null);
+	let activePicker = $state<'fill' | 'stroke' | GlowKey | null>(null);
 
 	// DOM refs for positioning and click-outside detection.
 	let panelEl          = $state<HTMLDivElement | null>(null);
@@ -113,6 +130,16 @@
 		});
 	});
 
+	// New objects each time — style snapshots copy shallowly, so never mutate in place.
+	$effect(() => {
+		const toGlow = (g: (typeof glowState)[GlowKey]): Glow | null =>
+			g.on ? { color: g.hex, opacity: g.alpha, blur: Math.max(0, g.blur || 0), spread: Math.max(0, g.spread || 0) } : null;
+		updateLayerStyle(layer.id, {
+			outerGlow: toGlow(glowState.outerGlow),
+			innerGlow: toGlow(glowState.innerGlow),
+		});
+	});
+
 	$effect(() => {
 		updateLayerStyle(layer.id, { strokeWidth });
 	});
@@ -137,7 +164,7 @@
 		pushSnapshot();
 	}
 
-	function togglePicker(which: 'fill' | 'stroke') {
+	function togglePicker(which: 'fill' | 'stroke' | GlowKey) {
 		const wasOpen = activePicker === which;
 		activePicker = activePicker === which ? null : which;
 		styleCtx.setPickerOpen(activePicker !== null);
@@ -321,6 +348,56 @@
 		</div>
 	{/if}
 
+	<!-- Glow rows — polygons only -->
+	{#if hasPolygon}
+		{#each glowRows as { key, label, name } (key)}
+			{@const g = glowState[key]}
+			<div class="style-row">
+				<span class="label two-line mono-small" title={name}>{label}</span>
+				<div class="controls">
+					<button
+						class="toggle-track"
+						class:on={g.on}
+						role="switch"
+						aria-checked={g.on}
+						aria-label={name}
+						onclick={() => {
+							g.on = !g.on;
+							if (!g.on && activePicker === key) { activePicker = null; styleCtx.setPickerOpen(false); }
+							pushSnapshot();
+						}}
+					>
+						<span class="toggle-thumb"></span>
+					</button>
+					{#if g.on}
+						<button
+							class="swatch"
+							class:ring={activePicker === key}
+							style="--c: {toRgba(g.hex, g.alpha)}"
+							onpointerdown={(e) => { e.stopPropagation(); togglePicker(key); }}
+							aria-label="Edit {name.toLowerCase()} color"
+						></button>
+					{/if}
+				</div>
+			</div>
+			{#if g.on}
+				<div class="style-row">
+					<span class="label mono-small"></span>
+					<div class="controls">
+						<div class="notched-field">
+							<span class="notch-label">Size</span>
+							<input class="width-input number-input" type="number" min="0" step="1" bind:value={g.blur} onblur={() => pushSnapshot()} />
+						</div>
+						<div class="notched-field">
+							<span class="notch-label">Spread</span>
+							<input class="width-input number-input" type="number" min="0" step="1" bind:value={g.spread} onblur={() => pushSnapshot()} />
+						</div>
+					</div>
+				</div>
+			{/if}
+		{/each}
+	{/if}
+
 	<!-- Point controls -->
 	{#if hasPoints}
 		{#if hasNonPoint}
@@ -374,8 +451,10 @@
 	>
 		{#if activePicker === 'fill'}
 			<ColorPickerPopup bind:hex={fillHex} bind:alpha={fillAlpha} title="Fill color" onclose={closePicker} />
-		{:else}
+		{:else if activePicker === 'stroke'}
 			<ColorPickerPopup bind:hex={strokeHex} bind:alpha={strokeAlpha} title="Stroke color" onclose={closePicker} />
+		{:else}
+			<ColorPickerPopup bind:hex={glowState[activePicker].hex} bind:alpha={glowState[activePicker].alpha} title={activePicker === 'outerGlow' ? 'Outer glow color' : 'Inner glow color'} onclose={closePicker} />
 		{/if}
 	</div>
 {/if}
@@ -400,6 +479,11 @@
 		width: 52px;
 		flex-shrink: 0;
 		color: var(--color-text-primary);
+	}
+
+	/* Labels that wrap onto two lines ("Outer glow") within the fixed row height. */
+	.label.two-line {
+		line-height: 1.1;
 	}
 
 	.controls {
